@@ -135,11 +135,20 @@ test("5. The rules run: Forager is calculated At risk, the blocker has 2 reports
   await expect(page.locator("section").filter({ hasText: "Plan" }).first()).toContainText("At risk");
 });
 
-test("6. Alicia's Today: she approves Kemar's risk, then saves the reason linked to the blocker and the risk", async () => {
-  await viewAs("alicia", "/?view=inbox");
+test("6. Alicia approves Kemar's risk from her chat answer in one tap (phase B), then saves the reason linked to the blocker and the risk", async () => {
+  await viewAs("alicia", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What needs me today?");
+  await box.press("Enter");
+  // The line carries the inbox's own buttons; Approve runs the same command, confirmed in the same tap
+  const line = page.getByRole("listitem").filter({ hasText: "Kemar raised a risk: Trend model may slip to 26 Oct" });
+  await expect(line.getByRole("button", { name: "Decline" })).toBeVisible();
+  await line.getByRole("button", { name: "Approve" }).click();
+  await expect(line.getByText("Approved.")).toBeVisible();
+
+  // The inbox item closed, as if she had approved it there
+  await page.goto("/?view=inbox");
   await expect(page.getByRole("link", { name: "Forager 2.0 is set Off track, but the plan says At risk" }).first()).toBeVisible();
-  await page.getByRole("link", { name: /Kemar raised a risk: Trend model may slip to 26 Oct/ }).first().click();
-  await page.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByRole("link", { name: /Kemar raised a risk/ })).toHaveCount(0);
 
   await page.getByRole("link", { name: "Forager 2.0 is set Off track, but the plan says At risk" }).first().click();
@@ -153,8 +162,25 @@ test("6. Alicia's Today: she approves Kemar's risk, then saves the reason linked
   await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
 });
 
-test("7. Andre approves Kemar's decision; it is on the Store Insights log with Andre as approver", async () => {
-  await viewAs("andre", "/?view=inbox");
+test("7. Andre approves Kemar's decision in the inbox; it is on the Store Insights log with Andre as approver", async () => {
+  // Phase B first: in the chat the line carries the inbox's buttons, and a typed command makes one
+  // confirm card; cancelling it changes nothing
+  await viewAs("andre", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What needs me today?");
+  await box.press("Enter");
+  const line = page.getByRole("listitem").filter({ hasText: "Kemar proposed a decision: move the daily refresh to 6am" });
+  await expect(line.getByRole("button", { name: "Approve" })).toBeVisible();
+  await expect(line.getByRole("button", { name: "Decline" })).toBeVisible();
+  await box.fill("Approve the refresh decision");
+  await box.press("Enter");
+  const confirm = page.getByRole("group", { name: 'Approve decision "Move the daily refresh to 6am" on Store Insights?' });
+  await expect(confirm.getByRole("button", { name: "Approve" })).toBeVisible();
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm.getByText("Cancelled. Nothing changed.")).toBeVisible();
+
+  // The inbox's own Approve, as before the chat could act
+  await page.goto("/?view=inbox");
   await page.getByRole("link", { name: /Kemar proposed a decision: move the daily refresh to 6am/ }).first().click();
   await page.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByRole("link", { name: /Kemar proposed a decision/ })).toHaveCount(0);
@@ -216,4 +242,19 @@ test("P11. Empty sections stay and say why; a wrong address says so", async () =
   await expect(page.getByRole("heading", { name: "Not found, or not yours to see" })).toBeVisible();
   await page.getByRole("link", { name: "Back to Today" }).click();
   await expect(page).toHaveURL(/\/$/);
+});
+
+test("Phase B. Kemar marks his own work done from an answer line, in one tap", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What am I working on?");
+  await box.press("Enter");
+  const line = page.getByRole("listitem").filter({ hasText: "#152 Store feed connector" });
+  await line.getByRole("button", { name: "Mark done" }).click();
+  await expect(line.getByText("Marked done.")).toBeVisible();
+  // A fresh answer no longer lists it; the first answer stays as it was given
+  await box.fill("What am I working on?");
+  await box.press("Enter");
+  await expect(page.getByRole("button", { name: "Copy" })).toHaveCount(2);
+  await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveCount(1);
 });

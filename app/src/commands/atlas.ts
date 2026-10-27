@@ -82,6 +82,7 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
         malformed: extraction.malformed,
         attempt: readAttempt,
         question: extraction.question ?? null,
+        commands: extraction.commands ?? null,
         wordWithAtlas: !!drafter,
       });
       if (drafter && proposed.answer?.wording === "pending") await wordCaptureAnswer(at(), captureId, drafter);

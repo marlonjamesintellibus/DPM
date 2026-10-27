@@ -1,12 +1,13 @@
 // The viewer's Today chat after an update (L18e, L18f): their latest capture and what Atlas made
 // of it, counted per project. Only the viewer's own captures are read; the counts come from the
 // same rule as the review footer, so chat and review never disagree.
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
 import * as t from "../db/schema";
 import type { Answer } from "../domain/question";
 import type { CaptureState } from "../domain/machines/capture";
+import { commandButton, commandOutcomeText, commandQuestion, type ChatCommandState, type CommandAct } from "../domain/machines/chat-command";
 import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
@@ -45,7 +46,32 @@ export type ChatCapture = {
   answer: Answer | null;
   /** Phase S: their thumbs up or down on that answer, and what was wrong. */
   feedback: { rating: "up" | "down"; wrong: string | null } | null;
+  /** Phase B: the cards a reply in words made (M20), and what Atlas said when it made none (AC6, AC7, AC9). */
+  commands: ChatCommandView[];
+  commandNote: string | null;
+  /** Phase B: the buttons already pressed on this answer's lines, with what happened (AC4: once only). */
+  taps: TapView[];
 };
+
+/** A command's card in the chat: its question and button while it waits, what happened once it ended. */
+export type ChatCommandView = {
+  id: string;
+  state: ChatCommandState;
+  act: CommandAct;
+  question: string;
+  button: string;
+  /** A decline says why, and a status reason has words: the box, filled with what they said. */
+  asksWords: boolean;
+  words: string | null;
+  /** Give a reason: the entries it links, by title (M9). */
+  links: string[];
+  /** Done, refused, cancelled or expired, in words. */
+  outcome: string | null;
+  /** AC2, AC3: refused because it changed; the question to ask again for a fresh answer. */
+  askAgain: string | null;
+};
+
+export type TapView = { line: number; act: CommandAct; state: ChatCommandState; message: string; askAgain: string | null };
 
 /** D15: what Atlas told the viewer about their reports ("Alicia approved your risk: ..."), newest first. */
 export type ChatNotice = {
@@ -281,5 +307,45 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     line: chatLine(capture.state, capture.failedStep, await summaryOf(conn, capture, items, countsLine(counts, "; "))),
     answer: answerOf(capture.answer),
     feedback,
+    ...(await commandsOf(conn, capture)),
   };
+}
+
+/** Phase B: the commands made from this message, and the buttons pressed on its answer; only the author's own. */
+async function commandsOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<Pick<ChatCapture, "commands" | "commandNote" | "taps">> {
+  const rows = await conn
+    .select()
+    .from(t.chatCommands)
+    .where(and(eq(t.chatCommands.askerId, capture.authorId), or(eq(t.chatCommands.captureId, capture.id), eq(t.chatCommands.answerCaptureId, capture.id))))
+    .orderBy(t.chatCommands.line, t.chatCommands.createdAt);
+  // What was asked, to ask again when the picture changed (AC2)
+  const askedIn = async (answerCaptureId: string) => {
+    const [a] = await conn.select({ question: t.captures.question, text: t.captures.text }).from(t.captures).where(eq(t.captures.id, answerCaptureId));
+    return a ? (a.question?.asked ?? a.text) : null;
+  };
+  const commands: ChatCommandView[] = [];
+  const taps: TapView[] = [];
+  for (const r of rows) {
+    const askAgain = r.refusedWhy === "changed" ? await askedIn(r.answerCaptureId) : null;
+    if (r.via === "tap" && r.answerCaptureId === capture.id) {
+      taps.push({ line: r.line, act: r.act, state: r.state, message: commandOutcomeText(r) ?? "", askAgain });
+      continue;
+    }
+    if (r.via !== "words" || r.captureId !== capture.id) continue;
+    const ids = r.act === "give_reason" ? (r.input?.entryIds ?? []) : [];
+    const titles = ids.length ? await conn.select({ id: t.braidEntries.id, title: t.braidEntries.title }).from(t.braidEntries).where(inArray(t.braidEntries.id, [...ids])) : [];
+    commands.push({
+      id: r.id,
+      state: r.state,
+      act: r.act,
+      question: commandQuestion(r),
+      button: commandButton(r),
+      asksWords: r.act === "give_reason" || (r.act === "decline" && r.proposal === "entry"),
+      words: r.input?.reason ?? null,
+      links: ids.map((id) => titles.find((x) => x.id === id)?.title ?? id),
+      outcome: commandOutcomeText(r),
+      askAgain,
+    });
+  }
+  return { commands, commandNote: capture.commandNote, taps };
 }

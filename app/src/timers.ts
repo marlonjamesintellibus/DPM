@@ -2,8 +2,9 @@
 // is marked stale after 5 minutes and read again (D1, D19), unsaved reviews are reminded and expire
 // (S4, E28), milestones past their target are missed, BRAID proposals and kind change requests are
 // reminded (S18), a dependency whose promised date has passed is asked about (section 20, U2), an ask to
-// the owner goes moot, is withdrawn or expires (M37, U5 and U7), and eval candidates nobody decided are
-// deleted after config.evalCandidateDays (phase S, M36). Each timer is one command and safe to run again;
+// the owner goes moot, is withdrawn or expires (M37, U5 and U7), eval candidates nobody decided are
+// deleted after config.evalCandidateDays (phase S, M36), and a chat command's card nobody answered expires
+// after config.commandExpiryMinutes (phase B, M20, AC10). Each timer is one command and safe to run again;
 // a reminder never decides anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
@@ -12,6 +13,7 @@ import { now as appNow } from "./app/_lib/clock";
 import { capturesToRead, readCapture } from "./commands/atlas";
 import { runBraidReminders, runDependencyDue, runKindRequestReminders } from "./commands/braid";
 import { runCaptureTimers } from "./commands/capture";
+import { runChatCommandTimers } from "./commands/chat-command";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
@@ -29,7 +31,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   const db = opts.db ?? (await getDb());
   const now = opts.now ?? appNow;
   const run: TimerRun = { failed: [], read: [] };
-  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers]) {
+  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers]) {
     // One failing timer does not stop the others; it runs again next minute
     try {
       await timer({ db, now: now() });

@@ -2,9 +2,8 @@
 // Blocked first, then In progress, then To do, each by due date; the milestones they own that are not
 // done; and the live BRAID entries they own. Read through getProject per project they can read, so
 // work on a project they have left is never listed (CQ3), and each card opens its project.
-import type { AnswerCard } from "../../domain/question";
 import { needsYou } from "./needs-me";
-import { capped, dayDate, forecastText, listed, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder } from "./shared";
+import { capped, dayDate, forecastText, listed, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder, type DraftCard } from "./shared";
 
 const ORDER = ["blocked", "in_progress", "to_do"] as const;
 
@@ -25,15 +24,23 @@ export const myWork: AnswerBuilder = async (conn, viewerId, { projectId }, now) 
   milestones.sort((a, b) => a.m.forecastDate.localeCompare(b.m.forecastDate));
   const entries = views.flatMap((v) => v.braid.entries.filter((e) => e.owner?.id === viewerId && e.onLog).map((e) => ({ v, e })));
 
-  const cards: AnswerCard[] = [
-    ...work.map(({ v, w }) => ({
+  const cards: DraftCard[] = [
+    ...work.map(({ v, w }): DraftCard => ({
       title: workTitle(w),
       detail: `${v.project.name}: ${w.dueDate ? `due ${dayDate(w.dueDate)}` : "no due date"}${w.blockedNote ? `, ${w.blockedNote}` : ""}`,
       tag: w.stateLabel,
       href: `/projects/${v.project.id}`,
+      subject: { type: "work_item", id: w.id, projectId: v.project.id },
+      offer: ["mark_done", "unblock"],
     })),
     ...milestones.map(({ v, m }) => ({ title: m.name, detail: `${v.project.name}: ${forecastText(m)}`, tag: `Milestone · ${m.statusLabel}`, href: `/projects/${v.project.id}` })),
-    ...entries.map(({ v, e }) => ({ title: e.title, detail: `${v.project.name}: ${e.stateLabel}`, tag: e.kindLabel, href: `/projects/${v.project.id}?view=table&log=${e.kind}` })),
+    ...entries.map(({ v, e }): DraftCard => ({
+      title: e.title,
+      detail: `${v.project.name}: ${e.stateLabel}`,
+      tag: e.kindLabel,
+      href: `/projects/${v.project.id}?view=table&log=${e.kind}`,
+      subject: { type: "braid_entry", id: e.id, projectId: v.project.id },
+    })),
   ];
   const on = views.length === 1 && projectId ? ` on ${views[0].project.name}` : "";
   if (!cards.length) {

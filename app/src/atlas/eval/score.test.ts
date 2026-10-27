@@ -33,6 +33,17 @@ describe("scoreCase", () => {
     expect(scoreCase({ ...c, text: "#208 done, mi check it." }, [{ ...done, quote: "#208 done" }], KEMAR_CONTEXT)).toMatchObject({ pass: false, forbidden: ["upd:wi-208.state=done at high"] });
   });
 
+  it("phase B: exactly the commands expected count; one more, or one where none is expected, fails", () => {
+    const c = byId("b-approve-all");
+    const one = (line: number) => ({ act: "approve", lines: [line], reason: null });
+    expect(scoreCase(c, [], KEMAR_CONTEXT, null, [one(1), one(2)])).toMatchObject({ pass: true, commands: ["approve@1", "approve@2"], hit: 2, expected: 2 });
+    expect(scoreCase(c, [], KEMAR_CONTEXT, null, [one(1)])).toMatchObject({ pass: false, missing: ["approve@2"] });
+    // AC7: a guess between two lines is a note, never a card
+    expect(scoreCase(byId("b-two-lines-fit"), [], KEMAR_CONTEXT, null, [{ act: "approve", lines: [2, 1], reason: null }])).toMatchObject({ pass: true, commands: ["note:which@1,2"] });
+    expect(scoreCase(byId("b-two-lines-fit"), [], KEMAR_CONTEXT, null, [one(1)])).toMatchObject({ pass: false, forbidden: ["decides approve@1"] });
+    expect(scoreCase(byId("b-someone-else-approved"), [], KEMAR_CONTEXT, null, [one(1)])).toMatchObject({ pass: false, forbidden: ["decides approve@1"] });
+  });
+
   it("every case is well formed: unique ids, and no key both expected and forbidden", () => {
     expect(new Set(EVAL_CASES.map((c) => c.id)).size).toBe(EVAL_CASES.length);
     expect(EVAL_CASES.length).toBeGreaterThanOrEqual(30);

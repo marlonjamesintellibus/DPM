@@ -2,6 +2,7 @@
 import { runChecks } from "../../domain/atlas-checks/checks";
 import type { CheckContext, RawProposal } from "../../domain/atlas-checks/types";
 import type { ExtractedItemDraft } from "../../domain/shared";
+import { checkCommands, type CommandNote, type RawCommand } from "../../domain/acting";
 import { checkQuestion, type RawQuestion } from "../../domain/question";
 import type { EvalCase } from "./cases";
 
@@ -36,9 +37,17 @@ export type CaseScore = {
   keys: string[];
   /** Section 15: "topic@project" as asked after the checks, or null. */
   asked: string | null;
+  /** Phase B: what the reply decides after the checks: "approve@1", or the note when it made no card. */
+  commands: string[];
 };
 
-export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: CheckContext, question: RawQuestion | null = null): CaseScore {
+/** Phase B: a note's key, "note:which@1,2". */
+function noteKey(note: CommandNote): string {
+  if (note.kind === "which") return `note:which${note.lines.length ? `@${[...note.lines].sort((a, b) => a - b).join(",")}` : ""}`;
+  return note.kind === "not_offered" ? `note:not_offered@${note.line}` : `note:${note.kind}`;
+}
+
+export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: CheckContext, question: RawQuestion | null = null, said: readonly RawCommand[] = []): CaseScore {
   const items = runChecks(proposals, { ...ctx, text: c.text, ...(c.earlier ? { earlier: c.earlier } : {}) }).items;
   const keys = items.map(itemKey);
   const used = new Set<number>();
@@ -63,6 +72,11 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   if (!c.ask && q) forbidden.push(`asks ${asked}`);
   // Section 16: a correction must name the earlier item it replaces (the checks keep only listed ones)
   if (c.replaces && !items.some((i) => i.replaces === c.replaces)) missing.push(`replaces ${c.replaces}`);
+  // Phase B: exactly the commands expected, one card per line; a case without them must decide nothing
+  const decided = checkCommands(said, c.answer);
+  const commands = [...decided.kept.map((k) => `${k.act}@${k.line}`), ...(decided.note ? [noteKey(decided.note)] : [])];
+  for (const k of c.commands ?? []) if (!commands.includes(k)) missing.push(k);
+  for (const k of commands) if (!(c.commands ?? []).includes(k)) forbidden.push(`decides ${k}`);
   if (c.ask) {
     const topics = Array.isArray(c.ask.topic) ? c.ask.topic : [c.ask.topic];
     if (!q || !topics.includes(q.topic) || q.projectId !== c.ask.projectId) missing.push(`ask ${topics.join("|")}@${c.ask.projectId ?? "none"}`);
@@ -70,13 +84,14 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   return {
     id: c.id,
     pass: missing.length === 0 && forbidden.length === 0,
-    expected: c.expect.length + (c.ask ? 1 : 0),
-    hit: c.expect.length + (c.ask ? 1 : 0) - missing.length,
+    expected: c.expect.length + (c.ask ? 1 : 0) + (c.commands?.length ?? 0),
+    hit: c.expect.length + (c.ask ? 1 : 0) + (c.commands?.length ?? 0) - missing.length,
     missing,
     extra,
     forbidden,
     chooseProject: items.filter((i) => i.routing === "choose_project").length,
     keys,
     asked,
+    commands,
   };
 }

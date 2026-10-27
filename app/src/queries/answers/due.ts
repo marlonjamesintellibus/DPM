@@ -7,7 +7,7 @@
 import { addDays, weekday, WEEKDAYS, type IsoDate } from "../../domain/dates";
 import type { AnswerCard } from "../../domain/question";
 import { firstName, todayIn, type ProjectMilestone, type ProjectView } from "../project";
-import { capped, counted, dayDate, forecastText, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder } from "./shared";
+import { capped, counted, dayDate, forecastText, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder, type DraftCard } from "./shared";
 
 type Window = { from: IsoDate; to: IsoDate; label: string; late: boolean };
 
@@ -78,12 +78,14 @@ export const due: AnswerBuilder = async (conn, viewerId, { asked, projectId, fol
     )
     .filter(({ w, late }) => (late && window.late) || (w.dueDate! >= window.from && w.dueDate! <= window.to))
     .sort((a, b) => a.w.dueDate!.localeCompare(b.w.dueDate!) || workTitle(a.w).localeCompare(workTitle(b.w)));
-  const cards: AnswerCard[] = [
-    ...work.map(({ v, w, late }) => ({
+  const cards: DraftCard[] = [
+    ...work.map(({ v, w, late }): DraftCard => ({
       title: workTitle(w),
       detail: `${v.project.name}: ${w.stateLabel}, due ${dayDate(w.dueDate!)}${named && w.owner && w.owner.id !== viewerId ? `, ${firstName(w.owner.name)}` : ""}`,
       tag: late ? "Late" : w.statusLabel,
       href: `/projects/${v.project.id}`,
+      subject: { type: "work_item", id: w.id, projectId: v.project.id },
+      offer: ["mark_done", "unblock"],
     })),
     ...next.map(milestoneCard),
   ];

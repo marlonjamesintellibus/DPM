@@ -36,7 +36,7 @@ async function evalModel(model: string, apiKey: string, cases: typeof EVAL_CASES
     const ctx: CheckContext = caseContext(c, contexts);
     try {
       const out = await atlas.extract(ctx);
-      return { id: c.id, seconds: (Date.now() - started) / 1000, costUsd: out.usage?.costUsd ?? 0, score: scoreCase(c, out.proposals, ctx, out.question ?? null), malformed: out.malformed.length, proposals: out.proposals };
+      return { id: c.id, seconds: (Date.now() - started) / 1000, costUsd: out.usage?.costUsd ?? 0, score: scoreCase(c, out.proposals, ctx, out.question ?? null, out.commands ?? []), malformed: out.malformed.length, proposals: out.proposals };
     } catch (e) {
       const why = e instanceof AtlasReadFailed ? `${e.why}: ${e.message}` : (e as Error).message;
       return { id: c.id, seconds: (Date.now() - started) / 1000, costUsd: 0, failed: why, malformed: 0 };

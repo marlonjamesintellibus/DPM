@@ -2,11 +2,18 @@
 // card cap, and the projects a question covers, read per viewer (P10).
 import type { Conn } from "../../db/conn";
 import { weekday, type IsoDate } from "../../domain/dates";
+import type { CommandAct } from "../../domain/machines/chat-command";
 import type { Answer, AnswerCard, AskedQuestion } from "../../domain/question";
 import { getProject, readableProjects, shortDate, type ProjectMilestone, type ProjectView, type ProjectWorkItem } from "../project";
 
+/**
+ * A card as a topic builds it. Phase B: `offer` says which acts its line is for (Approve and Decline on a
+ * proposal, Mark done on work); answerFor turns it into what the asker may do on it now (`actions`).
+ */
+export type DraftCard = AnswerCard & { offer?: readonly CommandAct[] };
+
 /** DPM's sentence and the cards; answerFor adds the topic and the time it was given. */
-export type Body = Pick<Answer, "text" | "cards" | "more">;
+export type Body = Pick<Answer, "text" | "more"> & { cards: DraftCard[] };
 
 /** One topic's answer to a checked question, from the asker's own data, as of now. */
 export type AnswerBuilder = (conn: Conn, viewerId: string, question: AskedQuestion, now: Date) => Promise<Body>;
@@ -18,7 +25,7 @@ export function counted(n: number, one: string, many: string): string {
 }
 
 /** MF11: at most 8 cards; past that, 7 and a count of the rest with where to find them. */
-export function capped(cards: AnswerCard[], where: { label: string; href: string }): Pick<Answer, "cards" | "more"> {
+export function capped<C extends AnswerCard>(cards: C[], where: { label: string; href: string }): { cards: C[]; more: Answer["more"] } {
   if (cards.length <= SHOWN) return { cards, more: null };
   return { cards: cards.slice(0, SHOWN - 1), more: { label: `${cards.length - SHOWN + 1} more ${where.label}`, href: where.href } };
 }

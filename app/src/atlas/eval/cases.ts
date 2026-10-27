@@ -15,7 +15,9 @@
 //   track:<project|none>               new work with no record, proposed to the PM (section 20, U7)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
-import type { EarlierTurn } from "../../domain/atlas-checks/types";
+// commands (phase B): what a reply decides on the open answer, after the checks: "<act>@<line>" per card,
+//   or "note:<kind>[@<lines>]" when it made none ("note:which@1,2"). A case without it must decide nothing.
+import type { EarlierTurn, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
 
@@ -45,6 +47,39 @@ export type EvalCase = {
   replaces?: string;
   /** BRAID entries this case adds to its author's data only (section 20, U4: an approved decision to reverse). */
   braid?: { projectId: string; id: string; kind: BraidKind; title: string; state: string }[];
+  /** Phase B: the answer open in the conversation, whose lines a reply may decide. */
+  answer?: OpenAnswer;
+  /** Phase B: what the reply decides, after the checks (see the keys above). */
+  commands?: string[];
+};
+
+// Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
+type Line = OpenAnswer["lines"][number];
+const line = (n: number, title: string, subject: Line["subject"], acts: Line["acts"], detail: string | null = null): Line => ({ line: n, title, detail, subject, acts });
+const entry = (id: string, projectId = "forager") => ({ type: "braid_entry" as const, id, projectId });
+const PROPOSALS_WAITING: OpenAnswer = {
+  captureId: "c-b1",
+  asked: "What needs me today?",
+  asOf: "2026-10-20T13:50:00.000Z",
+  lines: [
+    line(1, "Kemar raised a risk: Trend model may slip to 24 Oct", entry("br-slip-risk"), ["approve", "decline"], "Why: risks go on the log only when a PM or Lead approves"),
+    line(2, "Kemar raised a dependency: Kyle to send the store feed history by 23 Oct", entry("br-history-dep"), ["approve", "decline"], "Why: dependencies go on the log only when a PM or Lead approves"),
+    line(3, "Forager 2.0 is set Off track, but the plan says At risk", { type: "project", id: "forager", projectId: "forager" }, ["give_reason"], "Why: a status and the data disagree, and no reason is given"),
+  ],
+};
+const WAITING_ENTRIES: NonNullable<EvalCase["braid"]> = [
+  { projectId: "forager", id: "br-slip-risk", kind: "risk", title: "Trend model may slip to 24 Oct", state: "proposed" },
+  { projectId: "forager", id: "br-history-dep", kind: "dependency", title: "Kyle to send the store feed history by 23 Oct", state: "proposed" },
+];
+const KEMAR_WORK: OpenAnswer = {
+  captureId: "c-b2",
+  asked: "What am I working on?",
+  asOf: "2026-10-20T13:50:00.000Z",
+  lines: [
+    line(1, "#151 Store sales feed access", { type: "work_item", id: "wi-151", projectId: "forager" }, ["mark_done"], "Forager 2.0: due Thu 22 Oct"),
+    line(2, "#152 Store feed connector", { type: "work_item", id: "wi-152", projectId: "forager" }, ["mark_done"], "Forager 2.0: due Tue 27 Oct"),
+    line(3, "#208 Weekly sales export", { type: "work_item", id: "wi-208", projectId: "insights" }, ["mark_done"], "Store Insights: due Fri 23 Oct"),
+  ],
 };
 
 export const EVAL_CASES: EvalCase[] = [
@@ -814,5 +849,106 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Mi did eat some sprouts fi lunch, nutten else fi report.",
     expect: [],
     forbid: ["*"],
+  },
+  // Phase B: acting from an answer. A reply that decides a line is a command (one card per line, never a
+  // guess between lines); a change to a line's record is an item, reviewed as any other
+  {
+    id: "b-approve-by-name",
+    author: "alicia",
+    about: "a decision on a line, named by its words, is a command, never an item",
+    answer: PROPOSALS_WAITING,
+    braid: WAITING_ENTRIES,
+    text: "Approve the trend model risk",
+    expect: [],
+    forbid: ["*"],
+    commands: ["approve@1"],
+  },
+  {
+    id: "b-decline-with-reason",
+    author: "alicia",
+    about: "a decline names its line and carries the reason given",
+    answer: PROPOSALS_WAITING,
+    braid: WAITING_ENTRIES,
+    text: "Decline the Kyle one, we already track that on the feed blocker",
+    expect: [],
+    forbid: ["*"],
+    commands: ["decline@2"],
+  },
+  {
+    id: "b-approve-all",
+    author: "alicia",
+    about: "AC8 approve all of them is one command per line that offers it",
+    answer: PROPOSALS_WAITING,
+    braid: WAITING_ENTRIES,
+    text: "Approve all of them",
+    expect: [],
+    forbid: ["*"],
+    commands: ["approve@1", "approve@2"],
+  },
+  {
+    id: "b-two-lines-fit",
+    author: "alicia",
+    about: "AC7 words that fit two lines are never guessed",
+    answer: {
+      ...PROPOSALS_WAITING,
+      lines: [
+        { ...PROPOSALS_WAITING.lines[1], line: 1 },
+        line(2, "Jodian raised a dependency: Kyle to confirm the harvest docs by 22 Oct", entry("br-harvest-dep"), ["approve", "decline"], "Why: dependencies go on the log only when a PM or Lead approves"),
+      ],
+    },
+    braid: [...WAITING_ENTRIES, { projectId: "forager", id: "br-harvest-dep", kind: "dependency", title: "Kyle to confirm the harvest docs by 22 Oct", state: "proposed" }],
+    text: "Approve the Kyle dependency",
+    expect: [],
+    forbid: ["*"],
+    commands: ["note:which@1,2"],
+  },
+  {
+    id: "b-second-of-one",
+    author: "alicia",
+    about: "AC6 the second one of an answer with one line is no command",
+    answer: { ...PROPOSALS_WAITING, lines: PROPOSALS_WAITING.lines.slice(0, 1) },
+    braid: WAITING_ENTRIES,
+    text: "Approve the second one",
+    expect: [],
+    forbid: ["*"],
+    commands: ["note:which"],
+  },
+  {
+    id: "b-give-reason",
+    author: "alicia",
+    about: "a status reason said in words is a give_reason command with its words",
+    answer: PROPOSALS_WAITING,
+    braid: WAITING_ENTRIES,
+    text: "The reason for Forager is that Sprouts IT still has not given us the store feed",
+    expect: [],
+    allow: ["same:br-feed-blocker", "same:br-feed-dependency"],
+    forbid: ["new:*", "resolve:*", "outcome:*", "upd:*"],
+    commands: ["give_reason@3"],
+  },
+  {
+    id: "b-mark-done-words",
+    about: "a record change said about a line is an update on that line's record, never a command",
+    answer: KEMAR_WORK,
+    text: "Mark the second one done",
+    expect: ["upd:wi-152.state=done"],
+    forbid: ["upd:wi-151*", "upd:wi-208*"],
+  },
+  {
+    id: "b-someone-else-approved",
+    about: "rule 10: words about another person's decision are not a command",
+    answer: { ...PROPOSALS_WAITING, lines: PROPOSALS_WAITING.lines.slice(0, 2) },
+    text: "Alicia approved the trend model risk this morning",
+    expect: [],
+    forbid: ["resolve:*", "outcome:*"],
+  },
+  {
+    id: "b-someone-else-approved-holder",
+    author: "alicia",
+    about: "rule 10: a report of another person's decision is not the asker's, even when the asker could decide it too",
+    answer: PROPOSALS_WAITING,
+    braid: WAITING_ENTRIES,
+    text: "Jodian approved the trend model risk this morning",
+    expect: [],
+    forbid: ["resolve:*", "outcome:*", "new:*"],
   },
 ];
