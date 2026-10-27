@@ -1316,7 +1316,7 @@ Use case 1's scope still holds: meetings (use case 2), a clarifying question in 
 - Routing as now: Kyle is tied to Forager (contact on #151).
 - M15: a dependency gets an optional `expectedOn` date, read from the quote by `resolve-dates` like a forecast (check 5).
 - It lands as now: proposed to the PM or Lead (a member reports it), straight on the log for a PM or Lead (E92).
-- New inbox cause `dependency_due:<entry>` for the entry's owner: when the day after `expectedOn` starts, the entry is open or waiting, and no outcome is proposed. "Kyle was to update the harvest docs by 21 Oct." Its actions are U3's outcomes and "New date". DPM never marks it late by itself.
+- New inbox cause `dependency_due:<entry>` for the project's PM and Leads (changed while building: a dependency usually has no owner, and only a PM or Lead may end it or move its date): when the first working day after `expectedOn` starts and the entry is open or waiting. "Was this delivered? Kyle to update the harvest docs by 21 Oct." Its actions are Met, Late and New date. DPM never marks it late by itself.
 
 ```
 M15, dependency (additions)
@@ -1329,12 +1329,23 @@ open | waiting ──TIMER day after expectedOn (no outcome proposed)──▶ s
 |---|---|---|
 | DP1 | No date ("Kyle will send it") | A dependency with no expected date; no due item |
 | DP2 | "Tomorrow" said on a Friday | Saturday, as said (U8 counts durations only); the due item opens Monday, the next working day |
-| DP3 | The same promise reported again | Same as the open dependency (M16); a new date in the report proposes SET_EXPECTED to the owner, never moves it |
+| DP3 | The same promise reported again | Same as the open dependency (M16); the date never moves. (Changed while building: a new date in the later report is not sent to the PM as a proposal yet; it shows in the report's quote, and the PM gives a new date from the due item) |
 | DP4 | A teammate's promise ("Jodian will send the runbook Friday") | Not a dependency when it is their own listed record: a forecast Ask to them (U5). Otherwise a dependency |
 | DP5 | The author's own promise ("I'll send Kyle the request") | Out of use case 1 (phase E); set aside as "a promise; commitments come later" |
 | DP6 | The promise is about a record already blocked by the same subject (#151 and "Store sales feed access") | Same as the existing dependency, not a new one |
 | DP7 | The dependency is declined | No due item ever opens |
 | DP8 | The date passes while it is still proposed | No due item; the S18 reminders to the decider run as now |
+
+### U2 built (27 Oct 2026)
+
+- **Model first:** `research/state-machines/js/models/dependencyDue.mjs` (498 states): DueMatchesCause, DueOnlyOnLog, NeverEndsByItself, EndedOnlyByLead, DateMovesOnlyByLead all pass. Four planted bugs each fail as expected (a passed date marks it late; a later report moves the date; the item opens while proposed; a new date leaves the item open).
+- **M15:** `expectedOn` on the record; REPORT carries it (dependencies only); SET_EXPECTED from open or waiting, for those who may resolve it, never in the past or the same date; `dependencyDueFrom` and `isDependencyDue`; `braidEntryCauses` takes `today` for causes that hold by date. Migration `0007` adds `braid_entries.expected_on`.
+- **Checks:** a new dependency's date is read by the server from the quote; a date already past is dropped (what happened, not a promise).
+- **Atlas:** prompt `read-7`. Someone else's promise is a dependency titled with who, what and the date ("Kyle to update the harvest docs by 21 Oct"); the author's own promise is not proposed.
+- **Timer:** `runDependencyDue` evaluates only projects with a due dependency and no open due item, so it writes nothing most minutes.
+- **Screens:** the review card says "Propose to Alicia, the PM, expected Wed 21 Oct"; the BRAID log line says "expected 21 Oct"; the inbox item has Met, Late and New date.
+- **Evaluation:** `kyle-promise`, `slip-and-promise` and `own-promise` added; a dependency's key gains `@<date>`. With GPT-6.1 Sol all three passed three runs in a row (it was 1 in 3 before), and the other cases run with them still pass.
+- **Tests:** DP1 to DP3, DP7, DP8, new dates and who may give them, in the machine, the checks and against PGlite (`commands/dependency-due.test.ts`). DP4 waits for U5; DP5 is set aside by U1; DP6 is M16's same-as, unchanged. 842 unit tests and the 11-step browser story pass.
 
 ### U3. Proposed outcomes for risks, assumptions and dependencies
 

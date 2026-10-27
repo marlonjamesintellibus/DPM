@@ -38,6 +38,8 @@ export type BraidIntent = {
   projectId: string;
   title: string;
   matchEntryId: string | null;
+  /** Section 20, U2: a new dependency's promised date. */
+  expectedOn?: string | null;
 };
 
 export type SaveConflict = { itemId: string; key: string; saw: string | null; current: string | null };
@@ -118,6 +120,7 @@ export function planSave(
         projectId,
         title: item.value ?? entry.title,
         matchEntryId: kind === "braid_same" || kind === "braid_resolve" ? entry.matchEntryId : null,
+        ...(kind === "braid_new" && entry.expectedOn ? { expectedOn: entry.expectedOn } : {}),
       });
     } else {
       throw new Error(`item ${item.id}: nothing to apply`);

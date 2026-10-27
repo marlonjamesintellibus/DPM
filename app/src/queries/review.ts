@@ -4,6 +4,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
+import { weekday } from "../domain/dates";
 import * as t from "../db/schema";
 import { saveBlockers } from "../domain/machines/capture";
 import { displayMark, type ExtractedItem, type ItemState, type WithdrawReason } from "../domain/machines/extracted-item";
@@ -299,11 +300,13 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
           : `Add as evidence (${plural(n, "source", "sources")})`;
       }
       const lands = landsAs(d.braid.kind, authorRole(d.projectId));
-      if (lands !== "proposed") return "Add to the log";
+      // Section 20, U2: a dependency says when it was promised
+      const by = d.braid.expectedOn ? `, expected ${weekday(d.braid.expectedOn).slice(0, 3)} ${shortDate(d.braid.expectedOn)}` : "";
+      if (lands !== "proposed") return `Add to the log${by}`;
       if (d.braid.kind === "decision") return "Propose to the decider";
       // Section 19: say who decides, not only their role
       const pm = memberships.find((m) => m.projectId === d.projectId && m.role === "pm" && m.state === "member" && m.personId !== capture.authorId);
-      return pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM";
+      return `${pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM"}${by}`;
     }
     const target = d.target!;
     const value = item.value ?? target.newValue;

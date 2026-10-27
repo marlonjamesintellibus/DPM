@@ -53,6 +53,7 @@ function ownersOf(
       return members.filter((m) => m.role === "pm").map((m) => m.id);
     case "clear": // S13: the owner of the blocked work, or a PM or Lead, confirms
       return [...new Set([...(entry?.ownerId ? [entry.ownerId] : []), ...leads])].filter((id) => id !== entry?.resolveProposedBy);
+    case "dependency_due": // Section 20, U2: those who decide its outcome or give it a new date
     case "follow_up": // D10: a PM or Lead confirms or drops what Atlas drafted
     case "kind_change": // M17: a PM or Lead switches or keeps what a member asked
       return leads;
@@ -110,7 +111,7 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
   const statusCause = setStatusCause(record);
   if (statusCause) desired.set(`${statusCause}:${projectId}`, ownersOf(`${statusCause}:${projectId}`, project, undefined, members));
   for (const entry of Object.values(log)) {
-    for (const key of braidEntryCauses(entry, members, policy)) desired.set(key, ownersOf(key, project, entry, members, policy));
+    for (const key of braidEntryCauses(entry, members, policy, todayOf(now))) desired.set(key, ownersOf(key, project, entry, members, policy));
     // E93: every work item the blocker held has moved on; its owners are asked, the blocker is never closed by the rule
     const held = work.filter((w) => w.blockedLinks.includes(entry.id));
     if (entry.kind === "blocker" && entry.state === "reported" && !entry.resolveProposedBy && held.length && held.every((w) => w.state !== "blocked")) {

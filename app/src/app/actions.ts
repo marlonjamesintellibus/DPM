@@ -19,6 +19,7 @@ import {
   keepOpen,
   reportBraidEntry,
   resolveBraidEntry,
+  setExpectedDate,
   switchEntryKind,
   withdrawKindChange,
   type KindAnswer,
@@ -223,6 +224,16 @@ export async function withdrawKindAction(requestId: string): Promise<ActionResul
 
 export async function resolveEntry(entryId: string): Promise<ActionResult> {
   return run((ctx) => resolveBraidEntry(ctx, entryId), "Resolved.");
+}
+
+/** Section 20, U2: a PM or Lead ends a due dependency, met or late. Late drafts its follow up (D10). */
+export async function endDependency(entryId: string, outcome: "met" | "late"): Promise<ActionResult> {
+  return run((ctx) => resolveBraidEntry(ctx, entryId, outcome), outcome === "met" ? "Marked met." : "Marked late.");
+}
+
+/** Section 20, U2: a PM or Lead gives a dependency a new expected date. */
+export async function newExpectedDate(entryId: string, date: string): Promise<ActionResult> {
+  return run((ctx) => setExpectedDate(ctx, entryId, date), "New date saved.");
 }
 
 export async function keepEntryOpen(entryId: string): Promise<ActionResult> {

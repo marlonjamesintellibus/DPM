@@ -9,7 +9,8 @@ export function itemKey(i: ExtractedItemDraft): string {
   if (i.target) return `upd:${i.target.id}.${i.target.field}=${i.target.newValue}`;
   if (i.kind === "braid_resolve") return `resolve:${i.braid?.matchEntryId}`;
   if (i.braid?.match === "same_as") return `same:${i.braid.matchEntryId}`;
-  return `new:${i.braid?.kind}:${i.projectId ?? "none"}`;
+  // Section 20, U2: a dependency's promised date, as the server read it
+  return `new:${i.braid?.kind}:${i.projectId ?? "none"}${i.braid?.expectedOn ? `@${i.braid.expectedOn}` : ""}`;
 }
 
 const matches = (pattern: string, key: string) => (pattern.endsWith("*") ? key.startsWith(pattern.slice(0, -1)) : key === pattern);

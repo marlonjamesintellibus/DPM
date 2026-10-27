@@ -65,7 +65,9 @@ function subline(e: ProjectBraidEntry): string {
     return s ? `From ${s.person.name.split(" ")[0]}'s ${s.fromCapture ? "update" : "report"}, ${s.ago}` : "Waiting for a PM or Lead";
   }
   if (e.resolvedOn) return `Resolved ${shortDate(e.resolvedOn)}${e.resolvedBy ? ` by ${e.resolvedBy.name.split(" ")[0]}` : ""}`;
-  const parts = e.links.map((l) => `${l.relation === "related" ? "related to" : l.relation.replace("_", " ")} ${KIND_LABEL[l.kind].toLowerCase()} ${l.title}`);
+  // Section 20, U2: what a dependency waits on, and by when
+  const expected = e.expectedOn && e.onLog ? [`expected ${shortDate(e.expectedOn)}`] : [];
+  const parts = [...expected, ...e.links.map((l) => `${l.relation === "related" ? "related to" : l.relation.replace("_", " ")} ${KIND_LABEL[l.kind].toLowerCase()} ${l.title}`)];
   if (e.fixedNote) parts.push(e.fixedNote);
   else if (e.decidedOn) parts.push(`${e.selfApproved ? "approved by its reporter" : "approved"} ${shortDate(e.decidedOn)}`);
   return parts.join(" · ") || `Owner ${e.owner?.name ?? "not set"}`;

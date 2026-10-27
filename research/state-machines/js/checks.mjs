@@ -13,6 +13,7 @@ import CaptureJob from './models/captureJob.mjs';
 import Leave from './models/leave.mjs';
 import BraidFollowUps from './models/braidFollowUps.mjs';
 import BraidKindSwitch from './models/braidKindSwitch.mjs';
+import DependencyDue from './models/dependencyDue.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -62,6 +63,8 @@ export const ROWS = [
   { spec: 'BraidFollowUps', setting: 'as given', model: BraidFollowUps(), expectFail: [] },
   // BraidKindSwitch is the plan of 27 Oct: M15 SWITCH_KIND and M17 kind change request (machines doc, section 13)
   { spec: 'BraidKindSwitch', setting: 'as given', model: BraidKindSwitch(), expectFail: [] },
+  // DependencyDue is section 20, U2: someone else's promise as a dependency with an expected date
+  { spec: 'DependencyDue', setting: 'as given', model: DependencyDue(), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -129,4 +132,8 @@ export const PLANTS = [
   { spec: 'BraidKindSwitch', setting: "bug: unmerge allowed after the target was switched", model: BraidKindSwitch({ Bug: 'unmergeAfterSwitch' }), expectFail: ['EveryReportOnce'] },
   { spec: 'BraidKindSwitch', setting: "bug: a blocker becomes an issue and nobody asks the work's owner", model: BraidKindSwitch({ Bug: 'dropAsk' }), expectFail: ['BlockedWorkCovered'] },
   { spec: 'BraidKindSwitch', setting: "bug: switching a blocker away unblocks its work", model: BraidKindSwitch({ Bug: 'unblock' }), expectFail: ['WorkStaysBlocked'] },
+  { spec: 'DependencyDue', setting: 'bug: a passed date marks it late', model: DependencyDue({ Bug: 'autoLate' }), expectFail: ['NeverEndsByItself', 'EndedOnlyByLead'] },
+  { spec: 'DependencyDue', setting: 'bug: a later report moves the date', model: DependencyDue({ Bug: 'reportMovesDate' }), expectFail: ['DateMovesOnlyByLead'] },
+  { spec: 'DependencyDue', setting: 'bug: the due item opens while it is still proposed', model: DependencyDue({ Bug: 'dueWhileProposed' }), expectFail: ['DueMatchesCause', 'DueOnlyOnLog'] },
+  { spec: 'DependencyDue', setting: 'bug: a new date leaves the due item open', model: DependencyDue({ Bug: 'keepDue' }), expectFail: ['DueMatchesCause'] },
 ];

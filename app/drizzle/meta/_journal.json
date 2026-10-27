@@ -50,6 +50,13 @@
       "when": 1793115026400,
       "tag": "0006_conversations",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793127250187,
+      "tag": "0007_dependency_expected",
+      "breakpoints": true
     }
   ]
 }

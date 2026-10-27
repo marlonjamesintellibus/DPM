@@ -256,6 +256,8 @@ export type ProjectBraidEntry = {
   fixedNote: string | null;
   /** The kind it was before its latest switch ("Was a risk"). */
   was: BraidKind | null;
+  /** Section 20, U2: when what a dependency waits on was promised. */
+  expectedOn: IsoDate | null;
   switchNote: KindSwitchNote | null;
   /** A member's request to change the kind, while it waits (M17). */
   request: KindRequestView | null;
@@ -456,6 +458,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       onLog: isOnLog(e),
       waitingForApproval: e.state === "proposed",
       reportCount: e.sources.length,
+      expectedOn: e.expectedOn,
       owner: person(e.ownerId),
       reportedBy: person(e.reportedBy),
       decidedBy: person(e.decidedBy),

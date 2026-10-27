@@ -5,7 +5,8 @@
 //
 // Item keys:
 //   upd:<targetId>.<field>=<value>     an update ("upd:wi-145.state=done")
-//   new:<kind>:<project|none>          a new BRAID entry, related to another entry or not
+//   new:<kind>:<project|none>          a new BRAID entry, related to another entry or not;
+//                                      a dependency with a promised date adds "@<date>" (section 20, U2)
 //   same:<entryId>                     another report of an open entry
 //   resolve:<entryId>                  says a blocker or issue is cleared (D7)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
@@ -77,7 +78,7 @@ export const EVAL_CASES: EvalCase[] = [
     about: "blocked on something new",
     text: "#145 is blocked waiting on the Google API quota increase.",
     expect: ["upd:wi-145.state=blocked"],
-    allow: ["new:blocker:forager", "new:dependency:forager"],
+    allow: ["new:blocker:forager", "new:dependency:forager*"],
   },
   {
     id: "unblocked",
@@ -159,6 +160,30 @@ export const EVAL_CASES: EvalCase[] = [
     expect: ["new:risk:forager"],
     allow: ["upd:ms-trend.forecast*"],
     forbidWords: ["the author"],
+  },
+  // Section 20, U2: someone else's promise is a dependency with its date; the author's own is not proposed
+  {
+    id: "kyle-promise",
+    about: "someone else's promise, with a date",
+    text: "I've spoken with Kyle to update the harvest docs, he'll do it tomorrow.",
+    expect: ["new:dependency:forager@2026-10-21"],
+    forbidWords: ["the author", "by tomorrow"],
+  },
+  {
+    id: "slip-and-promise",
+    about: "found in use: a slip and a promise in one message",
+    text: "I think Forager might be delayed by two days as I haven't finished working on the AI pipeline, I've spoken with Kyle to update the harvest docs he'll do it tomorrow",
+    expect: ["new:risk:forager", "new:dependency:forager@2026-10-21"],
+    allow: ["upd:ms-trend.forecast*"],
+    forbidWords: ["the author", "by tomorrow"],
+  },
+  {
+    id: "own-promise",
+    about: "the author's own promise is not proposed (phase E)",
+    text: "I'll send Kyle the access request for the store feed tomorrow.",
+    expect: [],
+    allow: ["same:br-feed-dependency", "same:br-feed-blocker", "upd:wi-151*"],
+    forbid: ["new:dependency*"],
   },
   {
     id: "unfinished-own-work",
