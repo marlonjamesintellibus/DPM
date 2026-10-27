@@ -94,11 +94,11 @@ describe("D7: a blocker resolved from a message (E93)", () => {
     expect(items[0].state).toBe("no_change");
   });
 
-  it("only blockers and issues are resolved from a message (check 12)", async () => {
+  it("a risk is not resolved from a message: it needs an outcome, which only proposes (check 12, section 20, U3)", async () => {
     const { captureId } = await createCapture(as("kemar"), { channel: "atlas", messageId: "atl-risk", kind: "text", text: "The pipeline risk is gone.", messageAt: at(0), receivedAt: at(0) });
     const r = await proposeItems(as("kemar"), captureId, [{ ...resolve("The pipeline risk is gone", "br-pipeline-risk") }]);
     expect(r.items).toEqual([]);
-    expect(r.dropped[0].reason).toMatch(/not resolved from a message/);
+    expect(r.dropped[0].reason).toBe("say whether the risk closed or realised");
   });
 });
 

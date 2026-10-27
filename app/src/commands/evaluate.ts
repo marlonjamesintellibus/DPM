@@ -54,6 +54,7 @@ function ownersOf(
     case "clear": // S13: the owner of the blocked work, or a PM or Lead, confirms
       return [...new Set([...(entry?.ownerId ? [entry.ownerId] : []), ...leads])].filter((id) => id !== entry?.resolveProposedBy);
     case "dependency_due": // Section 20, U2: those who decide its outcome or give it a new date
+    case "confirm_outcome": // Section 20, U3: a member said it ended; those who may end it decide (D7)
     case "follow_up": // D10: a PM or Lead confirms or drops what Atlas drafted
     case "kind_change": // M17: a PM or Lead switches or keeps what a member asked
       return leads;

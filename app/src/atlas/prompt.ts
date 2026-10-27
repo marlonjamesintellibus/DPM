@@ -10,12 +10,13 @@ import { TOPICS } from "../domain/topics";
 import { BRAID_KINDS } from "../domain/rights";
 import { CONFIDENCES } from "../domain/shared";
 
-// read-7 (main): someone else's agreed work is a dependency with its date (section 20, U2), and the
-// rationale speaks to the author as "you". read-7 and read-8 (phase R, built alongside): Jamaican English
-// and Patois are read as written, quotes kept exactly, and what Atlas writes is standard English (CD20); a
-// hedge in Patois is a hedge ("mi tink"), and a project name that is also a word ("di academy") is not the
-// project (JA7). read-9: both together.
-export const PROMPT_VERSION = "read-9";
+// Main's line: read-7, someone else's agreed work is a dependency with its date (section 20, U2), and the
+// rationale speaks to the author as "you"; read-8, a message may say how a risk, assumption or dependency
+// ended (section 20, U3). The conversational plan's phase R, built alongside: Jamaican English and Patois
+// are read as written, quotes kept exactly, and what Atlas writes is standard English (CD20); a hedge in
+// Patois is a hedge ("mi tink"), and a project name that is also a word ("di academy") is not the project
+// (JA7). read-10: all of them together.
+export const PROMPT_VERSION = "read-10";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -47,6 +48,9 @@ What you may propose (kind)
   - If it relates to an open entry of another kind, put that entry's id in matchEntryId.
 - "braid_same": the update reports the same thing as an open BRAID entry already listed. Put that entry's id in matchEntryId and its kind in braidKind.
 - "braid_resolve": the update says a listed blocker or issue is cleared ("Kyle sent the feed"). Put that entry's id in matchEntryId. If the work it held is moving again, also propose the work item's state change. DPM decides whether the author may resolve it or only tells those who may.
+  - Also when a listed risk, assumption or dependency has ended. Put its id in matchEntryId and say how in outcome: a risk is "closed" (gone, no longer a worry) or "realised" (it happened); an assumption is "confirmed" or "broken"; a dependency is "met" (delivered) or "late". DPM sends it to the PM or Lead, who decide. Leave outcome null for a blocker or issue.
+  - A risk that happened is realised; do not also report it as a new issue unless the update describes a new problem.
+  - Only when the update says it ended ("the risk is gone", "it happened", "they delivered"). Something that makes a risk smaller or shows progress, without saying it is over, is braid_same evidence.
 - One sentence can give several items (for example a forecast update and a risk). Give each change once.
 - Propose every change the update states, even when the record already shows that value or the leave is already approved. DPM marks those as "no change" or "matches your leave" for the author.
 
@@ -92,7 +96,7 @@ Never
 - Never propose anything about health, sickness or personal life beyond leave dates.
 - Never judge a person ("always late", "careless"). Report the work, not the person.
 - Never set or suggest a project status (On track, At risk, Off track). DPM works that out.
-- Never approve, resolve or close anything.
+- Never approve or decline anything. Saying something ended or is cleared only tells those who decide it.
 - Write plainly. No em dashes.`;
 
 function sentOn(at: Date): string {
@@ -152,6 +156,7 @@ export const proposalSchema = z.object({
   braidKind: z.enum(BRAID_KINDS).nullable().optional(),
   braidTitle: nullableString,
   matchEntryId: nullableString,
+  outcome: z.enum(["closed", "realised", "confirmed", "broken", "met", "late"]).nullable().optional(),
   note: nullableString,
   options: z.array(z.string()).nullable().optional(),
   replacesItemId: nullableString,

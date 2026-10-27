@@ -19,7 +19,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { BraidAnswer, BraidEntryState, BraidLinkRelation } from "../domain/machines/braid-entry";
+import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome } from "../domain/machines/braid-entry";
 import type { CaptureState } from "../domain/machines/capture";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
@@ -270,6 +270,8 @@ export const braidEntries = pgTable(
     stateBeforeSwitch: text("state_before_switch").$type<BraidEntryState>(),
     /** Section 20, U2: the day someone promised what a dependency waits on. */
     expectedOn: day("expected_on"),
+    /** Section 20, U3: who said it ended, and how, waiting for a PM or Lead. */
+    outcomesProposed: jsonb("outcomes_proposed").$type<ProposedOutcome[]>().notNull().default([]),
     version: version(),
     createdAt: created(),
     updatedAt: updated(),

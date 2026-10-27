@@ -14,6 +14,7 @@ import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
 import { getLeaveImpact } from "./leave";
+import { OUTCOME_SAID } from "./review";
 import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, shortDate, STATUS_LABEL, statusLabel, todayIn } from "./project";
 
 export type InboxCause =
@@ -39,7 +40,9 @@ export type InboxCause =
   /** D32: work still Blocked whose blocker changed kind; its owner unblocks it or links another blocker. */
   | "blocked_without_blocker"
   /** Section 20, U2: a dependency's promised date has passed; a PM or Lead marks it met or late, or gives a new date. */
-  | "dependency_due";
+  | "dependency_due"
+  /** Section 20, U3: a member said a risk, assumption or dependency ended; a PM or Lead decides, or keeps it open. */
+  | "confirm_outcome";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -164,7 +167,7 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
 
   const people = await peopleById(
     conn,
-    [...[...projects.values()].flatMap((p) => Object.values(p.log).flatMap((e) => [e.reportedBy, e.resolveProposedBy, ...e.answers.map((a) => a.by)])), ...requests.map((r) => r.askedBy)],
+    [...[...projects.values()].flatMap((p) => Object.values(p.log).flatMap((e) => [e.reportedBy, e.resolveProposedBy, ...e.answers.map((a) => a.by), ...e.outcomesProposed.map((o) => o.by)])), ...requests.map((r) => r.askedBy)],
   );
   const nameOf = (id: string | null) => (id ? firstName(people.get(id)?.name ?? id) : "Someone");
 
@@ -394,6 +397,20 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
           source: "Delivery check",
           fromWords: false,
           action: "Confirm",
+          group: "today",
+          subject,
+        });
+        break;
+      }
+      case "confirm_outcome": {
+        // OC3: everyone who said it, and what each said
+        const said = entry.outcomesProposed.map((o) => `${nameOf(o.by)} says ${OUTCOME_SAID[o.outcome]}`).join("; ");
+        make({
+          title: `${said}: ${entry.title}`,
+          why: `only a PM or Lead ends ${withArticle(KIND_LABEL[entry.kind].toLowerCase())}; decide how it ended, or keep it open`,
+          source: `${nameOf(entry.outcomesProposed[0]?.by ?? null)}'s update`,
+          fromWords: true,
+          action: "Decide",
           group: "today",
           subject,
         });

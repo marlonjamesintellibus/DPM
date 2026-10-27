@@ -160,7 +160,11 @@ export type BraidEntryRecord = {
   stateBeforeSwitch: BraidEntryState | null;
   /** Section 20, U2: the day someone promised to deliver what a dependency waits on. Dependencies only. */
   expectedOn: IsoDate | null;
+  /** Section 20, U3: members who said it ended, and how. One each; waits for a PM or Lead (D7). */
+  outcomesProposed: ProposedOutcome[];
 };
+
+export type ProposedOutcome = { by: string; outcome: ResolveOutcome; on: IsoDate };
 
 export function draftEntry(fields: { id: string; projectId: string; kind: BraidKind; title: string; ownerId?: string | null }): BraidEntryRecord {
   return {
@@ -191,16 +195,29 @@ export function draftEntry(fields: { id: string; projectId: string; kind: BraidK
     switchReason: null,
     stateBeforeSwitch: null,
     expectedOn: null,
+    outcomesProposed: [],
   };
 }
 
 export type ResolveOutcome = "closed" | "realised" | "confirmed" | "broken" | "met" | "late";
+
+/** How each kind that a PM or Lead decides can end (blockers and issues are resolved). */
+export const OUTCOMES: Partial<Record<BraidKind, readonly ResolveOutcome[]>> = {
+  risk: ["closed", "realised"],
+  assumption: ["confirmed", "broken"],
+  dependency: ["met", "late"],
+};
+
+/** Section 20, U3: the live states an outcome can be proposed from, per kind. */
+export const OUTCOME_FROM: readonly BraidEntryState[] = ["open", "mitigating", "holding", "waiting"];
 
 export type BraidEvent =
   /** From the Apply job, for the speaker. Words such as "we agreed" are shown to the approver and never approve (E96). */
   | { type: "REPORT"; source: BraidSource; wordsClaimApproval?: boolean; expectedOn?: IsoDate | null }
   /** Section 20, U2: a PM or Lead gives a dependency a new expected date. A later report never moves it (DP3). */
   | { type: "SET_EXPECTED"; date: IsoDate }
+  /** Section 20, U3: a member says a risk, assumption or dependency ended; a PM or Lead decides (D7). */
+  | { type: "PROPOSE_OUTCOME"; outcome: ResolveOutcome }
   | { type: "ADD_SOURCE"; projectId: string; kind: BraidKind; source: BraidSource }
   /** note: optional words to the reporter (L6b), kept with the answer. */
   | { type: "APPROVE"; note?: string }
@@ -315,6 +332,13 @@ function resolveGuard(c: Ctx): string | null {
 function resolveTo(kinds: readonly BraidKind[], outcome?: ResolveOutcome) {
   return (c: Ctx, e: EventOf<"RESOLVE">) =>
     resolveGuard(c) ?? onlyKinds(c, kinds) ?? (e.outcome === outcome ? null : `outcome ${e.outcome ?? "none"}, not ${outcome ?? "none"}`);
+}
+
+// Section 20, U3 (BraidOutcome): a member's words only propose; one who may decide it does so instead
+function proposeOutcomeGuard(c: Ctx, e: EventOf<"PROPOSE_OUTCOME">): string | null {
+  if (!c.actor?.role) return NOT_MEMBER;
+  if (!OUTCOMES[c.record.kind]?.includes(e.outcome)) return `a ${c.record.kind} does not end as ${e.outcome}`;
+  return resolveGuard(c) === null ? "you may decide it yourself" : null;
 }
 
 // Section 20, U2: only those who decide a dependency's outcome move its date, and never into the past
@@ -477,6 +501,8 @@ export const braidEntryMachine = defineMachine<BraidEntryState, BraidEvent, Ctx>
     { from: ["open"], on: "PROGRESS", to: "mitigating", guard: (c) => resolveGuard(c) ?? onlyKinds(c, ["risk"]) },
     { from: ["open"], on: "PROGRESS", to: "waiting", guard: (c) => resolveGuard(c) ?? onlyKinds(c, ["dependency"]) },
     ...(["open", "waiting"] as const).map((s): BraidArrow => ({ from: [s], on: "SET_EXPECTED", to: s, guard: setExpectedGuard })),
+    ...OUTCOME_FROM.map((s): BraidArrow => ({ from: [s], on: "PROPOSE_OUTCOME", to: s, guard: proposeOutcomeGuard })),
+    ...OUTCOME_FROM.map((s): BraidArrow => ({ from: [s], on: "KEEP_OPEN", to: s, guard: (c) => resolveGuard(c) ?? (c.record.outcomesProposed.length ? null : "nobody said it ended") })),
 
     {
       from: ["reported"],
@@ -555,13 +581,16 @@ function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: st
       // Back in front of the deciders, so their reminders start again
       return { ...r, answers: answer("reply", e.answer), proposedOn: today, remindersSent: 0, lastRemindedOn: null };
     case "RESOLVE":
-      return { ...r, resolvedBy: by, resolvedOn: today, resolveProposedBy: null, newAlert: false };
+      return { ...r, resolvedBy: by, resolvedOn: today, resolveProposedBy: null, newAlert: false, outcomesProposed: [] };
+    case "PROPOSE_OUTCOME":
+      // OC3: one proposal each; saying it again replaces the earlier one
+      return { ...r, outcomesProposed: [...r.outcomesProposed.filter((x) => x.by !== by), { by, outcome: e.outcome, on: today }] };
     case "REOPEN":
       return { ...r, resolvedBy: null, resolvedOn: null };
     case "PROPOSE_RESOLVE":
       return { ...r, resolveProposedBy: by };
     case "KEEP_OPEN":
-      return { ...r, resolveProposedBy: null };
+      return { ...r, resolveProposedBy: null, outcomesProposed: [] };
     case "ACKNOWLEDGE":
       return { ...r, newAlert: false };
     case "REMIND":
@@ -672,6 +701,23 @@ export function decidersFor(entry: BraidEntryRecord, members: readonly ProjectMe
  * more_info: the reporter was asked for more. blocker_new: a new blocker, from its first report only,
  * never for an added source (E84). clear: someone said a blocker is cleared and the owner or a PM or Lead should confirm.
  */
+/** D10: a risk realised becomes an issue; an assumption broken or a dependency late raises a risk. */
+export function followUpOf(entry: BraidEntryRecord): BraidKind | null {
+  if (entry.kind === "risk" && entry.state === "realised") return "issue";
+  if ((entry.kind === "assumption" && entry.state === "broken") || (entry.kind === "dependency" && entry.state === "late")) return "risk";
+  return null;
+}
+
+/** D10: drafts what follows an entry that just ended badly, for a PM or Lead to confirm; never on the log by the rule. */
+export function withFollowUp(log: BraidLog, entryId: string): BraidLog {
+  const entry = log[entryId];
+  const follow = followUpOf(entry);
+  const id = `${entryId}-raised`;
+  if (!follow || log[id]) return log;
+  const draft = { ...draftEntry({ id, projectId: entry.projectId, kind: follow, title: entry.title }), links: [{ relation: "raised_from" as const, entryId }] };
+  return { ...log, [id]: draft, [entryId]: { ...entry, links: [...entry.links, { relation: "related" as const, entryId: id }] } };
+}
+
 /** Section 20, U2: the first working day after the expected date, when the PM and Leads are asked. */
 export function dependencyDueFrom(expectedOn: IsoDate): IsoDate {
   let day = addDays(expectedOn, 1);
@@ -694,5 +740,7 @@ export function braidEntryCauses(entry: BraidEntryRecord, members: readonly Proj
   // D10: a follow up Atlas drafted when a risk was realised, an assumption broke or a dependency was late
   if (entry.state === "none" && entry.links.some((l) => l.relation === "raised_from")) keys.push(`follow_up:${entry.id}`);
   if (today && isDependencyDue(entry, today)) keys.push(`dependency_due:${entry.id}`);
+  // Section 20, U3: a member said it ended; the PM and Leads decide (D7)
+  if (OUTCOME_FROM.includes(entry.state) && entry.outcomesProposed.length) keys.push(`confirm_outcome:${entry.id}`);
   return keys;
 }

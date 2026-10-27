@@ -92,6 +92,15 @@ describe("BRAID entry arrows (every drawn arrow)", () => {
     { kind: "dependency", from: "open", event: { type: "PROGRESS" }, actor: andre, to: "waiting" },
     { kind: "dependency", from: "open", event: { type: "SET_EXPECTED", date: "2026-10-23" }, actor: alicia, to: "open" },
     { kind: "dependency", from: "waiting", event: { type: "SET_EXPECTED", date: "2026-10-23" }, actor: andre, to: "waiting" },
+    // Section 20, U3: a member proposes how it ended; a PM or Lead keeps it open
+    { kind: "risk", from: "open", event: { type: "PROPOSE_OUTCOME", outcome: "closed" }, actor: kemar, to: "open" },
+    { kind: "risk", from: "mitigating", event: { type: "PROPOSE_OUTCOME", outcome: "realised" }, actor: kemar, to: "mitigating" },
+    { kind: "assumption", from: "holding", event: { type: "PROPOSE_OUTCOME", outcome: "broken" }, actor: jodian, to: "holding" },
+    { kind: "dependency", from: "waiting", event: { type: "PROPOSE_OUTCOME", outcome: "met" }, actor: kemar, to: "waiting" },
+    { kind: "risk", from: "open", event: { type: "KEEP_OPEN" }, actor: alicia, to: "open", patch: { outcomesProposed: [{ by: "kemar", outcome: "closed", on: TODAY }] } },
+    { kind: "risk", from: "mitigating", event: { type: "KEEP_OPEN" }, actor: andre, to: "mitigating", patch: { outcomesProposed: [{ by: "kemar", outcome: "closed", on: TODAY }] } },
+    { kind: "assumption", from: "holding", event: { type: "KEEP_OPEN" }, actor: alicia, to: "holding", patch: { outcomesProposed: [{ by: "kemar", outcome: "broken", on: TODAY }] } },
+    { kind: "dependency", from: "waiting", event: { type: "KEEP_OPEN" }, actor: alicia, to: "waiting", patch: { outcomesProposed: [{ by: "kemar", outcome: "met", on: TODAY }] } },
     { kind: "blocker", from: "reported", event: { type: "PROPOSE_RESOLVE" }, actor: kemar, to: "reported" },
     { kind: "blocker", from: "reported", event: { type: "KEEP_OPEN" }, actor: alicia, to: "reported", patch: { resolveProposedBy: "kemar" } },
     { kind: "blocker", from: "reported", event: { type: "ACKNOWLEDGE" }, actor: alicia, to: "reported", patch: { newAlert: true } },
@@ -619,6 +628,7 @@ describe("BRAID entries keep the model-checked properties", () => {
       { type: "RESOLVE" },
     ),
     fc.constantFrom("2026-10-19", "2026-10-30", "2027-01-04").map((date): BraidEvent => ({ type: "SET_EXPECTED", date })),
+    fc.constantFrom<"closed" | "realised" | "confirmed" | "broken" | "met" | "late">("closed", "realised", "confirmed", "broken", "met", "late").map((outcome): BraidEvent => ({ type: "PROPOSE_OUTCOME", outcome })),
     fc.constantFrom<"closed" | "realised" | "confirmed" | "broken" | "met" | "late">("closed", "realised", "confirmed", "broken", "met", "late").map((outcome): BraidEvent => ({ type: "RESOLVE", outcome })),
     fc.constant("source" as const),
   );
@@ -646,6 +656,13 @@ describe("BRAID entries keep the model-checked properties", () => {
             if (["APPROVE", "DECLINE", "REQUEST_INFO"].includes(event.type)) expect(mayDecide(actor.role!, kind)).toBe(true);
             // Section 20, U2 (DependencyDue): only those who end a dependency move its date, and only a dependency has one
             if (event.type !== "SET_EXPECTED") expect(r.record.expectedOn).toBe(rec.expectedOn);
+            // Section 20, U3 (BraidOutcome): a proposal never changes the state and comes only from someone who may not decide it
+            if (event.type === "PROPOSE_OUTCOME") {
+              expect(r.record.state).toBe(rec.state);
+              expect(mayResolve({ role: actor.role!, isOwner: false }, kind)).toBe(false);
+            }
+            // NoStaleProposals: an entry that is not live carries none
+            if (!["open", "mitigating", "holding", "waiting"].includes(r.record.state) && r.record.state !== rec.state) expect(r.record.outcomesProposed).toEqual([]);
             if (["RESOLVE", "REOPEN", "PROGRESS", "SET_EXPECTED"].includes(event.type)) {
               const isOwner = kind === "blocker" ? !!actor.ownsBlockedWork : kind === "issue" && actor.id === "kemar";
               expect(mayResolve({ role: actor.role!, isOwner }, kind)).toBe(true);
@@ -718,5 +735,54 @@ describe("a dependency's expected date (section 20, U2)", () => {
     expect(apply({ ...d, expectedOn: "2026-10-28" }, { type: "SET_EXPECTED", date: "2026-10-28" }, alicia).outcome.ok).toBe(false);
     // Only on the log: a proposed one waits for its decider first
     expect(apply(promised(), { type: "SET_EXPECTED", date: "2026-10-28" }, alicia).outcome.ok).toBe(false);
+  });
+});
+
+// Section 20, U3: a member's words propose how a risk, assumption or dependency ended; a PM or Lead decides (OC1 to OC4)
+describe("proposed outcomes (section 20, U3)", () => {
+  const members: ProjectMember[] = [{ id: "kemar", role: "member" }, { id: "jodian", role: "member" }, { id: "alicia", role: "pm" }];
+  const risk = at("risk", "mitigating");
+
+  it("OC2: a member proposes; the state stays and the PM and Leads are asked", () => {
+    const r = apply(risk, { type: "PROPOSE_OUTCOME", outcome: "closed" }, kemar);
+    expect(r.outcome.ok).toBe(true);
+    expect(r.record.state).toBe("mitigating");
+    expect(r.record.outcomesProposed).toEqual([{ by: "kemar", outcome: "closed", on: TODAY }]);
+    expect(braidEntryCauses(r.record, members)).toEqual(["confirm_outcome:e1"]);
+  });
+
+  it("OC1: someone who may decide it decides instead of proposing", () => {
+    const r = apply(risk, { type: "PROPOSE_OUTCOME", outcome: "closed" }, alicia);
+    expect(r.outcome.ok ? null : r.outcome.reason).toBe("you may decide it yourself");
+  });
+
+  it("OC3: each person once, the later word replacing theirs; everyone's stays", () => {
+    let r = apply(risk, { type: "PROPOSE_OUTCOME", outcome: "closed" }, kemar).record;
+    r = apply(r, { type: "PROPOSE_OUTCOME", outcome: "realised" }, jodian).record;
+    r = apply(r, { type: "PROPOSE_OUTCOME", outcome: "realised" }, kemar).record;
+    expect(r.outcomesProposed.map((o) => [o.by, o.outcome])).toEqual([["jodian", "realised"], ["kemar", "realised"]]);
+  });
+
+  it("only outcomes of its own kind", () => {
+    const r = apply(risk, { type: "PROPOSE_OUTCOME", outcome: "met" }, kemar);
+    expect(r.outcome.ok ? null : r.outcome.reason).toBe("a risk does not end as met");
+    expect(apply(at("blocker", "reported"), { type: "PROPOSE_OUTCOME", outcome: "closed" }, kemar).outcome.ok).toBe(false);
+  });
+
+  it("deciding or keeping it open clears what was said, and the item goes", () => {
+    const proposed = apply(risk, { type: "PROPOSE_OUTCOME", outcome: "closed" }, kemar).record;
+    const closed = apply(proposed, { type: "RESOLVE", outcome: "closed" }, alicia).record;
+    expect([closed.state, closed.outcomesProposed]).toEqual(["closed", []]);
+    expect(braidEntryCauses(closed, members)).toEqual([]);
+    const kept = apply(proposed, { type: "KEEP_OPEN" }, andre).record;
+    expect([kept.state, kept.outcomesProposed]).toEqual(["mitigating", []]);
+    expect(braidEntryCauses(kept, members)).toEqual([]);
+    // Nothing to keep open when nobody said it ended, and a member may not
+    expect(apply(risk, { type: "KEEP_OPEN" }, alicia).outcome.ok).toBe(false);
+    expect(apply(proposed, { type: "KEEP_OPEN" }, kemar).outcome.ok).toBe(false);
+  });
+
+  it("OC5: not before it is on the log", () => {
+    expect(apply(at("risk", "proposed"), { type: "PROPOSE_OUTCOME", outcome: "closed" }, kemar).outcome.ok).toBe(false);
   });
 });

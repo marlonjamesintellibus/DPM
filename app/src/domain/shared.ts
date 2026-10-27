@@ -1,6 +1,7 @@
 // Vocabulary shared by capture (M2 to M4), routing (M14), matching (M16) and the server
 // checks on Atlas output (machines doc, section 4). Kept in the core so each part agrees on it.
 import type { IsoDate } from "./dates";
+import type { ResolveOutcome } from "./machines/braid-entry";
 import type { BraidKind } from "./rights";
 
 export const CONFIDENCES = ["high", "medium", "low"] as const;
@@ -53,8 +54,9 @@ export type ExtractedItemDraft = {
   /**
    * For BRAID items. seenState: the matched entry's state when Atlas proposed the match, compared again at save (E83).
    * expectedOn: a new dependency's promised date, read from the quote by the server (section 20, U2).
+   * outcome: how a risk, assumption or dependency ended, for a braid_resolve item (section 20, U3).
    */
-  braid?: { kind: BraidKind; title: string; match: MatchState; matchEntryId: string | null; seenState?: string | null; expectedOn?: IsoDate | null };
+  braid?: { kind: BraidKind; title: string; match: MatchState; matchEntryId: string | null; seenState?: string | null; expectedOn?: IsoDate | null; outcome?: ResolveOutcome };
   /** Leave items (D6): it matches live leave, changes it, or is a new request. */
   leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
   /** Section 16: the earlier unsaved item this one corrects; it is withdrawn as replaced when this one is proposed. */

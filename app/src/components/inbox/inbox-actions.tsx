@@ -12,7 +12,7 @@ import {
   declineEntry,
   decideLeave,
   dropDraft,
-  endDependency,
+  endEntry,
   giveReason,
   keepEntryOpen,
   keepStatus,
@@ -24,6 +24,7 @@ import {
 } from "@/app/actions";
 import { Icon } from "@/components/shell/icon";
 import { ActionNote, Button, LinkChip } from "@/components/ui/controls";
+import type { ResolveOutcome } from "@/domain/machines/braid-entry";
 import type { BraidKind } from "@/domain/rights";
 
 function useRun() {
@@ -107,10 +108,10 @@ export function DependencyDueControls({ entryId }: { entryId: string }) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={pending} onClick={() => run(() => endDependency(entryId, "met"))}>
+        <Button disabled={pending} onClick={() => run(() => endEntry(entryId, "met"))}>
           Met
         </Button>
-        <Button variant="secondary" disabled={pending} onClick={() => run(() => endDependency(entryId, "late"))}>
+        <Button variant="secondary" disabled={pending} onClick={() => run(() => endEntry(entryId, "late"))}>
           Late
         </Button>
         <input
@@ -122,6 +123,26 @@ export function DependencyDueControls({ entryId }: { entryId: string }) {
         />
         <Button variant="secondary" disabled={pending || !date} onClick={() => run(() => newExpectedDate(entryId, date))}>
           New date
+        </Button>
+      </div>
+      <ActionNote result={result} />
+    </div>
+  );
+}
+
+/** Section 20, U3: a member said it ended; a PM or Lead ends it one way or the other, or keeps it open (OC2). */
+export function OutcomeControls({ entryId, choices }: { entryId: string; choices: { outcome: ResolveOutcome; label: string }[] }) {
+  const { pending, result, run } = useRun();
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2">
+        {choices.map((c, i) => (
+          <Button key={c.outcome} variant={i === 0 ? "primary" : "secondary"} disabled={pending} onClick={() => run(() => endEntry(entryId, c.outcome))}>
+            {c.label}
+          </Button>
+        ))}
+        <Button variant="link" disabled={pending} onClick={() => run(() => keepEntryOpen(entryId))}>
+          Keep open
         </Button>
       </div>
       <ActionNote result={result} />

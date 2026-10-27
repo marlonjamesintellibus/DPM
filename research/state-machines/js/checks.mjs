@@ -14,6 +14,7 @@ import Leave from './models/leave.mjs';
 import BraidFollowUps from './models/braidFollowUps.mjs';
 import BraidKindSwitch from './models/braidKindSwitch.mjs';
 import DependencyDue from './models/dependencyDue.mjs';
+import BraidOutcome from './models/braidOutcome.mjs';
 // M20 to M36, the Atlas conversational plan (use-cases/atlas-conversational-plan.md), one file per machine
 import { ROWS as ChatCommandRows, PLANTS as ChatCommandPlants } from './rows/chatCommand.mjs';
 import { ROWS as ClarificationRows, PLANTS as ClarificationPlants } from './rows/clarification.mjs';
@@ -79,6 +80,8 @@ export const ROWS = [
   { spec: 'BraidKindSwitch', setting: 'as given', model: BraidKindSwitch(), expectFail: [] },
   // DependencyDue is section 20, U2: someone else's promise as a dependency with an expected date
   { spec: 'DependencyDue', setting: 'as given', model: DependencyDue(), expectFail: [] },
+  // BraidOutcome is section 20, U3: a message proposes an outcome; only a PM or Lead ends the entry
+  { spec: 'BraidOutcome', setting: 'as given', model: BraidOutcome(), expectFail: [] },
   // Phase B: M20 Chat command
   ...ChatCommandRows,
   // Phase D: M21 Clarification
@@ -176,6 +179,9 @@ export const PLANTS = [
   { spec: 'DependencyDue', setting: 'bug: a later report moves the date', model: DependencyDue({ Bug: 'reportMovesDate' }), expectFail: ['DateMovesOnlyByLead'] },
   { spec: 'DependencyDue', setting: 'bug: the due item opens while it is still proposed', model: DependencyDue({ Bug: 'dueWhileProposed' }), expectFail: ['DueMatchesCause', 'DueOnlyOnLog'] },
   { spec: 'DependencyDue', setting: 'bug: a new date leaves the due item open', model: DependencyDue({ Bug: 'keepDue' }), expectFail: ['DueMatchesCause'] },
+  { spec: 'BraidOutcome', setting: "bug: a member's words end the risk", model: BraidOutcome({ Bug: 'proposalEnds' }), expectFail: ['OutcomeOnlyByLead'] },
+  { spec: 'BraidOutcome', setting: 'bug: ending it leaves the proposals on it', model: BraidOutcome({ Bug: 'keepProposals' }), expectFail: ['NoStaleProposals'] },
+  { spec: 'BraidOutcome', setting: 'bug: nobody is asked about a proposal', model: BraidOutcome({ Bug: 'noConfirmItem' }), expectFail: ['ConfirmMatchesCause'] },
   // Phase B: M20 Chat command
   ...ChatCommandPlants,
   // Phase D: M21 Clarification

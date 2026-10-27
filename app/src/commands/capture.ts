@@ -14,7 +14,7 @@ import { planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type P
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
 import type { Moved } from "../domain/machine";
-import { applyToLog, type BraidActor, type BraidEntryState, type BraidLog, type BraidSource } from "../domain/machines/braid-entry";
+import { applyToLog, withFollowUp, type BraidActor, type BraidEntryState, type BraidEvent, type BraidLog, type BraidSource } from "../domain/machines/braid-entry";
 import {
   applyCaptureEvent,
   captureDedupKey,
@@ -1052,10 +1052,13 @@ async function applyBraid(s: SaveScope, projectId: string, intents: readonly Bra
       const owns = await ownsBlockedWork(s.tx, entry, s.authorId);
       const isOwner = entry.kind === "blocker" ? owns : entry.ownerId === s.authorId;
       const may = role !== null && mayResolve({ role, isOwner }, entry.kind);
-      const r = applyToLog(log, entry.id, may ? { type: "RESOLVE" } : { type: "PROPOSE_RESOLVE" }, { actor: { ...actor, ownsBlockedWork: owns }, today });
+      // Section 20, U3: a risk, assumption or dependency ends as the words say when the author may decide it, else it is proposed (D7)
+      const event: BraidEvent = b.outcome ? (may ? { type: "RESOLVE", outcome: b.outcome } : { type: "PROPOSE_OUTCOME", outcome: b.outcome }) : may ? { type: "RESOLVE" } : { type: "PROPOSE_RESOLVE" };
+      const r = applyToLog(log, entry.id, event, { actor: { ...actor, ownsBlockedWork: owns }, today });
       if (!r.outcome.ok) throw new CommandRefused(`"${entry.title}": ${r.outcome.reason}`);
       const from = log[entry.id].state;
-      log = r.log;
+      // D10: what follows a realised risk, broken assumption or late dependency is drafted, as from the button
+      log = may ? withFollowUp(r.log, entry.id) : r.log;
       if (may) resolved.push(entry.id);
       audits.push(auditOf(item, r.outcome.event, entry.id, from));
       continue;

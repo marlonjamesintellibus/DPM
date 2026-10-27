@@ -14,8 +14,10 @@ import { withArticle } from "@/domain/shared";
 import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
+import { OUTCOME_ACT } from "@/queries/review";
+import { OUTCOMES, type ResolveOutcome } from "@/domain/machines/braid-entry";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
-import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
+import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
 
 const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   status_set_with_no_reason: "Delivery check",
@@ -33,7 +35,14 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   kind_change: "Kind change",
   blocked_without_blocker: "Delivery check",
   dependency_due: "Dependency due",
+  confirm_outcome: "Ended?",
 };
+
+/** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
+function outcomeChoices(kind: keyof typeof OUTCOMES, said: readonly ResolveOutcome[]) {
+  const all = OUTCOMES[kind] ?? [];
+  return [...all].sort((a, b) => Number(!said.includes(a)) - Number(!said.includes(b))).map((outcome) => ({ outcome, label: OUTCOME_ACT[outcome] }));
+}
 
 // The small mark before an item's source line: a rule's check, someone's words, work, people
 function sourceIcon(item: InboxEntry): IconName {
@@ -318,6 +327,7 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
   const words = entry.sources.find((s) => s.quote && s.person.id === entry.reportedBy?.id) ?? entry.sources.find((s) => s.quote);
   const sameKind = view.braid.entries.filter((e) => e.kind === entry.kind && e.id !== entry.id && e.onLog);
   const related = entry.links.map((l) => `${KIND_LABEL[l.kind]} · ${l.title}`);
+  const said = entry.outcomesProposed;
 
   const source = (
     <Box head={words ? `From ${words.person.name.split(" ")[0]}'s update, ${clockTime(words.at)}` : `Reported by ${entry.reportedBy?.name ?? "someone"}`}>
@@ -364,7 +374,9 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
         </Box>
       </Pair>
       <Explain>
-        {item.cause === "dependency_due"
+        {item.cause === "confirm_outcome"
+          ? "Words in an update only tell you; nothing ends until a PM or Lead decides. Whoever said it is told if you keep it open."
+          : item.cause === "dependency_due"
           ? "Only a PM or Lead ends a dependency. DPM never marks it late by itself."
           : item.cause === "blocker_new"
           ? "A blocker went on the log; it stops work until it is cleared."
@@ -378,6 +390,8 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
         <AcknowledgeControl entryId={entryId} />
       ) : item.cause === "dependency_due" ? (
         <DependencyDueControls entryId={entryId} />
+      ) : item.cause === "confirm_outcome" ? (
+        <OutcomeControls entryId={entryId} choices={outcomeChoices(entry.kind, said)} />
       ) : null}
     </DetailCard>
   );

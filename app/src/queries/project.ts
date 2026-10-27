@@ -8,7 +8,7 @@ import { loadBraidLog, loadProject, loadWorld, orgTagsOf, setStatusRecordOf } fr
 import * as t from "../db/schema";
 import { config } from "../domain/config";
 import { addDays, dateInZone, daysBetween, weekday, WEEKDAYS, type IsoDate } from "../domain/dates";
-import { isOnLog, isSwitchable, switchedTo, type BraidEntryRecord, type BraidEntryState, type BraidLinkRelation } from "../domain/machines/braid-entry";
+import { isOnLog, isSwitchable, switchedTo, type BraidEntryRecord, type BraidEntryState, type BraidLinkRelation, type ResolveOutcome } from "../domain/machines/braid-entry";
 import { isCandidate, type World } from "../domain/machines/membership";
 import { displayedStatus, type OverrideState } from "../domain/machines/set-status";
 import { BRAID_KINDS, maySwitch, type BraidKind, type ProjectRole } from "../domain/rights";
@@ -258,6 +258,8 @@ export type ProjectBraidEntry = {
   was: BraidKind | null;
   /** Section 20, U2: when what a dependency waits on was promised. */
   expectedOn: IsoDate | null;
+  /** Section 20, U3: how members said it ended, oldest first, waiting for a PM or Lead. */
+  outcomesProposed: ResolveOutcome[];
   switchNote: KindSwitchNote | null;
   /** A member's request to change the kind, while it waits (M17). */
   request: KindRequestView | null;
@@ -459,6 +461,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       waitingForApproval: e.state === "proposed",
       reportCount: e.sources.length,
       expectedOn: e.expectedOn,
+      outcomesProposed: e.outcomesProposed.map((o) => o.outcome),
       owner: person(e.ownerId),
       reportedBy: person(e.reportedBy),
       decidedBy: person(e.decidedBy),

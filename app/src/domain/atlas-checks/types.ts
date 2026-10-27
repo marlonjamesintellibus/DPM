@@ -45,6 +45,8 @@ export type RawProposal = {
   braidTitle?: string | null;
   /** braid_same: the entry this report joins. braid_new: an entry of another kind it relates to. */
   matchEntryId?: string | null;
+  /** braid_resolve on a risk, assumption or dependency: how it ended (section 20, U3). */
+  outcome?: string | null;
   /** Ignored: a capture only ever reports or adds a source; the state is never the model's (check 12). */
   braidState?: string | null;
   /** update to state "blocked": what the work waits on ("waiting on Kyle (Sprouts IT)"). */

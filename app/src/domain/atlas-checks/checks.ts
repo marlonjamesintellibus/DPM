@@ -3,6 +3,7 @@
 // and mark. They are rules over the candidate data the caller read from the database (P6):
 // nothing here asks a model, and nothing the model says about current values or states is used.
 import { config } from "../config";
+import { OUTCOME_FROM, OUTCOMES, type BraidEntryState, type ResolveOutcome } from "../machines/braid-entry";
 import { fitLeave, type LeaveFit } from "../machines/leave";
 import { namesPerson } from "../names";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind } from "../rights";
@@ -101,6 +102,8 @@ type Work = {
   routingReason: string;
   /** For choose_project: the projects offered to the author (E71). */
   options: string[] | null;
+  /** Section 20, U3: how a risk, assumption or dependency ended. */
+  outcome: ResolveOutcome | null;
 };
 
 type Scope = ReturnType<typeof scopeOf>;
@@ -405,7 +408,8 @@ const mark: Check = [
       w.mark = fit?.kind === "matches" ? "matches_leave" : "needs_ok";
     } else if (w.target?.type === "record" && w.newValue !== null && w.oldValue !== null && norm(w.newValue) === norm(w.oldValue)) {
       w.mark = "no_change";
-    } else if (w.kind === "braid_resolve" && w.match?.entry.state === "resolved") {
+    } else if (w.kind === "braid_resolve" && w.match?.entry.state === (w.p.outcome ?? "resolved")) {
+      // OC4: already so (check 10 reads the outcome later, and drops one that does not fit)
       w.mark = "no_change";
     } else {
       // D20: handing a step over changes who covers the work while someone is away; a person confirms it
@@ -461,7 +465,17 @@ const targetBelongs: Check = [
     if (w.kind === "braid_resolve") {
       // D7: only blockers and issues are resolved by what someone says; the rest are decided (check 12)
       if (!sameProject) return `"${entry.title}" is on ${project.name}'s log; it can only be resolved there`;
-      if (entry.kind !== "blocker" && entry.kind !== "issue") return `a ${entry.kind} is not resolved from a message; its PM or Lead decides it`;
+      if (entry.kind !== "blocker" && entry.kind !== "issue") {
+        // Section 20, U3: the words say how it ended; a PM or Lead decides, unless they said it themselves
+        const outcomes = OUTCOMES[entry.kind];
+        if (!outcomes) return `a ${entry.kind} is not resolved from a message; its PM or Lead decides it`;
+        const outcome = outcomes.find((o) => o === w.p.outcome);
+        if (!outcome) return `say whether the ${entry.kind} ${outcomes.join(" or ")}`;
+        // OC4: already so is "No change"; OC5: one still waiting for approval, or already ended, is not
+        if (entry.state !== outcome && !OUTCOME_FROM.includes(entry.state as BraidEntryState))
+          return entry.state === "proposed" || entry.state === "more_info" ? `"${entry.title}" isn't on the log yet; its PM or Lead decides it first` : `"${entry.title}" has already ended`;
+        w.outcome = outcome;
+      }
       w.braidKind = entry.kind;
       w.matchState = "same_as";
       return null;
@@ -669,6 +683,7 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     const title = w.match && w.matchState === "same_as" ? w.match.entry.title : w.p.braidTitle?.trim() || s.quoteText(w);
     draft.braid = { kind: w.braidKind as BraidKind, title, match: w.matchState, matchEntryId: w.match?.entry.id ?? null };
     if (w.match) draft.braid.seenState = w.match.entry.state; // compared again at save (E83)
+    if (w.outcome) draft.braid.outcome = w.outcome;
     // Section 20, U2: a new dependency keeps the date its promise names, read by the server, never the model.
     // A date already past is what happened, not a promise (DP1: none at all is fine).
     if (w.kind === "braid_new" && w.braidKind === "dependency") {
@@ -703,6 +718,7 @@ function start(p: RawProposal): Work {
     projectId: null,
     routingReason: "",
     options: null,
+    outcome: null,
   };
 }
 
