@@ -2,7 +2,7 @@
 
 **Goes with:** `01-update-to-plan-machines.md` sections 15 (questions in the chat), 16 (conversations), 17 (the message flow) and 18 (talking to Atlas about your work); `atlas-bot-plan.md` (the DPM bot in Atlas)
 **Vocabulary:** the shapes in `research/state-machines/js/map-data.mjs` (Thing, Job, Ask, Switch, Stage, Status rule)
-**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. **Phases A, R and S are built** (wave 1, merged 27 Oct 2026; `atlas-conversational-wave-1.md` is the build report). Every other phase is plan, and its section ends with what the model check of its machines found: fix those before building it. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
+**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. **Phases A, R and S are built** (wave 1, merged 27 Oct 2026; `atlas-conversational-wave-1.md` is the build report), and **B, C and L** (wave 2; `atlas-conversational-wave-2.md`). Every other phase is plan, and its section ends with what the model check of its machines found: fix those before building it. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
 
 Atlas today reads updates, answers questions in conversations, follows up ("and on Store Insights?"), words its answers over DPM's facts, and shows cards with Accept (sections 15 to 17). This plan goes from "a search box you type into" to a teammate: Atlas answers, lets you act on the answer, explains why, speaks first when something needs you, keeps track of what you promised, drafts what you would otherwise write, and asks when it is unsure. Then it moves from one person to the team: it works in the project group, runs the standup with you, spots trouble before anyone reports it, chases people for you, handles meetings and leave, and learns from how it is used.
 
@@ -117,6 +117,10 @@ proposed ──TIMER command_expiry (DECIDE: 30 minutes)──▶ expired       
 - M20: check a reply's referent against the asker's lines **now** (the per-viewer query again), not the answer's old lines; if it is no longer theirs to read, it is not a command ("That answer is out of date. Ask again."), naming nothing.
 - M20: CONFIRM checks the right before the version (AC1 before AC2 and AC3), so someone who left is never told who decided.
 
+### Built (wave 2)
+
+See `atlas-conversational-wave-2.md`. Card actions run each screen's own command (Mark done and Unblock through the new `commands/work.ts`); typed replies become M20 confirm cards; AC6 and AC7 answer "Say it again with its name" until phase D. Open: W2-D2 and W2-D3.
+
 ## 5. Phase C. Ask why
 
 ### What changes
@@ -146,6 +150,10 @@ A new topic `why`, with a subject: a project, work item, milestone, BRAID entry 
 | WY6 | A field changed by a rule, not a person (target passed) | Says the rule did it and when |
 | WY7 | Nothing links to the subject | Says so plainly ("Nothing is recorded as holding it up") rather than guessing |
 | WY8 | "Why" about a person ("Why is Kemar late?") | Not a why question about a record; answered as phase H or "I can tell you about records, not people" |
+
+### Built (wave 2)
+
+See `atlas-conversational-wave-2.md`. M12 returns its facts; topic `why` with a checked subject; work item forecasts (U6) are among the facts. WY2's example and WY5 are corrected there.
 
 ## 6. Phase D. Ask when unsure
 
@@ -581,6 +589,10 @@ proposed ──TIMER reminders (S18 rhythm), then vocabExpiryDays──▶ expir
 - M30: "Kemar undid this" goes only to people who can still open the record; a refusal names and links only records the asker can open now.
 - M31: check the alias clash again at APPROVE.
 - M31: check a clash only against projects the person told can open; where one person is in both projects, M14 sends their item to choose_project.
+
+### Built (wave 2)
+
+See `atlas-conversational-wave-2.md`. M30 with UNDO arrows (leave included) and a receipt per save; `why_filed`; M31 for aliases and contacts, refusals kept per asker. Open: W2-D1, W2-D4, W2-D5.
 
 ## 15. Phase M. Chasing people for you
 
