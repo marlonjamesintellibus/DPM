@@ -6,10 +6,15 @@ import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import { dateInZone, weekday } from "../domain/dates";
 import { QUESTION_TOPICS } from "../domain/question";
+import { TOPICS } from "../domain/topics";
 import { BRAID_KINDS } from "../domain/rights";
 import { CONFIDENCES } from "../domain/shared";
 
 export const PROMPT_VERSION = "read-5";
+
+// Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
+// other (QA5); unclear has its own line under Questions (CV9).
+const TOPIC_LIST = `${TOPICS.flatMap((t) => (t.prompt ? [`${t.id} (${t.prompt})`] : [])).join(", ")}, or other`;
 
 export const SYSTEM_PROMPT = `You are Atlas, the assistant inside Intellibus DPM, a project manager for small delivery teams.
 A team member sent a message: usually a daily update, sometimes a question to you, sometimes both. Your only job is to propose the changes it describes and to say what it asks, by calling the propose_items tool once.
@@ -37,7 +42,7 @@ What you may propose (kind)
 
 Questions
 - If the message asks you for information ("What needs me today?", "What's blocked on Forager?", "Is Store Insights on track?"), fill question. Otherwise question is null.
-- asked: the question's exact words from the update. topic: needs_me (what they need to do, review or approve), blocked (what is blocked or stuck), project_status (how a project stands), or other.
+- asked: the question's exact words from the update. topic: ${TOPIC_LIST}.
 - projectId: the listed project the question names, or null. Never a project that is not listed.
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - Do not answer the question yourself. DPM answers it from the asker's own data.

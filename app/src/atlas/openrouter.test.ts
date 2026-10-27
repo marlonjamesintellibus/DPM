@@ -6,7 +6,7 @@ import { AtlasReadFailed } from "./extractor";
 import { createFixtureExtractor } from "./fixture";
 import { atlasFromEnv, withFallback } from "./index";
 import { createOpenRouter, DEFAULT_MODEL, OPENROUTER_URL, parseItems } from "./openrouter";
-import { proposeItemsTool, userMessage } from "./prompt";
+import { PROMPT_VERSION, proposeItemsTool, questionSchema, SYSTEM_PROMPT, userMessage } from "./prompt";
 
 const KEY = "sk-or-test-not-a-real-key";
 
@@ -66,6 +66,14 @@ describe("the request", () => {
     await createOpenRouter({ apiKey: KEY, model: "anthropic/claude-sonnet-5.5", fetch: sonnet.fetch }).extract(KEMAR_CONTEXT);
     expect(sonnet.calls[0].body.tool_choice).toBe("auto");
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
+  });
+
+  it("the topics come from domain/topics in read-5's words and order; a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-5");
+    expect(SYSTEM_PROMPT).toContain(
+      "topic: needs_me (what they need to do, review or approve), blocked (what is blocked or stuck), project_status (how a project stands), or other.\n",
+    );
+    expect(questionSchema.shape.topic.options).toEqual(["needs_me", "blocked", "project_status", "other", "unclear"]);
   });
 
   it("puts the key only in the Authorization header", async () => {

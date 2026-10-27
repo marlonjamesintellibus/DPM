@@ -8,7 +8,8 @@ import { notFound } from "next/navigation";
 import { Icon } from "@/components/shell/icon";
 import { startReview } from "@/app/actions";
 import { getDb } from "@/db/client";
-import type { Answer, QuestionTopic } from "@/domain/question";
+import type { Answer } from "@/domain/question";
+import { suggestionsAfter } from "@/domain/topics";
 import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
 import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
@@ -26,15 +27,6 @@ const WORDING_MS = 30_000;
 function wording(answer: Answer | null, at: Date): boolean {
   return !!answer && answer.wording === "pending" && at.getTime() - new Date(answer.asOf).getTime() < WORDING_MS;
 }
-
-/** Section 17: one or two follow-ups that fit what was just answered. */
-const SUGGEST: Record<QuestionTopic, string[]> = {
-  needs_me: ["What's blocked?", "How are my projects doing?"],
-  blocked: ["What needs me today?"],
-  project_status: ["What's blocked?"],
-  other: ["What needs me today?", "What's blocked?"],
-  unclear: ["What needs me today?", "What's blocked?"],
-};
 
 export async function ChatToday({ viewerId, firstName, conversationId, ask = false, at }: { viewerId: string; firstName: string; conversationId?: string; ask?: boolean; at: Date }) {
   const db = await getDb();
@@ -209,7 +201,7 @@ function AnswerBlock({ answer, last }: { answer: Answer; last: boolean }) {
         <span>As of {clockTime(new Date(answer.asOf))}</span>
         <CopyReply text={copy} />
       </span>
-      {last && <Suggestions asks={SUGGEST[answer.topic] ?? SUGGEST.other} />}
+      {last && <Suggestions asks={suggestionsAfter(answer.topic)} />}
     </AtlasLine>
   );
 }

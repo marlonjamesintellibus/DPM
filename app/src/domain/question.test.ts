@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { CandidateProject } from "./atlas-checks/types";
 import { applyCaptureEvent, type CaptureRecord } from "./machines/capture";
 import { checkQuestion, ruleQuestion, topicOf } from "./question";
+import { suggestionsAfter } from "./topics";
 
 const project = (id: string, name: string, aliases: string[] = []): CandidateProject => ({ id, name, aliases, role: "member", records: [], people: [], braid: [] });
 const PROJECTS = [project("forager", "Forager 2.0", ["Forager"]), project("gq", "GQ & Academy")];
@@ -36,6 +37,11 @@ describe("the rule, without a model (QA8)", () => {
     expect(topicOf("anything stuck?")).toBe("blocked");
     expect(topicOf("what should I approve")).toBe("needs_me");
   });
+
+  it("the first topic whose words match wins: blocked, then project status, then needs me", () => {
+    expect(topicOf("anything blocked that needs me today?")).toBe("blocked");
+    expect(topicOf("status of my reviews")).toBe("project_status");
+  });
 });
 
 describe("follow-ups by the rule (CV8, CV9)", () => {
@@ -51,6 +57,14 @@ describe("follow-ups by the rule (CV8, CV9)", () => {
   });
   it("an update that starts with 'and' is not a follow-up", () => {
     expect(ruleQuestion({ ...ctx("And #145 is done. The export too."), earlier: earlier({ topic: "blocked", projectId: null }) })).toBeNull();
+  });
+});
+
+describe("suggested follow-ups by topic (section 17)", () => {
+  it("each topic suggests its own; one DPM no longer knows gets other's", () => {
+    expect(suggestionsAfter("needs_me")).toEqual(["What's blocked?", "How are my projects doing?"]);
+    expect(suggestionsAfter("blocked")).toEqual(["What needs me today?"]);
+    expect(suggestionsAfter("retired_topic")).toEqual(["What needs me today?", "What's blocked?"]);
   });
 });
 

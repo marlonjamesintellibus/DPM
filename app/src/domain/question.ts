@@ -4,10 +4,10 @@
 // asker is in, and words that are in the message. The answer itself is never written by Atlas; it is
 // read from the asker's own data (queries/answer.ts).
 import type { CheckContext } from "./atlas-checks/types";
+import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 
-// unclear: a follow-up whose subject cannot be told, because nothing earlier in the conversation says it (CV9)
-export const QUESTION_TOPICS = ["needs_me", "blocked", "project_status", "other", "unclear"] as const;
-export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
+// Each topic is defined in domain/topics, its answer in queries/answers
+export { QUESTION_TOPICS, type QuestionTopic };
 
 /** What Atlas said was asked, before the checks. */
 export type RawQuestion = { asked: string; topic: string; projectId: string | null };
@@ -32,10 +32,7 @@ const ASKS_FOR_A_CHANGE = /\b(mark|set|move|change|update|add|log|close|resolve|
 /** The topic a question is about, from its words: what the rule can tell without a model. */
 export function topicOf(text: string): QuestionTopic {
   const t = text.toLowerCase();
-  if (/\b(block|blocked|blocker|blockers|stuck|waiting on)\b/.test(t)) return "blocked";
-  if (/\b(on track|at risk|off track|status|how is|how's|how are)\b/.test(t)) return "project_status";
-  if (/\b(need|needs|needed|review|reviews|inbox|to do|todo|waiting for me|approve|my day|today)\b/.test(t)) return "needs_me";
-  return "other";
+  return BY_RULE.find((topic) => topic.rule.test(t))?.id ?? "other";
 }
 
 /**
