@@ -9,5 +9,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.{ts,tsx}"],
+    // Booting PGlite takes a few seconds when every worker does it at once; the defaults (5s, 10s)
+    // made the full suite flaky under load
+    testTimeout: 20_000,
+    hookTimeout: 30_000,
   },
 });

@@ -39,13 +39,7 @@ export const setStatusMachine = defineMachine<OverrideState, SetStatusEvent, Ctx
   name: "set_status",
   states: OVERRIDE_STATES,
   arrows: [
-    // "Use At risk instead": setting the calculated status clears the override
-    {
-      from: HAS_SET,
-      on: "OWNER_SETS",
-      to: "calculated_only",
-      guard: ({ calculated }, e) => (e.status === calculated ? null : "differs from the plan"),
-    },
+    // A new status first, so a refusal names the real reason (Done, not settable, already set)
     {
       from: ANY,
       on: "OWNER_SETS",
@@ -57,6 +51,13 @@ export const setStatusMachine = defineMachine<OverrideState, SetStatusEvent, Ctx
         if (status === record.setStatus) return "already set";
         return null;
       },
+    },
+    // "Use At risk instead": setting the calculated status clears the override
+    {
+      from: HAS_SET,
+      on: "OWNER_SETS",
+      to: "calculated_only",
+      guard: ({ calculated }, e) => (e.status === calculated ? null : "differs from the plan"),
     },
     {
       from: ["reason_required"],

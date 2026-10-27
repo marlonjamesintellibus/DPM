@@ -31,8 +31,10 @@ The seed (`src/db/seed/`) is the 20 Oct 2026 snapshot from the use case: Kemar's
 | Shell | Sidebar, Header, inset panel, page head (Figma L16) | `src/components/shell` |
 | Domain | Pure rules, no database or UI: transition engine, status rules, rights, config, the M2 to M16 machines, routing, and the server checks on Atlas output | `src/domain` |
 | Database | Drizzle ORM, 23 tables mirroring the domain records. PGlite in `app/.data/pglite` by default; Postgres when `DATABASE_URL` is set | `src/db` |
+| Commands | The only writers: one transaction each, versioned updates, an audit entry for every move, and `evaluate()` after any change to a project | `src/commands` |
+| Queries | Per-viewer reads for the screens (inbox, review, project and BRAID log, chat, audit trail). Privacy is enforced here, not in components (P10) | `src/queries` |
 | Migrations | `pnpm db:generate` writes SQL to `drizzle/`; the app applies it on first use | `drizzle.config.ts` |
-| Tests | Vitest. Node by default; component tests add `// @vitest-environment jsdom` | `vitest.config.mts` |
+| Tests | Vitest. Node by default; component tests add `// @vitest-environment jsdom`. `src/test/seeded-db.ts` gives each test its own copy of the seeded database. `src/story.test.ts` runs the whole use case | `vitest.config.mts` |
 
 ## Notes for later phases
 

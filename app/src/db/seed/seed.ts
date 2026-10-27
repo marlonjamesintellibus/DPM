@@ -31,7 +31,16 @@ import {
 
 export type SeedSummary = { projects: number; extractions: number; inboxItems: number; foragerCalculated: string | null };
 
-export async function seedSnapshot(db: Db): Promise<SeedSummary> {
+export type SeedOptions = {
+  /** Kemar's 8:58am note, read by Atlas and waiting for his review (story steps 1 and 2). */
+  kemarNote?: boolean;
+  /** Alicia's 9:02am Off track with no reason, and the inbox item it raises (story step 3). */
+  aliciaSetsStatus?: boolean;
+};
+
+/** The snapshot at 9:10am. Turn the options off for the world only, so a test can run those steps through the commands. */
+export async function seedSnapshot(db: Db, options: SeedOptions = {}): Promise<SeedSummary> {
+  const { kemarNote = true, aliciaSetsStatus = true } = options;
   // Rules first, outside the transaction: they are pure
   const foragerPlan = calculatePlan(
     {
@@ -62,7 +71,7 @@ export async function seedSnapshot(db: Db): Promise<SeedSummary> {
 
     await tx.insert(t.projects).values(
       PROJECTS.map((p) =>
-        p.id === ALICIA_SETS.projectId
+        aliciaSetsStatus && p.id === ALICIA_SETS.projectId
           ? {
               ...p,
               setOverride: setStatus.record.override,
@@ -94,7 +103,7 @@ export async function seedSnapshot(db: Db): Promise<SeedSummary> {
       tries: 1,
       proposals: items.length,
     };
-    await tx.insert(t.captures).values(capture);
+    if (kemarNote) await tx.insert(t.captures).values(capture);
 
     await tx.insert(t.braidEntries).values(
       BRAID.map(({ sources: _sources, ...e }) => ({
@@ -109,7 +118,7 @@ export async function seedSnapshot(db: Db): Promise<SeedSummary> {
     );
     await tx.insert(t.braidLinks).values(BRAID_LINKS);
 
-    await tx.insert(t.extractions).values(
+    if (kemarNote) await tx.insert(t.extractions).values(
       items.map((item) => ({
         id: item.id,
         captureId: capture.id,
@@ -129,7 +138,7 @@ export async function seedSnapshot(db: Db): Promise<SeedSummary> {
       })),
     );
 
-    await tx.insert(t.inboxItems).values({
+    if (aliciaSetsStatus) await tx.insert(t.inboxItems).values({
       id: `inbox-alicia-${causeKey}-${inboxPlan.create!.episode}`,
       ownerId: ALICIA_SETS.by,
       causeKey,
@@ -138,15 +147,19 @@ export async function seedSnapshot(db: Db): Promise<SeedSummary> {
       createdAt: new Date(ALICIA_SETS.at),
     });
 
-    await tx.insert(t.auditEntries).values([
+    const captureAudit: (typeof t.auditEntries.$inferInsert)[] = [
       { at: capture.receivedAt, actorType: "system", action: "RECEIVED", machine: "capture", subjectType: "capture", subjectId: capture.id, toState: "received", captureId: capture.id, detail: { channel: capture.channel } },
       { at: new Date("2026-10-20T13:59:00Z"), actorType: "atlas", action: "PROPOSALS_READY", machine: "capture", subjectType: "capture", subjectId: capture.id, fromState: "reading", toState: "proposed", captureId: capture.id, detail: { items: items.length } },
+    ];
+    const statusAudit: (typeof t.auditEntries.$inferInsert)[] = [
       { at: new Date(ALICIA_SETS.at), actorType: "person", actorId: ALICIA_SETS.by, action: "OWNER_SETS", machine: "set_status", subjectType: "project", subjectId: ALICIA_SETS.projectId, fromState: moved.from, toState: moved.to, detail: { status: ALICIA_SETS.status, calculated: foragerPlan.project } },
       { at: new Date(ALICIA_SETS.at), actorType: "rule", action: "INBOX_ITEM_CREATED", machine: "inbox_item", subjectType: "inbox_item", subjectId: causeKey, toState: "open", detail: { owner: ALICIA_SETS.by, episode: inboxPlan.create!.episode } },
-    ]);
+    ];
+    const auditRows = [...(kemarNote ? captureAudit : []), ...(aliciaSetsStatus ? statusAudit : [])];
+    if (auditRows.length) await tx.insert(t.auditEntries).values(auditRows);
 
     await tx.insert(t.appMeta).values({ key: "seed", value: `snapshot ${SNAPSHOT.today}` });
   });
 
-  return { projects: PROJECTS.length, extractions: items.length, inboxItems: 1, foragerCalculated: foragerPlan.project };
+  return { projects: PROJECTS.length, extractions: kemarNote ? items.length : 0, inboxItems: aliciaSetsStatus ? 1 : 0, foragerCalculated: foragerPlan.project };
 }

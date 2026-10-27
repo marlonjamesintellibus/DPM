@@ -537,3 +537,34 @@ The domain code (`app/src/domain`, 387 tests) follows this doc and the checked m
 | D9 | A duplicate merged into a resolved entry: reopen the target? | The target's state is unchanged |
 | D10 | "Realised becomes an Issue", "broken raises a Risk", "late raises a Risk" | Not automatic: a person confirms the new entry (P5); the `raised_from` link exists |
 | D11 | Can a reporter withdraw a reported blocker? | Only while every source is theirs and nobody said it is cleared |
+
+## 9. Found while building phase 3 (26 Oct 2026)
+
+The commands (`app/src/commands`) and per-viewer queries (`app/src/queries`) run the whole story against the database: `app/src/story.test.ts` drives every step from Kemar's note to Alicia keeping Off track, through the real commands, and checks what each person sees through the queries.
+
+### Decided in the code
+
+| # | Point | What the code does |
+|---|---|---|
+| G9 | A reason going stale | `evaluate()` compares the plan with the plan when the reason was given (`reasonGivenAt`), so no calculated status is cached (P6). It sets `stale_since`; keeping the status clears it |
+| G10 | D2: a target cancelled before save | Withdrawn at save, unless the author already saw it cancelled |
+| G11 | The review reminder | A new inbox cause `review_waiting:<capture>` for the author: "4 updates waiting for your OK". Saving or discarding closes it as acted; expiry closes it as auto closed |
+| G12 | Working hours for timers | Any hour starting Monday to Friday in the org time zone; no office hours yet |
+| G13 | Voice with no transcript confidence | Treated as Medium, so every item is at most Medium (E5) |
+| G14 | Leave that is not already approved | Saved as a leave request (`requested`), never approved leave (M8) |
+| G15 | Inbox wording and grouping | Do now: status set with no reason, new blocker, approvals that were reminded. Today: approvals, no decider, asked for more, "it's cleared", review waiting. This week: keep a set status. Actions: Add reason, Keep, Review, Assign, Reply, Acknowledge, Confirm |
+| G16 | Who may link two decisions as conflicting | Any project member; linking decides nothing |
+| G17 | The drafted reason | Rule based for now, from BRAID entries on the log and the plan only; never care data. Phase 4 swaps in Atlas |
+| G18 | A quote on a project page | Shown only when the words were applied into that project as routed. A source from another project's words shows no quote, even to someone in both projects (E79) |
+
+### Needs a decision
+
+| # | Question | Default in the code |
+|---|---|---|
+| D12 | A record machine refuses during save (E27, D3): the whole save rolls back, so nothing records why (rule 2 says refusals are logged) | Rolled back with the reason returned to the author; a refusal log written outside the transaction would make it visible later |
+| D13 | Moving an update to a project where its target does not exist (E74) | Refused, with the way out in the message; there is no "pick a target" step yet |
+| D14 | The same words sent on WhatsApp and in the app in the same minute, with no message id | Counted as one capture (the dedup key has no channel), which differs from E2's "two captures" |
+| D15 | Approve or decline does not notify the reporter | They see it on the entry and in its audit trail; only "asked for more" opens an item for them |
+| D16 | Decision approvers per project (S11 allows 2 later) | One approver, from config; there is no per-project setting yet |
+| D17 | E45 "Add to the BRAID log" inline while writing a reason | Not built; the refusal tells Alicia to add or approve an entry first |
+| D18 | Matching decisions on the review page ("not the same", pick an entry) and the M5 check "Done with no linked change" | Not built yet |
