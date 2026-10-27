@@ -1,7 +1,11 @@
 "use client";
 // The viewer's menu at the foot of the sidebar: the theme, Light, Dark or System. The choice is
 // kept in this browser and set on <html data-theme> (globals.css); System follows the computer.
-import { useEffect, useRef, useState } from "react";
+// Below it, "Help improve Atlas" (phase S), which is kept on the server: off deletes what of theirs
+// is waiting for the team building DPM (LF2).
+import { useEffect, useRef, useState, useTransition } from "react";
+import { setHelpImproveAtlasAction, type ActionResult } from "@/app/actions";
+import { ActionNote } from "@/components/ui/controls";
 import { Icon } from "./icon";
 
 export const THEME_KEY = "dpm-theme";
@@ -23,8 +27,10 @@ function applyTheme(theme: Theme) {
   }
 }
 
-export function AccountMenu() {
+export function AccountMenu({ helpImproveAtlas = false }: { helpImproveAtlas?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [pending, start] = useTransition();
+  const [result, setResult] = useState<ActionResult | null>(null);
   const [theme, setTheme] = useState<Theme>("system");
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -71,6 +77,31 @@ export function AccountMenu() {
               {theme === c.value && <Icon name="check-14" />}
             </button>
           ))}
+          <p className="border-y border-line px-4 py-2.5 type-label text-fg-2">Atlas</p>
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={helpImproveAtlas}
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                // The page refreshes with the setting as stored
+                setResult(await setHelpImproveAtlasAction(!helpImproveAtlas));
+              })
+            }
+            className="flex w-full items-center gap-2.5 px-4 py-2 text-left hover:bg-hover disabled:opacity-50"
+          >
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="type-body-medium text-fg-1">Help improve Atlas</span>
+              <span className="type-caption text-fg-3">Let the team building DPM see what Atlas got wrong or could not answer</span>
+            </span>
+            {helpImproveAtlas && <Icon name="check-14" />}
+          </button>
+          {result && (
+            <div className="px-4 pb-2.5">
+              <ActionNote result={result} />
+            </div>
+          )}
         </div>
       )}
     </div>

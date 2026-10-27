@@ -48,6 +48,9 @@ const ICONS = {
   "table-13": [13, "text-fg-3"],
   table: [12, "text-fg-3"],
   target: [16, "text-fg-2"],
+  // Phase S feedback under a reply; not in the Figma file yet, drawn in its 12px stroke style
+  "thumb-down": [12, "text-fg-3"],
+  "thumb-up": [12, "text-fg-3"],
   users: [12, "text-fg-3"],
   "x-14": [14, "text-fg-3"],
   x: [12, "text-fg-3"],

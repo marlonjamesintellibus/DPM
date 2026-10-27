@@ -39,6 +39,12 @@ export const config = {
   updatesMaxDays: 7,
   // Section 18, CQ8 to CQ11 (conversational plan, section 23): "Who has mentioned me?" looks this far back
   mentionsDays: 14,
+
+  // Phase S, M36 (conversational plan, section 23): a candidate for the eval set nobody accepts or
+  // dismisses is deleted after this many days, with the person's words in it
+  evalCandidateDays: 30,
+  // Phase S, LF8 and CD28: a usage number is shown only for a group of at least this many people
+  metricMinimumCount: 5,
 } as const;
 
 export type Config = typeof config;

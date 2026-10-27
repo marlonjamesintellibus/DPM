@@ -1,0 +1,2 @@
+ALTER TABLE "eval_candidates" DROP CONSTRAINT "eval_candidates_dedup_key_unique";--> statement-breakpoint
+CREATE UNIQUE INDEX "eval_candidates_dedup_live" ON "eval_candidates" USING btree ("dedup_key") WHERE "eval_candidates"."state" <> 'deleted';

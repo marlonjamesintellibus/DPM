@@ -56,6 +56,7 @@ import { loadCheckContext } from "../queries/check-context";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
+import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 
@@ -465,6 +466,12 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
     const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
     if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
+    // Phase S: an answer DPM could not give is a candidate for the eval set, with the asker's OK (LF1).
+    // The words are the asker's; Atlas's job found it, so the audit says Atlas
+    if (asked && answer && (asked.topic === "other" || asked.topic === "unclear")) {
+      const detail = { topic: asked.topic, answer: answer.rulesText ?? answer.text };
+      await logCandidate(tx, ctx.now, row.authorId, { cause: asked.topic, captureId, text: row.text, detail }, { actorType: atlas.type, actorId: atlas.id });
+    }
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)
       const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped, ...meta, question: asked } : undefined;
@@ -728,7 +735,7 @@ async function targetProjectOf(tx: Tx, draft: ExtractedItemDraft): Promise<strin
  */
 export function routeExtraction(ctx: CommandCtx, extractionId: string, to: RouteTo): Promise<ExtractedItem> {
   return runCommand(ctx, async (tx) => {
-    const { row, item } = await reviewing(tx, extractionId, ctx.actorId);
+    const { row, item, capture } = await reviewing(tx, extractionId, ctx.actorId);
     if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
     const { author, world } = await authorOf(tx, ctx.actorId);
     const draft = item.draft;
@@ -781,6 +788,11 @@ export function routeExtraction(ctx: CommandCtx, extractionId: string, to: Route
       extractionId: item.id,
       detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason },
     });
+    // Phase S: Atlas put it in the wrong project, so the update is a candidate for the eval set (LF1)
+    if (outcome.event === "MOVE") {
+      const detail = { kind: draft.kind, fromProject: draft.projectId, toProject: next.projectId };
+      await logCandidate(tx, ctx.now, ctx.actorId, { cause: "moved", captureId: row.captureId, extractionId: item.id, text: capture.row.text, detail });
+    }
     return after;
   });
 }

@@ -10,7 +10,8 @@ export type NavItem = {
   count?: number;
 };
 export type ClientItem = { label: string; href: string; count: number };
-export type Viewer = { name: string; title: string; initials: string };
+/** helpImproveAtlas: their own phase S setting, shown in the account menu. */
+export type Viewer = { name: string; title: string; initials: string; helpImproveAtlas?: boolean };
 
 export type SidebarProps = {
   workspace: string;
@@ -105,7 +106,7 @@ export function Sidebar({
             {viewer.title}
           </span>
         </span>
-        <AccountMenu />
+        <AccountMenu helpImproveAtlas={viewer.helpImproveAtlas ?? false} />
       </div>
     </aside>
   );
