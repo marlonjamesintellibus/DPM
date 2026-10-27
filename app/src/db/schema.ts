@@ -146,6 +146,8 @@ export const projectContacts = pgTable(
     projectId: text("project_id").notNull().references(() => projects.id),
     personId: text("person_id").notNull().references(() => people.id),
     tie: text("tie").notNull(),
+    /** KB A7.3: an outside contact reads the project's client view only when it is on for them. Off for a tie made by routing. */
+    clientView: boolean("client_view").notNull().default(false),
   },
   (t) => [primaryKey({ columns: [t.projectId, t.personId] })],
 );

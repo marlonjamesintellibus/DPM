@@ -51,6 +51,44 @@ describe("explain_project, without a model", () => {
     for (const [said, topic] of stays) expect(topicOf(said), said).toBe(topic);
   });
 
+  it("leaves the questions it took before the fix as they were on main: needs me, other, a #number", () => {
+    const stays: [string, string][] = [
+      ["I'm new here, what needs me today?", "needs_me"],
+      ["Where should I start today?", "needs_me"],
+      ["I'm new to Patois, what does 'weh' mean?", "other"],
+      ["Explain #151", "other"],
+      ["Where do I start on #151?", "other"],
+    ];
+    for (const said of [
+      "What's wrong?",
+      "What's the risk?",
+      "What's the latest?",
+      "What's pending?",
+      "What is overdue?",
+      "What's the forecast?",
+      "What is the plan?",
+      "What's Kemar doing?",
+      "What is Kemar waiting for?",
+      "What is Kemar up to?",
+      "What is the email about?",
+      "Explain the forecast",
+      "What is finished?",
+    ])
+      stays.push([said, "other"]);
+    for (const [said, topic] of stays) expect(topicOf(said), said).toBe(topic);
+    // A project still counts when the words go on to say so
+    expect(topicOf("What's this project about?")).toBe("explain_project");
+  });
+
+  it("CV8, CQ14: a follow-up that was other still follows the question before it", () => {
+    const earlier = [{ captureId: "c1", at: new Date(0), text: "What is Forager?", asked: { topic: "explain_project", projectId: "forager" }, openItems: [] }];
+    for (const said of ["What's the forecast?", "What is the plan?"]) {
+      expect(checkQuestion({ asked: said, topic: "explain_project", projectId: null }, { ...ctx(said), earlier }), said).toMatchObject({ follows: ["What is Forager?"] });
+    }
+    // One with a topic of its own follows nothing
+    expect(checkQuestion({ asked: "What is GQ?", topic: "explain_project", projectId: "gq" }, { ...ctx("What is GQ?"), earlier })?.follows).toBeUndefined();
+  });
+
   it("a one-sentence ask names the project when its name or alias is said; 'Explain' asks without a '?'", () => {
     expect(ruleQuestion(ctx("What is Forager?"))).toEqual({ asked: "What is Forager?", topic: "explain_project", projectId: "forager" });
     expect(ruleQuestion(ctx("Explain Store Insights"))).toEqual({ asked: "Explain Store Insights", topic: "explain_project", projectId: "insights" });
@@ -99,5 +137,22 @@ describe("whether the words name something (EX1)", () => {
     expect(namesSomething("Where do I start?")).toBe(false);
     expect(namesSomething("I'm new here, Atlas, where do I start?")).toBe(false);
     expect(namesSomething("what is that")).toBe(false);
+  });
+
+  it("in any case, where the question puts a project, so a lowercase name counts and a person named elsewhere does not", () => {
+    for (const said of ["what is store insights?", "what is gq", "explain forager", "i'm new on gq, where do i start?", "how do i get started on forager", "what’s atlas bank for?"]) {
+      expect(namesSomething(said), said).toBe(true);
+    }
+    for (const said of ["I'm new, Alicia said to ask you where to start", "What's this project about?", "Can you explain it to me?", "Where should I start on it?", "What is Atlas?"]) {
+      expect(namesSomething(said), said).toBe(false);
+    }
+  });
+
+  it("a follow-up names what follows its 'and', unless it asks again", () => {
+    expect(namesSomething("and Store Insights?")).toBe(true);
+    expect(namesSomething("what about atlas bank")).toBe(true);
+    expect(namesSomething("and on GQ?")).toBe(true);
+    expect(namesSomething("and where do I start?")).toBe(false);
+    expect(namesSomething("and for me?")).toBe(false);
   });
 });

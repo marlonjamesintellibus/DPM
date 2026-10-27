@@ -27,10 +27,11 @@ export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, explainProj
  * updates leaves to needs me what asks for their review or OK (QA1). Phase L: why_filed goes first, so "Why did
  * you file the blocker?" is not blocked, nor a why about the work. Phase C: why goes next, so "Why is Forager at
  * risk?" is not how it stands and "What's holding up #151?" is not blocked. Undo and corrections are
- * whole-message commands, read by ruleQuestion. Phase Q: explain_project goes last but for needs me, so "What is
- * Forager?" is tried after every other topic's words and "Weh mi fi start?" is not needs me's "mi fi".
+ * whole-message commands, read by ruleQuestion. Phase Q: explain_project goes last, so "What is Forager?" is
+ * tried after every other topic's words and "I'm new here, what needs me today?" stays needs me; needs me's
+ * "mi fi" leaves it "Weh mi fi start?".
  */
-export const BY_RULE = [smallTalk, whyFiled, why, mentions, blocked, due, updates, myWork, projectStatus, explainProject, needsMe] as const;
+export const BY_RULE = [smallTalk, whyFiled, why, mentions, blocked, due, updates, myWork, projectStatus, needsMe, explainProject] as const;
 
 export type QuestionTopic = (typeof TOPICS)[number]["id"];
 export const QUESTION_TOPICS = TOPICS.map((t) => t.id) as readonly QuestionTopic[];

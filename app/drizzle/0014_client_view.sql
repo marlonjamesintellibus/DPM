@@ -1,0 +1,1 @@
+ALTER TABLE "project_contacts" ADD COLUMN "client_view" boolean DEFAULT false NOT NULL;

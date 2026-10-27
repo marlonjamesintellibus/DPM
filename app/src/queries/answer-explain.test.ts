@@ -83,6 +83,15 @@ describe("what a project is", () => {
     await kemarSaves();
     await db.update(t.projects).set({ setOverride: "explained", reasonGivenAt: "at_risk" }).where(eq(t.projects.id, "forager"));
     expect((await ask("kemar", "What is Forager?")).answer.text).toContain("It is Off track, as Alicia set it.");
+    // With no one recorded as setting it, the owner set it, said in full
+    await db.update(t.projects).set({ setBy: null }).where(eq(t.projects.id, "forager"));
+    expect((await ask("kemar", "What is Forager?", 31)).answer.text).toContain("It is Off track, as its owner set it.");
+  });
+
+  it("a thread description that ends its own sentence gets no second full stop", async () => {
+    await db.update(t.threads).set({ description: "Checks, monitoring and rollout." }).where(eq(t.threads.name, "Production ready"));
+    const { answer } = await ask("kemar", "What is Forager?");
+    expect(shown(answer).find(([title]) => title === "Production ready")?.[1]).toBe("Checks, monitoring and rollout. Alicia and Jodian own its milestones and work");
   });
 
   it("a follow-up names another project; one with no name follows the project before it", async () => {
@@ -173,6 +182,35 @@ describe("edge cases", () => {
     expect((await ask("alicia", "What is Atlas Bank?")).answer.text).toBe(answer.text);
   });
 
+  it("EX1: a follow-up that names a project they are not in is not found, never the project asked about before", async () => {
+    const first = await ask("alicia", "What is Forager?");
+    const next = await ask("alicia", "and Store Insights?", 31, first.conversationId);
+    expect(next.row.question).toMatchObject({ topic: "explain_project", projectId: null, follows: ["What is Forager?"] });
+    expect(next.answer.text).toBe(`${NOT_FOUND} You can ask about Forager 2.0 or GQ & Academy.`);
+    for (const word of ["Insights", "Sprouts", "Andre"]) expect(JSON.stringify(next.answer)).not.toContain(word);
+
+    const kemar = await ask("kemar", "What is Forager?", 32);
+    const bank = await ask("kemar", "and Atlas Bank?", 33, kemar.conversationId);
+    expect(bank.answer.text).toBe(`${NOT_FOUND} You can ask about Forager 2.0, GQ & Academy or Store Insights.`);
+    // What follows a name that is none of theirs is about that name, so it is not found either
+    const start = await ask("kemar", "and where do I start?", 34, bank.conversationId);
+    expect(start.answer.text).toBe(bank.answer.text);
+  });
+
+  it("EX1: a name in lowercase that is none of theirs is not found, even for someone on one project", async () => {
+    for (const said of ["what is store insights?", "what is gq"]) {
+      expect((await ask("jodian", said)).answer.text, said).toBe(`${NOT_FOUND} You can ask about Forager 2.0.`);
+    }
+    expect((await ask("andre", "explain forager")).answer.text).toBe(`${NOT_FOUND} You can ask about Store Insights.`);
+    // With several projects, not "Which project?"
+    expect((await ask("kemar", "what is atlas bank?")).answer.text).toBe(`${NOT_FOUND} You can ask about Forager 2.0, GQ & Academy or Store Insights.`);
+  });
+
+  it("EX1: a person named in the words is no project: a newcomer sent by Alicia gets their project", async () => {
+    const answer = await answerFor(db, "jodian", { asked: "I'm new, Alicia said to ask you where to start", topic: "explain_project", projectId: null }, at(30));
+    expect(answer.text).toMatch(/^Forager 2\.0 is for Sprouts/);
+  });
+
   it("EX1: a project Kemar has left reads as one that never was, even when Atlas names it", async () => {
     await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
     const answer = await answerFor(db, "kemar", { asked: "What is Store Insights?", topic: "explain_project", projectId: "insights" }, at(30));
@@ -199,6 +237,25 @@ describe("edge cases", () => {
     expect((await answerFor(db, "kyle", { asked: "What's this project about?", topic: "explain_project", projectId: null }, at(31))).text).toContain(
       "Its releases are Buyer pilot · Release 1 (done) and Rollout · Release 2 on Fri 6 Nov.",
     );
+  });
+
+  it("EX4: a project whose group is no longer connected to DPM is not found for Kyle, as for its members (P10, M13)", async () => {
+    await db.update(t.groups).set({ connectedToDpm: false }).where(eq(t.groups.id, "g-forager"));
+    for (const who of ["kemar", "kyle"]) {
+      const answer = await answerFor(db, who, { asked: "What is Forager?", topic: "explain_project", projectId: null }, at(30));
+      expect(answer.text, who).toMatch(new RegExp(`^${NOT_FOUND.replace(/[.?]/g, "\\$&")}`));
+      expect(JSON.stringify(answer), who).not.toContain("Release");
+    }
+  });
+
+  it("EX4: a contact tie reads the client view only when it is on for them (KB A7.3)", async () => {
+    await db.update(t.projectContacts).set({ clientView: false }).where(eq(t.projectContacts.personId, "kyle"));
+    expect((await answerFor(db, "kyle", { asked: "What is Forager?", topic: "explain_project", projectId: null }, at(30))).text).toBe(NOT_FOUND);
+    // A tie routing made ("contact on Store Insights") is off, so it opens nothing either
+    await db.update(t.projectContacts).set({ clientView: true }).where(eq(t.projectContacts.personId, "kyle"));
+    await db.insert(t.projectContacts).values({ projectId: "insights", personId: "kyle", tie: "contact" });
+    const answer = await answerFor(db, "kyle", { asked: "What is Store Insights?", topic: "explain_project", projectId: null }, at(31));
+    expect(answer.text).toBe(`${NOT_FOUND} You can ask about Forager 2.0.`);
   });
 
   it("EX4: Kyle is tied to no other project, so Store Insights is not found, as for a member", async () => {

@@ -3,8 +3,10 @@
 // milestones; the five most recent approved decisions; and where the asker starts on it. All from the
 // project view the asker reads (getProject), so members only (EX1, P10), and a decision's quote only where
 // rule 9 lets them read it (EX3). An outside contact gets the client view of a project they are tied to,
-// and nothing else (EX4). A name that fits two of their projects asks which (EX5); asked in a group (EX6)
-// waits for phase I.
+// and nothing else (EX4). A name that fits two of their projects asks which (EX5); M21 Clarification is phase
+// D's, so until it is wired here the asker says the name again. Asked in a group (EX6) waits for phase I:
+// this answer reads the asker's own view (thread owners, their work, decision quotes), so a group answer
+// needs its own builder from the group's shared facts (rule 8), never this one.
 import { inArray } from "drizzle-orm";
 import * as t from "../../db/schema";
 import type { IsoDate } from "../../domain/dates";
@@ -48,13 +50,16 @@ type Picked<P> = { project: P } | { which: P[] } | { notFound: true } | { choose
 function pickProject<P extends { id: string; name: string; aliases: readonly string[] }>(asked: string, follows: readonly string[], projectId: string | null, projects: readonly P[]): Picked<P> {
   const named = projects.find((p) => p.id === projectId);
   if (named) return { project: named };
+  // EX1: a name that is none of theirs is not found, never confirmed or denied. Each question's words are read
+  // in full before the one before it, so "and Store Insights?" after "What is Forager?" is never Forager, and
+  // "and where do I start?" after "What is Atlas Bank?" is not found either (phase Q fix).
+  if (!projects.length) return { notFound: true };
   for (const words of [asked, ...follows]) {
     const fits = projectFits(words, projects);
     if (fits.length > 1) return { which: fits };
     if (fits.length === 1) return { project: fits[0] };
+    if (namesSomething(words)) return { notFound: true };
   }
-  // EX1: a name that is none of theirs is not found, never confirmed or denied
-  if (namesSomething(asked) || !projects.length) return { notFound: true };
   return projects.length === 1 ? { project: projects[0] } : { choose: [...projects] };
 }
 
@@ -109,7 +114,7 @@ function explain(v: ProjectView, viewerId: string): Body {
     .sort((a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") || workTitle(a).localeCompare(workTitle(b)));
   const myMilestone = milestones.filter((m) => m.owner?.id === viewerId && ahead(m)).sort((a, b) => a.forecastDate.localeCompare(b.forecastDate))[0];
 
-  const status = v.displayed.status ? `It is ${v.displayed.label}, ${v.displayed.from === "set" ? `as ${firstName(v.setStatus?.setBy?.name ?? "its owner")} set it` : "worked out from its plan"}.` : "It has no status yet: nothing on it has a date.";
+  const status = v.displayed.status ? `It is ${v.displayed.label}, ${v.displayed.from === "set" ? `as ${v.setStatus?.setBy ? firstName(v.setStatus.setBy.name) : "its owner"} set it` : "worked out from its plan"}.` : "It has no status yet: nothing on it has a date.";
   const plan = (() => {
     // EX2, P11: an empty plan says so, and how it gets filled
     if (!v.threads.length && !milestones.length) {
@@ -150,8 +155,9 @@ function explain(v: ProjectView, viewerId: string): Body {
       : []),
     ...v.threads.map((th): AnswerCard => {
       const owners = ownersOf(th);
-      const what = th.description ?? "No description yet";
-      return { title: th.name, detail: `${what}. ${owners.length ? `${either(owners, "and")} ${owners.length === 1 ? "owns" : "own"} its milestones and work` : "Nothing in it has an owner yet"}`, tag: `Thread · ${th.statusLabel}`, href };
+      // A description that ends its own sentence is not given a second full stop
+      const what = (th.description ?? "No description yet").trim();
+      return { title: th.name, detail: `${what}${/[.!?]$/.test(what) ? "" : "."} ${owners.length ? `${either(owners, "and")} ${owners.length === 1 ? "owns" : "own"} its milestones and work` : "Nothing in it has an owner yet"}`, tag: `Thread · ${th.statusLabel}`, href };
     }),
     ...next.map((m): AnswerCard => ({ title: m.name, detail: `${p.name}: ${forecastText(m)}${m.owner ? `; ${firstName(m.owner.name)} owns it` : ""}`, tag: `Next milestone · ${m.statusLabel}`, href })),
     ...decisions.map((e): AnswerCard => ({ title: e.title, detail: decisionLine(v, e), tag: "Decision · Approved", href: `${href}?view=table&log=decision` })),
