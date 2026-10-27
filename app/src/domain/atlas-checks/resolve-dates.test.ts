@@ -84,6 +84,14 @@ describe("shifts from a date on record", () => {
   });
 });
 
+describe("dates said only to rule them out", () => {
+  it("next Monday, not Friday: the new date is Monday", () => {
+    expect(readDateValue("Trend model will land next Monday now, not Friday", AT, "2026-10-23")?.date).toBe("2026-10-26");
+    expect(readDateValue("lands Thursday instead of Friday", AT, "2026-10-23")?.date).toBe("2026-10-22");
+    expect(readLeaveRange("I'm out Thursday, not Friday", AT)).toMatchObject({ start: "2026-10-22", end: "2026-10-22" });
+  });
+});
+
 describe("leave ranges", () => {
   it("from a day: start only (story item 5)", () => {
     expect(readLeaveRange("I'm out from Monday the 26th", AT)).toMatchObject({ start: "2026-10-26", end: null, relative: false });

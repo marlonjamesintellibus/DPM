@@ -36,6 +36,25 @@ export type ChatCapture = {
 
 export type ChatSummary = { viewerId: string; latest: ChatCapture | null };
 
+// What Atlas says in the chat while it reads, and when a read ends with nothing to review (E4, E18)
+function chatLine(state: CaptureState, counts: string): string {
+  switch (state) {
+    case "received":
+    case "transcribing":
+    case "reading":
+    case "retry_wait":
+      return "Reading your update…";
+    case "failed":
+      return "Atlas could not read this. Try again or type the update.";
+    case "nothing_to_update":
+      return "Got it. Nothing in this one changes a project.";
+    case "saved":
+      return `Saved. ${counts}`;
+    default:
+      return `Got it. ${counts}`;
+  }
+}
+
 export async function getChatSummary(conn: Conn, viewerId: string): Promise<ChatSummary> {
   const [capture] = await conn
     .select()
@@ -73,7 +92,7 @@ export async function getChatSummary(conn: Conn, viewerId: string): Promise<Chat
       projects: counts.projects,
       needsOk: counts.needsOk,
       needsProject: counts.needsProject,
-      line: `${capture.state === "saved" ? "Saved" : "Got it"}. ${countsLine(counts, "; ")}`,
+      line: chatLine(capture.state, countsLine(counts, "; ")),
     },
   };
 }

@@ -38,6 +38,11 @@ const JUDGEMENTS = [
   "not pulling her weight", "not pulling their weight", "slacking", "bad at", "terrible at", "difficult to work with",
 ];
 
+/** Check 13's word lists, for any text Atlas writes that people will read (a reason draft). */
+export function saysHealthOrJudgement(text: string): boolean {
+  return HEALTH.some((h) => mentions(text, h)) || JUDGEMENTS.some((j) => mentions(text, j));
+}
+
 type FieldRule = { who: "owner" | "owner_or_lead"; values?: readonly string[]; date?: true };
 
 // Check 3: what an author may change from a message, per target type (machines doc, section 4)
@@ -475,12 +480,28 @@ const noHealthNoJudgement: Check = [
 
 // ---- Check 14: the routing reason is real ----
 
+// M14 "a thing tied to one project": the words name a record by its title or number ("TikTok
+// ingest" names "TikTok trend ingest"). Every content word of the evidence must be in the record.
+const STOPWORDS = new Set(["a", "an", "the", "for", "of", "on", "in", "to", "and", "my", "our", "is"]);
+const contentWords = (s: string) => norm(s).split(/[^a-z0-9#]+/).filter((x) => x && !STOPWORDS.has(x));
+
+function namesRecord(p: CandidateProject, evidence: string): boolean {
+  const ev = contentWords(evidence);
+  if (!ev.length || ev.join("").length < 4) return false;
+  return p.records.some((r) => {
+    const own = new Set([...contentWords(r.title), ...(r.number ? [norm(r.number)] : [])]);
+    return ev.every((x) => own.has(x));
+  });
+}
+
 function reasonHolds(w: Work, s: Scope): boolean {
   const reason = w.p.routingReason;
   const project = s.project(w.projectId);
   if (!project || !reason) return false;
   const near = s.nearText(w);
   const others = s.ctx.projects.filter((p) => p.id !== project.id);
+  // A BRAID item has no target record; naming one of this project's records, and none of another's, ties it here (G19)
+  const thingHere = () => mentions(near, reason.evidence) && namesRecord(project, reason.evidence) && !others.some((p) => namesRecord(p, reason.evidence));
   switch (reason.basis) {
     case "target": {
       const t = w.target;
@@ -489,16 +510,18 @@ function reasonHolds(w: Work, s: Scope): boolean {
         const shared = others.some((p) => p.records.some((r) => norm(r.title) === norm(t.record.title)));
         return !shared || (!!t.record.number && mentions(near, t.record.number));
       }
-      return !!w.match && w.match.project.id === project.id;
+      if (w.match) return w.match.project.id === project.id;
+      return w.kind !== "update" && thingHere();
     }
     case "reference": {
       const names = (p: CandidateProject) =>
         [p.name, ...p.aliases].some((n) => norm(n) === norm(reason.evidence)) ||
         p.records.some((r) => !!r.number && norm(r.number) === norm(reason.evidence));
-      return mentions(near, reason.evidence) && names(project) && !others.some(names);
+      return (mentions(near, reason.evidence) && names(project) && !others.some(names)) || (w.kind !== "update" && thingHere());
     }
     case "owned_record":
-      return w.target?.type === "record" && w.target.record.ownerId === s.ctx.author.id;
+      if (w.target) return w.target.type === "record" && w.target.record.ownerId === s.ctx.author.id;
+      return w.kind !== "update" && thingHere();
     case "tied_person": {
       const isNamed = (n: string) => norm(n) === norm(reason.evidence) || norm(n.split(" ")[0]) === norm(reason.evidence);
       const person = project.people.find((x) => isNamed(x.name));

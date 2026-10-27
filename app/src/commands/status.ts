@@ -13,6 +13,9 @@ import { isOnLog, type BraidEntryRecord } from "../domain/machines/braid-entry";
 import { applySetStatus, type OverrideState, type SetStatusEvent, type SetStatusRecord } from "../domain/machines/set-status";
 import { calculatePlan, milestoneStatus, workItemStatus } from "../domain/status/rules";
 import { RANK, type Status } from "../domain/status/status";
+import type { Drafter } from "../atlas/extractor";
+import { wordReason } from "../atlas/reason";
+import { STATUS_LABEL } from "../queries/project";
 import { audit, CommandRefused, moved, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProject, type Evaluation } from "./evaluate";
 
@@ -205,4 +208,18 @@ function workItemLine(w: { number: string | null; title: string; state: string; 
   if (w.dueDate && daysBetween(w.dueDate, today) > 0) return `${name} is past its due date of ${short(w.dueDate)}.`;
   if (w.state === "blocked") return `${name} is blocked.`;
   return null;
+}
+
+/**
+ * The rules draft, reworded by Atlas when it is connected (phase 4). Atlas sees only the facts in
+ * the rules draft, never the project's records, captures or leave; if its wording adds anything,
+ * the rules draft is returned unchanged. An empty rules draft stays empty (E47).
+ */
+export async function draftReasonWithAtlas(conn: Conn, projectId: string, now: Date, drafter: Drafter | null): Promise<ReasonDraft & { fallback?: string }> {
+  const draft = await draftReason(conn, projectId, now);
+  if (!drafter || !draft.text) return draft;
+  const [project] = await conn.select({ name: t.projects.name, setStatus: t.projects.setStatus }).from(t.projects).where(eq(t.projects.id, projectId));
+  if (!project?.setStatus) return draft;
+  const worded = await wordReason(drafter, { projectName: project.name, status: STATUS_LABEL[project.setStatus], facts: draft.text });
+  return worded.by === "atlas" ? { ...draft, text: worded.text, by: "atlas" } : { ...draft, fallback: worded.fallback };
 }

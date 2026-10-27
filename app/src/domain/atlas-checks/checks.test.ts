@@ -395,6 +395,24 @@ describe("check 14: the routing reason is real", () => {
     expect(one({ ...p, quote: "#145, the Google Trends connector is done" }, byNumber).item?.routing).toBe("routed");
   });
 
+  it("G19: a new BRAID item that names a record by title is tied to that record's project", () => {
+    const ctx = ctxWith("Issue: the TikTok ingest has been dropping rows since yesterday.");
+    for (const basis of ["reference", "target", "owned_record"] as const) {
+      const p = braid({ braidKind: "issue", quote: "the TikTok ingest has been dropping rows since yesterday", routingReason: { basis, evidence: "TikTok ingest", label: "TikTok ingest is in Forager" } });
+      expect(one(p, ctx).item).toMatchObject({ routing: "routed", projectId: "forager" });
+    }
+  });
+
+  it("G19: the title must be in the words, name a record, and name none in another project (E82)", () => {
+    const ctx = ctxWith("Issue: the TikTok ingest has been dropping rows since yesterday.");
+    const p = (evidence: string) => braid({ braidKind: "issue", quote: "the TikTok ingest has been dropping rows since yesterday", routingReason: { basis: "reference", evidence, label: evidence } });
+    expect(one(p("TikTok pipeline"), ctx).item?.routing).toBe("choose_project"); // not a record
+    expect(one(p("Google Trends connector"), ctx).item?.routing).toBe("choose_project"); // not in the words
+    const twin = { type: "work_item" as const, id: "wi-302", number: "#302", title: "TikTok ingest", ownerId: "kemar", values: { state: "in_progress" } };
+    const projects = KEMAR_CONTEXT.projects.map((x) => (x.id === "insights" ? { ...x, records: [...x.records, twin] } : x));
+    expect(one(p("TikTok ingest"), { ...ctx, projects }).item?.routing).toBe("choose_project");
+  });
+
   it('"same quote" needs an item from those words filed in that project', () => {
     const { item } = one(KEMAR_PROPOSALS[7], KEMAR_CONTEXT);
     expect(item?.routing).toBe("choose_project");

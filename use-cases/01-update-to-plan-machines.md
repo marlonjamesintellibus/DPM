@@ -568,3 +568,47 @@ The commands (`app/src/commands`) and per-viewer queries (`app/src/queries`) run
 | D16 | Decision approvers per project (S11 allows 2 later) | One approver, from config; there is no per-project setting yet |
 | D17 | E45 "Add to the BRAID log" inline while writing a reason | Not built; the refusal tells Alicia to add or approve an entry first |
 | D18 | Matching decisions on the review page ("not the same", pick an entry) and the M5 check "Done with no linked change" | Not built yet |
+
+## 10. Found while building phase 4 (26 Oct 2026)
+
+Atlas now reads captures through OpenRouter (`app/src/atlas`, `app/src/commands/atlas.ts`). The default model is GPT-6.1 Sol (`openai/gpt-6.1-sol`), chosen by Marlon on 26 Oct. Every answer still goes through checks 1 to 14, so the model only ever proposes.
+
+### How a read runs
+
+- A read is three short transactions around one network call, so no database transaction waits on the model. `beginRead` moves the capture from received (or retry_wait) to reading and loads the author's candidate data. The model is called with no transaction open. `proposeItems` then runs the checks against the database as it is now and stores the items; on failure, `failRead` records READ_FAILED.
+- Retries follow M2: wait 2s, then 4s, then fail after 3 tries (S7). The text is kept, and the chat says "Atlas could not read this. Try again or type the update." (E18)
+- Only the model's own failures are retried (model_error, timeout, bad_output). A database refusal surfaces as it is.
+- The tool's arguments are checked for shape. A broken answer fails the read. One item with the wrong shape is set aside and logged, so it does not lose the others.
+- The audit keeps, for each read: the model, tokens and cost, the items set aside, and every dropped proposal with its check.
+
+### Decided in the code
+
+| # | Point | What the code does |
+|---|---|---|
+| G19 | Check 14 accepted a project name, a number or a person, but not a record named by title. New BRAID items ("Issue: the TikTok ingest is dropping rows") have no target, so they always went to "Choose a project" | M14 lists "a thing tied to one project". A new or matched BRAID item now holds its reason when the evidence is in the words, names a record of that project (every content word in its title or number), and names no record in another of the author's projects (E82 still holds) |
+| G20 | "Land next Monday now, not Friday" took Friday (the last date said) | A date right after "not", "instead of" or "rather than" is not read as the new date, for forecasts and leave |
+| G21 | The drafted reason (G17) | Atlas rewords the rules draft. It is given only the project name, the set status and the rules draft's sentences. If its wording adds a number, a work item, more than 3 sentences, or health or judgement words, the rules draft is used. Em dashes become commas |
+| G22 | Model quirks | OpenAI models get low reasoning effort. Anthropic models get no reasoning and an unforced tool call, because the provider refuses a forced one ("tool_choice type tool is not supported", Bedrock). An answer with no tool call is retried as bad_output |
+| G23 | Running without a key | A recorded Atlas answers the messages it has a recording for (Kemar's note) and fails the rest as model_error, so nothing pretends a read happened |
+| G24 | Data sent to the model | Only the author's candidate projects, their records, people and open BRAID entries, the author's leave target and approved leave, and the message. Requests ask providers not to keep the data (`data_collection: deny`). Seed data only until B7 |
+
+### Evaluation (26 Oct 2026)
+
+33 messages from Kemar at 8:58am on 20 Oct, scored after the server checks (`app/src/atlas/eval/cases.ts`; `pnpm atlas:eval`). A case passes when every expected item reaches review and nothing forbidden does. Cases cover the story, typos, Jamaican Patois, a rambling voice note, every BRAID kind, dates, leave, rights (another person's work and milestone), messages with nothing to update, three prompt injections, a judgement and health.
+
+| Model | Passed | Expected items found | Extra items | Forbidden | Median time | Cost for 33 |
+|---|---|---|---|---|---|---|
+| GPT-6.1 Sol (default) | 33 | 34 of 34 | 1 | 0 | 2.7s | $0.08 |
+| Claude Haiku 5.5 | 32 | 33 of 34 | 2 | 0 | 3.2s | $0.02 |
+| Claude Sonnet 5.5 | 31 | 32 of 34 | 2 | 0 | 3.6s | $0.39 |
+
+Prompt `read-2`, one run each, after G19 and G20; a second Sol run passed 33 again. Before G19 and G20, Sol passed 31 and Haiku 27. On Kemar's note, Sol gives 11 items in the 2 projects: 10 are the story's, and the 11th links the feed dependency instead of adding the runbook as evidence on "Only Kemar can run the pipeline". No model made that link.
+
+### Needs a decision
+
+| # | Question | Default in the code |
+|---|---|---|
+| D19 | A capture whose read crashed mid-way (process stopped) stays in reading, and a second read is refused | Nothing moves it yet. A timer that returns a read older than 5 minutes to retry_wait would fix it |
+| D20 | "Jodian has the runbook already": the design reads it as Low (needs Kemar's OK); every model says High, so it is pre-accepted | Kept as the model says; the checks only lower confidence for hedges, relative dates and poor transcripts |
+| D21 | Model choice: Haiku is a quarter of Sol's cost here and nearly as good | GPT-6.1 Sol, as asked. Revisit with real messages after B7 |
+| D22 | The evaluation uses Kemar's data only | More authors and projects come with phase 5 seed data |

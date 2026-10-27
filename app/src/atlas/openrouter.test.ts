@@ -1,0 +1,185 @@
+// The OpenRouter client against a fake fetch: what it sends, how it reads the tool call, and how
+// each failure maps to the capture machine's READ_FAILED reasons (E18, E19). No network.
+import { describe, expect, it } from "vitest";
+import { KEMAR_CONTEXT, KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
+import { AtlasReadFailed } from "./extractor";
+import { createFixtureExtractor } from "./fixture";
+import { atlasFromEnv } from "./index";
+import { createOpenRouter, DEFAULT_MODEL, OPENROUTER_URL, parseItems } from "./openrouter";
+import { proposeItemsTool, userMessage } from "./prompt";
+
+const KEY = "sk-or-test-not-a-real-key";
+
+type Sent = { url: string; init: RequestInit; body: Record<string, unknown> };
+
+function fakeFetch(answer: (sent: Sent) => Response | Promise<Response>) {
+  const calls: Sent[] = [];
+  const f = (async (url: string, init: RequestInit) => {
+    const sent = { url, init, body: JSON.parse(String(init.body)) };
+    calls.push(sent);
+    return answer(sent);
+  }) as unknown as typeof fetch;
+  return { fetch: f, calls };
+}
+
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+function toolAnswer(args: unknown, extra: Record<string, unknown> = {}) {
+  return json(200, {
+    model: "openai/gpt-6.1-sol",
+    choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ function: { name: "propose_items", arguments: typeof args === "string" ? args : JSON.stringify(args) } }] } }],
+    usage: { prompt_tokens: 3000, completion_tokens: 900, cost: 0.015 },
+    ...extra,
+  });
+}
+
+async function failure(p: Promise<unknown>): Promise<AtlasReadFailed> {
+  const e = await p.then(
+    () => null,
+    (err: unknown) => err,
+  );
+  expect(e).toBeInstanceOf(AtlasReadFailed);
+  return e as AtlasReadFailed;
+}
+
+describe("the request", () => {
+  it("defaults to GPT-6.1 Sol, forces the propose_items tool and asks providers not to keep the data", async () => {
+    const { fetch, calls } = fakeFetch(() => toolAnswer({ items: [] }));
+    await createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT);
+    const [sent] = calls;
+    expect(DEFAULT_MODEL).toBe("openai/gpt-6.1-sol");
+    expect(sent.url).toBe(OPENROUTER_URL);
+    expect(sent.body).toMatchObject({
+      model: "openai/gpt-6.1-sol",
+      tool_choice: { type: "function", function: { name: "propose_items" } },
+      provider: { data_collection: "deny" },
+    });
+    expect((sent.body.tools as unknown[]).length).toBe(1);
+  });
+
+  it("the default reasons at low effort; Anthropic models get no reasoning and an unforced tool call", async () => {
+    const sol = fakeFetch(() => toolAnswer({ items: [] }));
+    await createOpenRouter({ apiKey: KEY, fetch: sol.fetch }).extract(KEMAR_CONTEXT);
+    expect(sol.calls[0].body).toMatchObject({ reasoning: { effort: "low" } });
+
+    const sonnet = fakeFetch(() => toolAnswer({ items: [] }));
+    await createOpenRouter({ apiKey: KEY, model: "anthropic/claude-sonnet-5.5", fetch: sonnet.fetch }).extract(KEMAR_CONTEXT);
+    expect(sonnet.calls[0].body.tool_choice).toBe("auto");
+    expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
+  });
+
+  it("puts the key only in the Authorization header", async () => {
+    const { fetch, calls } = fakeFetch(() => toolAnswer({ items: [] }));
+    await createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT);
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe(`Bearer ${KEY}`);
+    expect(String(calls[0].init.body)).not.toContain(KEY);
+  });
+
+  it("uses the model the settings name", async () => {
+    const { fetch, calls } = fakeFetch(() => toolAnswer({ items: [] }));
+    await createOpenRouter({ apiKey: KEY, model: "anthropic/claude-haiku-5.5", fetch }).extract(KEMAR_CONTEXT);
+    expect(calls[0].body.model).toBe("anthropic/claude-haiku-5.5");
+  });
+
+  it("sends the update as data inside <update>, and only the author's candidate projects (check 9)", () => {
+    const msg = userMessage({ ...KEMAR_CONTEXT, notConnected: [{ id: "uwi", name: "UWI study group" }] });
+    expect(msg).toContain(`<update>\n${KEMAR_NOTE}\n</update>`);
+    expect(msg).toContain("Tuesday 2026-10-20, 8:58 AM");
+    expect(msg).toContain('"id": "forager"');
+    expect(msg).not.toContain("UWI");
+  });
+
+  it("describes every proposal field the checks read", () => {
+    const schema = proposeItemsTool.function.parameters as unknown as { properties: { items: { items: { required: string[] } } } };
+    expect(schema.properties.items.items.required).toEqual(expect.arrayContaining(["kind", "projectId", "routingReason", "quote", "confidence", "rationale"]));
+  });
+});
+
+describe("reading the answer", () => {
+  it("returns the proposals, the model that answered and what it cost", async () => {
+    const { fetch } = fakeFetch(() => toolAnswer({ items: KEMAR_PROPOSALS }));
+    const out = await createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT);
+    expect(out.proposals).toHaveLength(11);
+    expect(out.proposals[2]).toMatchObject({ targetId: "wi-151", newValue: "blocked", note: "waiting on Kyle (Sprouts IT)" });
+    expect(out).toMatchObject({ model: "openai/gpt-6.1-sol", malformed: [], usage: { inputTokens: 3000, outputTokens: 900, costUsd: 0.015 } });
+  });
+
+  it("sets aside one item with the wrong shape and keeps the rest", () => {
+    const { proposals, malformed } = parseItems(JSON.stringify({ items: [KEMAR_PROPOSALS[0], { kind: "update", quote: 42 }, KEMAR_PROPOSALS[1]] }));
+    expect(proposals).toHaveLength(2);
+    expect(malformed).toEqual([{ index: 1, issues: expect.stringContaining("quote") }]);
+  });
+
+  it("an empty list is a real answer: nothing to update (E4)", () => {
+    expect(parseItems('{"items":[]}')).toEqual({ proposals: [], malformed: [] });
+  });
+
+  it.each([
+    ["the tool arguments are not JSON", "{items: ["],
+    ["there is no items list", '{"proposals": []}'],
+  ])("bad_output when %s", async (_, args) => {
+    const { fetch } = fakeFetch(() => toolAnswer(args));
+    expect((await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT))).why).toBe("bad_output");
+  });
+
+  it("bad_output when the model answers in text instead of calling the tool", async () => {
+    const { fetch } = fakeFetch(() => json(200, { choices: [{ finish_reason: "stop", message: { content: "Here are the items..." } }] }));
+    expect((await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT))).why).toBe("bad_output");
+  });
+
+  it("bad_output when the answer was cut off", async () => {
+    const { fetch } = fakeFetch(() => json(200, { choices: [{ finish_reason: "length", message: { tool_calls: [{ function: { name: "propose_items", arguments: '{"items":[' } }] } }] }));
+    expect((await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT))).why).toBe("bad_output");
+  });
+});
+
+describe("failures", () => {
+  it("model_error on an HTTP error, with OpenRouter's message and never the key", async () => {
+    const { fetch } = fakeFetch(() => json(429, { error: { message: "Rate limit exceeded", code: 429 } }));
+    const e = await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT));
+    expect(e.why).toBe("model_error");
+    expect(e.message).toContain("Rate limit exceeded");
+    expect(e.message).not.toContain(KEY);
+  });
+
+  it("model_error carries the provider's own words when OpenRouter has them", async () => {
+    const raw = { message: 'tool_choice: type "tool" and "any" are not supported for this model.' };
+    const { fetch } = fakeFetch(() => json(400, { error: { message: "Provider returned error", code: 400, metadata: { raw: JSON.stringify(raw), provider_name: "Amazon Bedrock" } } }));
+    const e = await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT));
+    expect(e.message).toContain("(Amazon Bedrock: {");
+    expect(e.message).toContain("are not supported for this model");
+  });
+
+  it("model_error when OpenRouter reports an upstream failure inside a 200", async () => {
+    const { fetch } = fakeFetch(() => json(200, { error: { message: "Provider returned error", code: 502 } }));
+    expect((await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT))).why).toBe("model_error");
+  });
+
+  it("model_error when the network fails", async () => {
+    const { fetch } = fakeFetch(() => Promise.reject(new TypeError("fetch failed")));
+    expect((await failure(createOpenRouter({ apiKey: KEY, fetch }).extract(KEMAR_CONTEXT))).why).toBe("model_error");
+  });
+
+  it("timeout when no answer comes in time", async () => {
+    const { fetch } = fakeFetch(
+      ({ init }) =>
+        new Promise<Response>((_, reject) => init.signal!.addEventListener("abort", () => reject(new DOMException("aborted", "TimeoutError")))),
+    );
+    const e = await failure(createOpenRouter({ apiKey: KEY, fetch, timeoutMs: 20 }).extract(KEMAR_CONTEXT));
+    expect(e.why).toBe("timeout");
+  });
+});
+
+describe("which Atlas runs", () => {
+  it("the recorded Atlas without a key: it answers Kemar's note and refuses anything else", async () => {
+    const atlas = atlasFromEnv({ OPENROUTER_API_KEY: "  " } as unknown as NodeJS.ProcessEnv);
+    expect(atlas).toMatchObject({ connected: false, drafter: null, extractor: { name: "fixture" } });
+    expect((await atlas.extractor.extract(KEMAR_CONTEXT)).proposals).toEqual(KEMAR_PROPOSALS);
+    expect((await failure(createFixtureExtractor().extract({ ...KEMAR_CONTEXT, text: "hello" }))).why).toBe("model_error");
+  });
+
+  it("OpenRouter with a key, on the default model unless one is named", () => {
+    expect(atlasFromEnv({ OPENROUTER_API_KEY: KEY } as unknown as NodeJS.ProcessEnv).extractor.name).toBe("openrouter:openai/gpt-6.1-sol");
+    expect(atlasFromEnv({ OPENROUTER_API_KEY: KEY, OPENROUTER_MODEL: "anthropic/claude-sonnet-5.5" } as unknown as NodeJS.ProcessEnv).extractor.name).toBe("openrouter:anthropic/claude-sonnet-5.5");
+  });
+});

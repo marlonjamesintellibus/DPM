@@ -9,7 +9,7 @@ import type { Tx } from "../db/conn";
 import { captureRecordOf, itemOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems } from "../db/records";
 import * as t from "../db/schema";
 import { runChecks } from "../domain/atlas-checks/checks";
-import type { DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
+import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
 import { planSave, saveOutcome, settleItems, targetKey, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
@@ -197,15 +197,66 @@ export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Creat
   });
 }
 
-// ---- proposeItems: the Atlas step (build plan 5.1 steps 2 to 5) ----
+// ---- The Atlas step (build plan 5.1 steps 2 to 5) ----
+// A read is three short transactions around one network call, so no database transaction waits on
+// the model: beginRead (received or retry_wait to reading), then proposeItems or failRead.
+
+export type ReadStarted = { state: CaptureState; tries: number; context: CheckContext | null };
+
+/**
+ * Starts reading a capture: the first try (START, and TRANSCRIBED for voice) or the next one after
+ * a failure (RETRY). After config.captureMaxTries the capture fails instead (E18) and `context` is null.
+ */
+export function beginRead(ctx: CommandCtx, captureId: string): Promise<ReadStarted> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record: before } = await captureOf(tx, captureId);
+    const atlas: Actor = { type: "atlas", id: null };
+    const moves: Moved<CaptureState>[] = [];
+    let record = before;
+    const step = (event: CaptureEvent) => {
+      const r = moveCapture(record, event);
+      record = r.record;
+      moves.push(r.outcome);
+    };
+    if (record.state === "retry_wait") step({ type: "RETRY" });
+    else {
+      step({ type: "START" });
+      // A voice note with no reported confidence is treated as unsure, so it can only lower items
+      if (record.state === "transcribing") step({ type: "TRANSCRIBED", confidence: row.transcriptConfidence ?? "medium" });
+    }
+    await persistCapture(tx, captureId, row.version, record, ctx.now);
+    for (const m of moves) await auditCapture(tx, ctx.now, captureId, m, atlas, m.event === "RETRY" ? { tries: record.tries } : undefined);
+    const context =
+      record.state === "reading"
+        ? await loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence })
+        : null;
+    return { state: record.state, tries: record.tries, context };
+  });
+}
+
+/** What Atlas reported about a read, kept in the audit so the model can be measured (phase 4). */
+export type ReadMeta = { model: string; usage?: unknown; malformed?: unknown[]; message?: string };
+
+/** The model failed, timed out or sent something unreadable: wait, then try again (E18, E19). */
+export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" | "timeout" | "bad_output", meta: ReadMeta): Promise<CaptureState> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record } = await captureOf(tx, captureId);
+    const r = moveCapture(record, { type: "READ_FAILED", why });
+    await persistCapture(tx, captureId, row.version, r.record, ctx.now);
+    await auditCapture(tx, ctx.now, captureId, r.outcome, { type: "atlas", id: null }, { why, tries: record.tries, ...meta });
+    return r.record.state;
+  });
+}
 
 export type Proposed = { state: CaptureState; items: ExtractedItem[]; dropped: DroppedProposal[]; moreFound: boolean };
 
 /**
- * Runs the server checks on what Atlas returned for a received capture and stores the items that
- * pass. Atlas is the actor; nothing here changes a project. Phase 4 supplies real proposals.
+ * Runs the server checks on what Atlas returned and stores the items that pass. Atlas is the actor;
+ * nothing here changes a project. The checks read the database again here, so a record that changed
+ * while the model was reading is checked as it is now. A received capture is started first, which
+ * is how tests and the story feed recorded proposals in one step.
  */
-export function proposeItems(ctx: CommandCtx, captureId: string, proposals: readonly RawProposal[]): Promise<Proposed> {
+export function proposeItems(ctx: CommandCtx, captureId: string, proposals: readonly RawProposal[], meta?: ReadMeta): Promise<Proposed> {
   return runCommand(ctx, async (tx) => {
     const { row, record: received } = await captureOf(tx, captureId);
     const atlas: Actor = { type: "atlas", id: null };
@@ -216,9 +267,10 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       record = r.record;
       moves.push(r.outcome);
     };
-    step({ type: "START" });
-    // A voice note with no reported confidence is treated as unsure, so it can only lower items
-    if (record.state === "transcribing") step({ type: "TRANSCRIBED", confidence: row.transcriptConfidence ?? "medium" });
+    if (record.state === "received") {
+      step({ type: "START" });
+      if ((record.state as CaptureState) === "transcribing") step({ type: "TRANSCRIBED", confidence: row.transcriptConfidence ?? "medium" });
+    }
 
     const checkCtx = await loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence });
     const checked = runChecks(proposals, checkCtx);
@@ -253,7 +305,7 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     await persistCapture(tx, captureId, row.version, record, ctx.now);
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)
-      const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped } : undefined;
+      const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped, ...meta } : undefined;
       await auditCapture(tx, ctx.now, captureId, m, atlas, detail);
     }
     for (const item of items) {

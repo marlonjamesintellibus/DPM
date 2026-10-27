@@ -180,12 +180,20 @@ export function findShift(text: string, base: IsoDate): ResolvedDate | null {
   return null;
 }
 
+// "next Monday now, not Friday": a date said only to rule it out is not the new date (phase 4 eval)
+const NEGATED = /\b(?:not|instead\s+of|rather\s+than)\s+(?:on\s+|by\s+)?$/i;
+
+/** The dates in a quote, without the ones it rules out. */
+function saidDates(text: string, messageAt: Date, timeZone: string): ResolvedDate[] {
+  return findDates(text, messageAt, timeZone).filter((d) => !NEGATED.test(text.slice(0, d.start)));
+}
+
 /**
  * The one date a date field takes from a quote (a milestone forecast). A stated date wins, then a
  * shift from the current value, then a relative word. With several, the last one said wins.
  */
 export function readDateValue(text: string, messageAt: Date, base: IsoDate | null, timeZone: string = config.timeZone): ResolvedDate | null {
-  const dates = findDates(text, messageAt, timeZone);
+  const dates = saidDates(text, messageAt, timeZone);
   const stated = dates.filter((d) => !d.relative);
   if (stated.length) return stated[stated.length - 1];
   const shift = base && isIsoDate(base) ? findShift(text, base) : null;
@@ -205,7 +213,7 @@ export type LeaveRange = {
 
 /** Leave dates: "from X" (start only), "X to Y", or a single day "X". */
 export function readLeaveRange(text: string, messageAt: Date, timeZone: string = config.timeZone): LeaveRange | null {
-  const dates = findDates(text, messageAt, timeZone);
+  const dates = saidDates(text, messageAt, timeZone);
   if (!dates.length) return null;
   const [first, second] = dates;
   const flags = (ds: ResolvedDate[]) => ({

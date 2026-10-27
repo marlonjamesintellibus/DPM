@@ -59,6 +59,6 @@ describe("getChatSummary (L18f)", () => {
       state: "nothing_to_update",
     });
     const { latest } = await getChatSummary(db, "kemar");
-    expect(latest).toMatchObject({ id: "cap-kemar-1400", time: "2:00pm", changes: 0, rows: [], line: "Got it. 0 updates for 0 projects." });
+    expect(latest).toMatchObject({ id: "cap-kemar-1400", time: "2:00pm", changes: 0, rows: [], line: "Got it. Nothing in this one changes a project." });
   });
 });
