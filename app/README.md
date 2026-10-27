@@ -10,7 +10,10 @@ pnpm dev          # http://localhost:3000
 pnpm test         # Vitest, watch mode (pnpm test:run for one pass)
 pnpm typecheck
 pnpm lint
+pnpm e2e          # the use case 1 story in Chrome: builds, starts on port 3100 with its own fresh database, plays steps 1 to 8
 ```
+
+`pnpm e2e` uses the installed Google Chrome. Without it, run `npx playwright install chromium` and set `E2E_BROWSER=chromium`. While writing tests, `E2E_BASE_URL=http://localhost:3000 pnpm e2e` runs them against a server you started on a fresh `pnpm db:reset`.
 
 `GET /api/health` opens the database and runs its migrations.
 
@@ -58,7 +61,18 @@ Evaluation results go to `.data/atlas-eval/`.
 | Commands | The only writers: one transaction each, versioned updates, an audit entry for every move, and `evaluate()` after any change to a project | `src/commands` |
 | Queries | Per-viewer reads for the screens (inbox, review, project and BRAID log, chat, audit trail). Privacy is enforced here, not in components (P10) | `src/queries` |
 | Migrations | `pnpm db:generate` writes SQL to `drizzle/`; the app applies it on first use | `drizzle.config.ts` |
-| Tests | Vitest. Node by default; component tests add `// @vitest-environment jsdom`. `src/test/seeded-db.ts` gives each test its own copy of the seeded database. `src/story.test.ts` runs the whole use case | `vitest.config.mts` |
+| Tests | Vitest. Node by default; component tests add `// @vitest-environment jsdom`. `src/test/seeded-db.ts` gives each test its own copy of the seeded database. `src/story.test.ts` runs the whole use case through the commands; `e2e/story.spec.ts` (Playwright) runs it through the screens | `vitest.config.mts`, `playwright.config.ts` |
+
+## Settings
+
+| Variable | What it does |
+|---|---|
+| `DATABASE_URL` | Postgres instead of PGlite |
+| `DPM_DATA_DIR` | Where PGlite lives (default `.data/pglite`); the story test uses `.data/e2e` |
+| `OPENROUTER_API_KEY` | Atlas reads through OpenRouter; without it, the recorded fixture |
+| `DPM_ATLAS=fixture` | The fixture even when a key is set (the story test) |
+| `DPM_CLOCK=real` | The real time instead of the demo clock (9:10am on 20 Oct 2026, moving from server start) |
+| `DPM_TIMERS=off` | Stops the rules' timers (`src/timers.ts`), which otherwise run every minute: stale reads are read again, reviews are reminded and expire, milestones are missed, proposals and kind change requests are reminded |
 
 ## Notes for later phases
 

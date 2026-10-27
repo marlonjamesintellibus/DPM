@@ -55,7 +55,13 @@ export function PlanCard({ view, today }: { view: ProjectView; today: IsoDate })
           <StatusMark status={view.calculated.status} label={view.calculated.label} />
           {worst && <span className="type-caption text-fg-3">worst thread: {worst}</span>}
         </div>
-        <div className="relative overflow-x-auto" style={{ height }}>
+        {rows.length === 0 && (
+          // P11: the section stays and says why it is empty
+          <p className="rounded-control border border-dashed border-line-strong px-3 py-4 type-caption text-fg-3">
+            No work or milestones on this plan yet. They come from GitHub and from updates people give Atlas.
+          </p>
+        )}
+        <div className={`relative overflow-x-auto ${rows.length === 0 ? "hidden" : ""}`} style={{ height }}>
           <div className="relative" style={{ width: LABEL_W + CHART_W + 10, height }}>
             {ticks.map((d) => (
               <span key={d} className="absolute top-1 type-micro text-fg-3" style={{ left: x(d) }}>

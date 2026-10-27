@@ -22,7 +22,8 @@ export function withFallback(primary: Extractor, fallback: Extractor, lastTry: n
 
 export function atlasFromEnv(env: NodeJS.ProcessEnv = process.env): Atlas {
   const apiKey = env.OPENROUTER_API_KEY?.trim();
-  if (!apiKey) return { extractor: createFixtureExtractor(), drafter: null, connected: false };
+  // DPM_ATLAS=fixture: the recorded fixture even with a key (the story test never calls a model)
+  if (!apiKey || env.DPM_ATLAS === "fixture") return { extractor: createFixtureExtractor(), drafter: null, connected: false };
   const model = (name: string | undefined) => name?.trim() || undefined;
   const primary = createOpenRouter({ apiKey, model: model(env.OPENROUTER_MODEL) });
   const fallback = createOpenRouter({ apiKey, model: model(env.OPENROUTER_FALLBACK_MODEL) ?? DEFAULT_FALLBACK_MODEL });

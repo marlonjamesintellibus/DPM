@@ -1,10 +1,9 @@
 // pnpm db:reset: an empty database, migrated, with the 20 Oct snapshot loaded.
-// Local PGlite: deletes app/.data/pglite first (stop `pnpm dev` before running this).
+// Local PGlite: deletes app/.data/pglite (or DPM_DATA_DIR) first (stop `pnpm dev` before running this).
 // Postgres (DATABASE_URL): drops and recreates the schema, so it asks for --yes.
 import { rmSync } from "node:fs";
-import path from "node:path";
 import { sql } from "drizzle-orm";
-import { openPglite, openPostgres } from "../src/db/client";
+import { openPglite, openPostgres, pgliteDir } from "../src/db/client";
 import { seedSnapshot } from "../src/db/seed/seed";
 
 async function main() {
@@ -21,7 +20,7 @@ async function main() {
     await opened.db.execute(sql`drop schema if exists public cascade`);
     await opened.db.execute(sql`create schema public`);
   } else {
-    const dir = path.join(process.cwd(), ".data", "pglite");
+    const dir = pgliteDir();
     rmSync(dir, { recursive: true, force: true });
     opened = openPglite(dir);
   }

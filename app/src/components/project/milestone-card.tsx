@@ -6,7 +6,7 @@ import { shortDate, type ProjectView } from "@/queries/project";
 export function MilestoneCard({ view }: { view: ProjectView }) {
   const milestones = [...view.threads.flatMap((t) => t.milestones), ...view.unthreaded.milestones].sort((a, b) => a.targetDate.localeCompare(b.targetDate));
   return (
-    <section className="flex w-[520px] shrink-0 flex-col self-start overflow-hidden rounded-lg border border-line bg-panel">
+    <section className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-line bg-panel xl:w-[520px] xl:self-start">
       <h2 className="border-b border-line pt-3 pr-3.5 pb-2.5 pl-4 type-micro text-fg-3 uppercase">Milestone chart</h2>
       <h3 className="px-4 pt-3 pb-2.5 type-heading text-fg-1">Milestones</h3>
       <div className="grid grid-cols-[minmax(0,1fr)_76px_92px_104px] border-y border-line bg-panel-2 px-4 py-1.5">
@@ -27,7 +27,7 @@ export function MilestoneCard({ view }: { view: ProjectView }) {
           </div>
         );
       })}
-      {milestones.length === 0 && <p className="px-4 py-3 type-caption text-fg-3">No milestones yet.</p>}
+      {milestones.length === 0 && <p className="px-4 py-3 type-caption text-fg-3">No milestones on this project yet, so there is nothing to forecast.</p>}
     </section>
   );
 }

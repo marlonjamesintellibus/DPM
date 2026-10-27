@@ -911,3 +911,14 @@ Phase 5b in the build plan. The domain is `braid-entry.ts` (SWITCH_KIND, SWITCH_
 | G40 | A blocker's work would lose its link if the switch dropped it | The work keeps its link to the old blocker; evaluate sees the blocker changed kind and asks the owner (`blocked_without_blocker`). Switching back to a blocker, or on to one along the chain, settles it and the link follows |
 | G41 | A tile whose only entry changed kind said "None on the log" | It says where the entries went ("1 became an issue this week") |
 | G42 | The kind menu sits in a scrolling table and was cut off | It is placed against the window under its button and closes when the table scrolls |
+
+## 14. Found while building phase 6 (27 Oct 2026)
+
+Phase 6 plays the story in a browser (`app/e2e/story.spec.ts`, `pnpm e2e`) and adds the empty, stale and error states P11 asks for.
+
+| # | Point | What the code does |
+|---|---|---|
+| G43 | No timer ran in the app: a read that hung said "Reading your update…" for ever, reviews never expired, proposals were never reminded | `src/timers.ts` runs every timer each minute from server start (`instrumentation.ts`): capture timers, missed milestones, BRAID and kind change reminders, and reads that are waiting (a stale read's retry, or a note the server never started, picked up after 2 minutes so it never races the chat's own read). `DPM_TIMERS=off` stops them |
+| G44 | A project that is not yours answered 404 only in tests: the page streams, so the status is already sent when the project turns out to be missing | The not-found page says "Not found, or not yours to see" for both, so the browser test checks the words, not the status (P10 holds: the two are never told apart) |
+| G45 | P11: an empty plan drew an empty timeline; an empty log said "Nothing here." | Each says why it is empty and what would fill it ("No work or milestones on this plan yet. They come from GitHub and from updates people give Atlas."). Error pages say nothing saved is lost and offer Try again |
+| G46 | Below 1280 wide the Dashboard squeezed the summary and the table's columns overlapped | The summary and milestones stack under 1280; the table scrolls sideways instead of overlapping |

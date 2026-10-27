@@ -57,7 +57,7 @@ async function Project({ params, searchParams }: { params: PageProps<"/projects/
       ) : (
         <div className="flex flex-1 flex-col gap-4 overflow-auto px-7 pt-5 pb-7">
           <PlanCard view={view} today={dateInZone(at, "America/Jamaica")} />
-          <div className="flex shrink-0 items-start gap-4">
+          <div className="flex shrink-0 flex-col items-stretch gap-4 xl:flex-row xl:items-start">
             <BraidSummary view={view} tableHref={`${base}?view=table`} />
             <MilestoneCard view={view} />
           </div>

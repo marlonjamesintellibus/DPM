@@ -29,14 +29,20 @@ export function openPostgres(url: string): Opened {
 }
 
 // One database per server process: Postgres when DATABASE_URL is set,
-// otherwise PGlite in app/.data/pglite. Migrations run once, on first use.
+// otherwise PGlite in app/.data/pglite (DPM_DATA_DIR moves it: the story test uses its own).
+// Migrations run once, on first use.
 // A failed open is not cached, so the next request tries again.
+/** Where the server's PGlite lives: DPM_DATA_DIR, or app/.data/pglite. */
+export function pgliteDir(): string {
+  return path.resolve(process.cwd(), process.env.DPM_DATA_DIR?.trim() || path.join(".data", "pglite"));
+}
+
 const globalForDb = globalThis as unknown as { dpmDb?: Promise<Db> };
 
 export function getDb(): Promise<Db> {
   globalForDb.dpmDb ??= (async () => {
     const url = process.env.DATABASE_URL;
-    const opened = url ? openPostgres(url) : openPglite(path.join(process.cwd(), ".data", "pglite"));
+    const opened = url ? openPostgres(url) : openPglite(pgliteDir());
     await opened.migrate();
     return opened.db;
   })().catch((error: unknown) => {
