@@ -175,21 +175,24 @@ function AnswerBlock({ answer, last }: { answer: Answer; last: boolean }) {
       {answer.cards.length > 0 && (
         <ul className="flex flex-col overflow-hidden rounded-panel border border-line">
           {answer.cards.map((c) => (
-            <li key={`${c.href}|${c.title}|${c.accept?.itemId ?? ""}`} className="flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0">
-              <Link href={c.href} className="flex min-w-0 flex-1 flex-col gap-0.5 hover:underline">
+            // The whole card is the target and lights up as one, like a button; Accept sits above it
+            <li
+              key={`${c.href}|${c.title}|${c.accept?.itemId ?? ""}`}
+              className="group relative flex items-center gap-3 border-b border-line px-3 py-2.5 transition-colors last:border-b-0 hover:bg-hover has-[a:focus-visible]:bg-hover has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-accent has-[a:focus-visible]:ring-inset"
+            >
+              <Link href={c.href} className="flex min-w-0 flex-1 flex-col gap-0.5 outline-none after:absolute after:inset-0">
                 <span className="type-body-medium text-fg-1">{c.title}</span>
                 {c.detail && <span className="type-caption text-fg-2">{c.detail}</span>}
                 {c.tag && <span className={`type-micro ${c.accept ? "text-warn" : "text-fg-3"}`}>{c.tag}</span>}
               </Link>
               {c.accept ? (
-                <span className="flex shrink-0 items-start gap-2">
-                  <Link href={c.href} className="rounded-control border border-line-strong bg-panel px-2.5 py-1 type-label text-fg-1 hover:bg-hover">
-                    Open
-                  </Link>
+                <span className="relative z-10 flex shrink-0 items-start gap-2">
                   <AcceptItem captureId={c.accept.captureId} itemId={c.accept.itemId} />
                 </span>
               ) : (
-                <Icon name="chevron-right-12" />
+                <span className="shrink-0 transition-transform group-hover:translate-x-0.5">
+                  <Icon name="chevron-right-12" tone="text-fg-3" />
+                </span>
               )}
             </li>
           ))}

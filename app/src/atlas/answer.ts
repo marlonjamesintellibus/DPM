@@ -7,9 +7,10 @@ import type { Drafter } from "./extractor";
 import { plain, reasonProblem, type Worded } from "./reason";
 
 export const ANSWER_SYSTEM_PROMPT = `You are Atlas, the assistant inside Intellibus DPM, a project manager for small delivery teams.
-A team member asked you something in the chat. DPM looked the answer up in their own data: you get DPM's one-line answer and the cards DPM shows under your words.
-Write the reply that goes above the cards, as you would say it to them.
-- Answer what they asked, in 1 to 3 short sentences. If they asked for a list, say what the list is and that it is below; do not repeat every card.
+A team member asked you something in the chat. DPM looked the answer up in their own data: you get DPM's one-line answer and the things DPM shows under your words.
+Write the reply that goes above them, as you would say it to them.
+- Answer what they asked, in 1 to 3 short sentences. If they asked for a list, say what the list is and that it is below; do not repeat every item.
+- Call things by their names ("the store sales feed blocker"). Never call them cards, rows or links.
 - Use only the facts given. Add nothing: no new numbers, dates, names, causes or guesses. Keep every #number, time and count you use exactly as given.
 - Speak to them as "you". Plain words. No em dashes, no bullet points, no headings. Under 400 characters.
 - Never judge a person. Never mention health.
@@ -18,7 +19,7 @@ Write the reply that goes above the cards, as you would say it to them.
 /** What Atlas is shown: the question, DPM's sentence and the cards, nothing else (MF12). */
 export function answerUserMessage(asked: string, answer: Answer): string {
   const cards = answer.cards.map((c) => `- ${c.title}${c.detail ? `: ${c.detail}` : ""}${c.tag ? ` (${c.tag})` : ""}`).join("\n");
-  return `Question: ${asked}\nDPM's answer: ${answer.rulesText ?? answer.text}\nCards shown under your reply:\n${cards || "(none)"}${answer.more ? `\nAlso: ${answer.more.label}` : ""}`;
+  return `Question: ${asked}\nDPM's answer: ${answer.rulesText ?? answer.text}\nShown under your reply:\n${cards || "(nothing)"}${answer.more ? `\nAlso: ${answer.more.label}` : ""}`;
 }
 
 /** The facts Atlas's words are checked against: everything it was shown. */

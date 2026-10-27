@@ -1164,7 +1164,7 @@ Thinking never says "update": the screen cannot know what a message is until Atl
 
 ### Cards and actions
 
-- An item that needs the asker's OK has Accept and Open in review. Accept opens the review if it is not open yet, then accepts the item, as the review screen does; the item's machine (M3) decides, so a card read later is checked again (MF6, MF7).
+- A card is one target, highlighted as a whole like a button (found in use: link underlines read badly). An item that needs the asker's OK opens its review and has Accept on it. Accept opens the review if it is not open yet, then accepts the item, as the review screen does; the item's machine (M3) decides, so a card read later is checked again (MF6, MF7).
 - Every other card opens what it is about: the inbox item, the BRAID log filtered to blockers, the project.
 - At most 8 cards; the rest are counted, with a link to where they are.
 
