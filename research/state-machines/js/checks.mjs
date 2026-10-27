@@ -13,6 +13,20 @@ import CaptureJob from './models/captureJob.mjs';
 import Leave from './models/leave.mjs';
 import BraidFollowUps from './models/braidFollowUps.mjs';
 import BraidKindSwitch from './models/braidKindSwitch.mjs';
+// M20 to M36, the Atlas conversational plan (use-cases/atlas-conversational-plan.md), one file per machine
+import { ROWS as ChatCommandRows, PLANTS as ChatCommandPlants } from './rows/chatCommand.mjs';
+import { ROWS as ClarificationRows, PLANTS as ClarificationPlants } from './rows/clarification.mjs';
+import { ROWS as CommitmentRows, PLANTS as CommitmentPlants } from './rows/commitment.mjs';
+import { ROWS as NudgeRows, PLANTS as NudgePlants } from './rows/nudge.mjs';
+import { ROWS as DraftRows, PLANTS as DraftPlants } from './rows/draft.mjs';
+import { ROWS as GroupChatRows, PLANTS as GroupChatPlants } from './rows/groupChat.mjs';
+import { ROWS as StandupRows, PLANTS as StandupPlants } from './rows/standup.mjs';
+import { ROWS as SignalRows, PLANTS as SignalPlants } from './rows/signal.mjs';
+import { ROWS as UndoAndVocabularyRows, PLANTS as UndoAndVocabularyPlants } from './rows/undoAndVocabulary.mjs';
+import { ROWS as OutboundAskRows, PLANTS as OutboundAskPlants } from './rows/outboundAsk.mjs';
+import { ROWS as MeetingRows, PLANTS as MeetingPlants } from './rows/meeting.mjs';
+import { ROWS as CoverRequestRows, PLANTS as CoverRequestPlants } from './rows/coverRequest.mjs';
+import { ROWS as EvalCandidateRows, PLANTS as EvalCandidatePlants } from './rows/evalCandidate.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -62,6 +76,32 @@ export const ROWS = [
   { spec: 'BraidFollowUps', setting: 'as given', model: BraidFollowUps(), expectFail: [] },
   // BraidKindSwitch is the plan of 27 Oct: M15 SWITCH_KIND and M17 kind change request (machines doc, section 13)
   { spec: 'BraidKindSwitch', setting: 'as given', model: BraidKindSwitch(), expectFail: [] },
+  // Phase B: M20 Chat command
+  ...ChatCommandRows,
+  // Phase D: M21 Clarification
+  ...ClarificationRows,
+  // Phase E: M22 Commitment
+  ...CommitmentRows,
+  // Phase F: M23 Nudge, M24 Nudge settings
+  ...NudgeRows,
+  // Phase G: M25 Draft
+  ...DraftRows,
+  // Phase I: M26 Group message, M27 Group answer
+  ...GroupChatRows,
+  // Phase J: M28 Standup
+  ...StandupRows,
+  // Phase K: M29 Signal
+  ...SignalRows,
+  // Phase L: M30 Undo, M31 Vocabulary change
+  ...UndoAndVocabularyRows,
+  // Phase M: M32 Outbound ask
+  ...OutboundAskRows,
+  // Phase O: M33 Meeting capture, M34 Attributed item
+  ...MeetingRows,
+  // Phase P: M35 Cover request
+  ...CoverRequestRows,
+  // Phase S: M36 Eval candidate
+  ...EvalCandidateRows,
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -129,4 +169,30 @@ export const PLANTS = [
   { spec: 'BraidKindSwitch', setting: "bug: unmerge allowed after the target was switched", model: BraidKindSwitch({ Bug: 'unmergeAfterSwitch' }), expectFail: ['EveryReportOnce'] },
   { spec: 'BraidKindSwitch', setting: "bug: a blocker becomes an issue and nobody asks the work's owner", model: BraidKindSwitch({ Bug: 'dropAsk' }), expectFail: ['BlockedWorkCovered'] },
   { spec: 'BraidKindSwitch', setting: "bug: switching a blocker away unblocks its work", model: BraidKindSwitch({ Bug: 'unblock' }), expectFail: ['WorkStaysBlocked'] },
+  // Phase B: M20 Chat command
+  ...ChatCommandPlants,
+  // Phase D: M21 Clarification
+  ...ClarificationPlants,
+  // Phase E: M22 Commitment
+  ...CommitmentPlants,
+  // Phase F: M23 Nudge, M24 Nudge settings
+  ...NudgePlants,
+  // Phase G: M25 Draft
+  ...DraftPlants,
+  // Phase I: M26 Group message, M27 Group answer
+  ...GroupChatPlants,
+  // Phase J: M28 Standup
+  ...StandupPlants,
+  // Phase K: M29 Signal
+  ...SignalPlants,
+  // Phase L: M30 Undo, M31 Vocabulary change
+  ...UndoAndVocabularyPlants,
+  // Phase M: M32 Outbound ask
+  ...OutboundAskPlants,
+  // Phase O: M33 Meeting capture, M34 Attributed item
+  ...MeetingPlants,
+  // Phase P: M35 Cover request
+  ...CoverRequestPlants,
+  // Phase S: M36 Eval candidate
+  ...EvalCandidatePlants,
 ];
