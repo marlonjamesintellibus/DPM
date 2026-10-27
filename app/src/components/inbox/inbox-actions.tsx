@@ -4,6 +4,7 @@
 import { useState, useTransition } from "react";
 import {
   acceptAsk,
+  acceptSignalAction,
   acknowledgeEntry,
   addEntry,
   approveEntry,
@@ -13,6 +14,7 @@ import {
   confirmDraft,
   declineEntry,
   decideLeave,
+  dismissSignalAction,
   declineAsk,
   dropDraft,
   endEntry,
@@ -23,6 +25,7 @@ import {
   newExpectedDate,
   resolveEntry,
   showCalculatedStatus,
+  stillGoingAction,
   type ActionResult,
 } from "@/app/actions";
 import { Icon } from "@/components/shell/icon";
@@ -238,6 +241,60 @@ export function VocabularyControls({ changeId }: { changeId: string }) {
           Decline
         </Button>
       </div>
+      <ActionNote result={result} />
+    </div>
+  );
+}
+
+/**
+ * Phase K, M29: accept a signal as a risk, or dismiss it and say why. With a risk that already covers it, the
+ * first button adds it there (M16 same as, SG5) and "New risk" files its own. The version is the one shown, so
+ * an answer on a card someone else answered first is refused and says so (SG6).
+ */
+export function SignalControls({ signalId, version, sameAs }: { signalId: string; version: number; sameAs: { id: string; title: string } | null }) {
+  const { pending, result, run } = useRun();
+  const [why, setWhy] = useState("");
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {sameAs ? (
+          <>
+            <Button disabled={pending} onClick={() => run(() => acceptSignalAction(signalId, version, sameAs.id))}>
+              Add to &ldquo;{sameAs.title}&rdquo;
+            </Button>
+            <Button variant="secondary" disabled={pending} onClick={() => run(() => acceptSignalAction(signalId, version, null))}>
+              New risk
+            </Button>
+          </>
+        ) : (
+          <Button disabled={pending} onClick={() => run(() => acceptSignalAction(signalId, version, null))}>
+            Accept as a risk
+          </Button>
+        )}
+        <input
+          aria-label="Why dismiss it"
+          placeholder="Why dismiss it?"
+          value={why}
+          onChange={(e) => setWhy(e.target.value)}
+          className="min-w-0 flex-1 rounded-control border border-line-strong bg-panel px-2 py-1 type-body"
+        />
+        <Button variant="secondary" disabled={pending || !why.trim()} onClick={() => run(() => dismissSignalAction(signalId, version, why))}>
+          Dismiss
+        </Button>
+      </div>
+      <ActionNote result={result} />
+    </div>
+  );
+}
+
+/** Phase K, SG8: the owner of stale work says it is still going; its clock restarts and nobody else is asked. */
+export function StillGoingControl({ workItemId }: { workItemId: string }) {
+  const { pending, result, run } = useRun();
+  return (
+    <div className="flex flex-col gap-2">
+      <Button disabled={pending} onClick={() => run(() => stillGoingAction(workItemId))}>
+        Still going
+      </Button>
       <ActionNote result={result} />
     </div>
   );

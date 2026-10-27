@@ -46,6 +46,7 @@ import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { acceptOwnerAsk, declineOwnerAsk } from "@/commands/owner-ask";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonFor, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { acceptSignal, dismissSignal, setProjectPaused, stillGoing } from "@/commands/signals";
 import { undoSave } from "@/commands/undo";
 import { decideVocabularyChange } from "@/commands/vocabulary";
 import { undoReply } from "@/queries/answers/undo";
@@ -347,6 +348,24 @@ export async function dropDraft(entryId: string): Promise<ActionResult> {
 
 export async function decideCorrection(changeId: string, act: "approve" | "decline"): Promise<ActionResult> {
   return run((ctx) => decideVocabularyChange(ctx, changeId, act), act === "approve" ? "Approved. Atlas reads it this way from now on." : "Declined. Atlas reads it as before.");
+}
+
+// ---- Signals (phase K, M29) ----
+
+export async function acceptSignalAction(signalId: string, version: number, sameAs: string | null): Promise<ActionResult> {
+  return run((ctx) => acceptSignal(ctx, signalId, { seenVersion: version, sameAs }), sameAs ? "Added to the risk." : "Accepted. It is a risk on the log.");
+}
+
+export async function dismissSignalAction(signalId: string, version: number, reason: string): Promise<ActionResult> {
+  return run((ctx) => dismissSignal(ctx, signalId, reason, { seenVersion: version }), "Dismissed. Atlas raises it again only if it gets worse.");
+}
+
+export async function stillGoingAction(workItemId: string): Promise<ActionResult> {
+  return run((ctx) => stillGoing(ctx, workItemId), "Noted. Its clock starts again.");
+}
+
+export async function setPausedAction(projectId: string, paused: boolean): Promise<ActionResult> {
+  return run((ctx) => setProjectPaused(ctx, projectId, paused), paused ? "Marked paused. Atlas will not flag it as quiet." : "Resumed.");
 }
 
 // ---- Set status and reason (L6, L6b) ----

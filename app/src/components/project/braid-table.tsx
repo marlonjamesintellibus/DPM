@@ -201,9 +201,9 @@ export function BraidTable({ view, filter, basePath }: { view: ProjectView; filt
                     <div key={s.id} className="flex flex-col gap-0.5 border-l-2 border-line-strong pl-3">
                       <span className="type-micro text-fg-3">
                         {s.person.name} · {s.ago}
-                        {s.fromCapture ? " · from an update" : ""}
+                        {s.fromCapture ? " · from an update" : s.signal ? " · accepted from what Atlas noticed" : ""}
                       </span>
-                      <span className="type-body text-fg-1">{s.quote ? `"${s.quote}"` : "No quote shown here: the words were not routed to this project."}</span>
+                      <span className="type-body text-fg-1">{s.signal ?? (s.quote ? `"${s.quote}"` : "No quote shown here: the words were not routed to this project.")}</span>
                     </div>
                   ))}
                   {e.waitingForApproval && canDecide && (

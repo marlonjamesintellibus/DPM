@@ -301,3 +301,14 @@ test("Phase B. Kemar marks his own work done from an answer line, in one tap", a
   await expect(page.getByRole("button", { name: "Copy" })).toHaveCount(2);
   await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveCount(1);
 });
+
+test("Phase K, CD13. Alicia marks GQ & Academy paused, so Atlas will not flag it as quiet, then resumes it", async () => {
+  await viewAs("kemar", "/projects/gq");
+  await expect(page.getByRole("button", { name: "Mark paused" })).toHaveCount(0); // only the PM marks it
+  await viewAs("alicia", "/projects/gq");
+  await page.getByRole("button", { name: "Mark paused" }).click();
+  await expect(page.getByText("Paused: Atlas will not flag it as quiet")).toBeVisible();
+  await page.getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByRole("button", { name: "Mark paused" })).toBeVisible();
+  await expect(page.getByText("Paused: Atlas will not flag it as quiet")).toHaveCount(0);
+});

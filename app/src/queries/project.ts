@@ -13,6 +13,7 @@ import { isCandidate, type World } from "../domain/machines/membership";
 import { displayedStatus, type OverrideState } from "../domain/machines/set-status";
 import { BRAID_KINDS, maySwitch, type BraidKind, type ProjectRole } from "../domain/rights";
 import { maySeeQuote, projectSpans, type SavedItem } from "../domain/routing";
+import { signalText } from "../domain/signals";
 import type { SourceSpan } from "../domain/shared";
 import { calculatePlan, milestoneStatus, workItemStatus, type MilestoneState, type WorkItemState } from "../domain/status/rules";
 import type { SettableStatus, Status } from "../domain/status/status";
@@ -227,6 +228,8 @@ export type EntrySource = {
   fromCapture: boolean;
   /** The words behind it, only when they were routed to this project (rule 9). */
   quote: string | null;
+  /** Phase K: accepted from a signal, what the signal said (its facts as a template), instead of anyone's words. */
+  signal: string | null;
 };
 
 export type ProjectBraidEntry = {
@@ -287,7 +290,7 @@ export type BraidSummaryTile = {
 
 export type ProjectView = {
   found: true;
-  project: { id: string; name: string; customer: string | null; owner: PersonRef | null; startDate: IsoDate | null; endDate: IsoDate | null };
+  project: { id: string; name: string; customer: string | null; owner: PersonRef | null; startDate: IsoDate | null; endDate: IsoDate | null; paused: boolean };
   viewerRole: ProjectRole;
   /** From the rules only (P6), worked out at read time. */
   calculated: { status: Status | null; label: string };
@@ -352,7 +355,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
     conn.select().from(t.workItems).where(eq(t.workItems.projectId, projectId)).orderBy(t.workItems.number),
     loadBraidLog(conn, projectId),
     conn
-      .select({ id: t.braidSources.id, extractionId: t.braidSources.extractionId })
+      .select({ id: t.braidSources.id, extractionId: t.braidSources.extractionId, signalId: t.braidSources.signalId })
       .from(t.braidSources)
       .innerJoin(t.braidEntries, eq(t.braidEntries.id, t.braidSources.entryId))
       .where(eq(t.braidEntries.projectId, projectId)),
@@ -371,6 +374,10 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       .filter((p) => switchedTo(p) === e.id && p.switchedOn)
       .sort((a, b) => b.switchedOn!.localeCompare(a.switchedOn!))[0];
   const extractionOf = new Map(sourceRows.map((s) => [s.id, s.extractionId]));
+  // Phase K: a source a PM or Lead accepted from a signal says what the signal said, from its facts then
+  const signalIds = sourceRows.map((s) => s.signalId).filter((id): id is string => !!id);
+  const signalRows = signalIds.length ? await conn.select({ id: t.signals.id, facts: t.signals.facts }).from(t.signals).where(inArray(t.signals.id, signalIds)) : [];
+  const signalSaid = new Map(sourceRows.filter((s) => s.signalId).map((s) => [s.id, signalText(signalRows.find((r) => r.id === s.signalId)!.facts)]));
   const allSources = entries.flatMap((e) => e.sources);
   const quotes = await visibleQuotes(
     conn,
@@ -484,6 +491,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
           ago: daysAgo(new Date(s.at), now),
           fromCapture: s.captureId !== null,
           quote: quotes.get(s.id) ?? null,
+          signal: signalSaid.get(s.id) ?? null,
         })),
       links: e.links
         .filter((l) => log[l.entryId] && l.relation !== "switched_from" && l.relation !== "switched_to")
@@ -505,6 +513,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       owner: person(project.ownerId),
       startDate: project.startDate,
       endDate: project.endDate,
+      paused: project.paused,
     },
     viewerRole,
     calculated: { status: plan.project, label: statusLabel(plan.project) },

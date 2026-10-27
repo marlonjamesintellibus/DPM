@@ -14,11 +14,12 @@ import { withArticle } from "@/domain/shared";
 import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { describeOwnerAsk } from "@/queries/owner-ask";
+import { signalsFor } from "@/queries/signals";
 import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
 import { OUTCOME_ACT } from "@/queries/review";
 import { OUTCOMES, type ResolveOutcome } from "@/domain/machines/braid-entry";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
-import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, OwnerAskControls, LeaveControls, LinkChangeForm, ReasonEditor, VocabularyControls } from "./inbox-actions";
+import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, OwnerAskControls, LeaveControls, LinkChangeForm, ReasonEditor, SignalControls, StillGoingControl, VocabularyControls } from "./inbox-actions";
 
 const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   status_set_with_no_reason: "Delivery check",
@@ -39,6 +40,7 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   confirm_outcome: "Ended?",
   owner_ask: "Asked of you",
   vocab_change: "Correction",
+  signals: "Atlas noticed",
 };
 
 /** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
@@ -49,6 +51,7 @@ function outcomeChoices(kind: keyof typeof OUTCOMES, said: readonly ResolveOutco
 
 // The small mark before an item's source line: a rule's check, someone's words, work, people
 function sourceIcon(item: InboxEntry): IconName {
+  if (item.cause === "signals") return "sparkles-12";
   if (item.cause === "leave_impact") return "users";
   if (item.cause === "done_no_change") return "git-commit";
   if (item.cause === "blocker_new" || item.cause === "confirm_clear" || item.cause === "blocked_without_blocker") return "alert";
@@ -195,6 +198,8 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
       return <LeaveDetail item={item} label={label} leaveId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} />;
     case "owner_ask":
       return <OwnerAskDetail item={item} label={label} askId={item.subject.id} />;
+    case "signals":
+      return <SignalsDetail item={item} label={label} projectId={item.subject.projectId} day={item.subject.day} viewerId={viewerId} at={at} />;
     case "kind_request":
       return <KindRequestDetail item={item} label={label} entryId={item.subject.entryId} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
     case "vocabulary_change":
@@ -255,6 +260,32 @@ async function OwnerAskDetail({ item, label, askId }: { item: InboxEntry; label:
           : `Nothing changed when ${ask.author} saved. Accepting changes it as you; if it has changed since ${ask.author} said it, you are told and nothing is written.`}
       </Explain>
       <OwnerAskControls askId={askId} acceptLabel={newWork ? "Add to the plan" : "Accept"} />
+    </DetailCard>
+  );
+}
+
+/**
+ * Phase K, M29: what Atlas noticed on one project that day, each from the data and never from anyone's words.
+ * A PM or Lead accepts one as a risk (added to an open risk that already covers it, SG5) or dismisses it with
+ * a reason; stale work's owner says it is still going (SG8). Each answer is checked when it runs.
+ */
+async function SignalsDetail({ item, label, projectId, day, viewerId, at }: { item: InboxEntry; label: string; projectId: string; day: string; viewerId: string; at: Date }) {
+  const shown = await signalsFor(await getDb(), viewerId, projectId, day, at);
+  if (!shown.length) return null;
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Explain>Nobody reported {shown.length === 1 ? "this" : "these"}: Atlas noticed {shown.length === 1 ? "it" : "them"} in the plan and the log. Nothing goes on the BRAID log until you accept it.</Explain>
+      {shown.map((s) => (
+        <div key={s.id} className="flex flex-col gap-2 rounded-md bg-panel-2 p-3">
+          <span className="type-body text-fg-1">{s.text}</span>
+          {s.earlier && <span className="type-caption text-fg-3">{s.earlier}</span>}
+          {s.stage === "owner" && s.workItemId ? (
+            <StillGoingControl workItemId={s.workItemId} />
+          ) : (
+            <SignalControls signalId={s.id} version={s.version} sameAs={s.sameAs} />
+          )}
+        </div>
+      ))}
     </DetailCard>
   );
 }

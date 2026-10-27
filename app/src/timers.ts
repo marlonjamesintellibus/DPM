@@ -5,8 +5,9 @@
 // the owner goes moot, is withdrawn or expires (M37, U5 and U7), eval candidates nobody decided are
 // deleted after config.evalCandidateDays (phase S, M36), a chat command's card nobody answered expires
 // after config.commandExpiryMinutes (phase B, M20, AC10), and corrections nobody decided are reminded,
-// then expire (phase L, M31). Each timer is one command and safe to run again; a reminder never decides
-// anything.
+// then expire (phase L, M31), and once a day the signal rules run over every project (phase K, M29: snoozes
+// end, stale work goes on to PM and Leads, unanswered signals expire, new trouble is raised). Each timer is
+// one command and safe to run again; a reminder never decides anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
 import type { Extractor } from "./atlas/extractor";
@@ -18,6 +19,7 @@ import { runChatCommandTimers } from "./commands/chat-command";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
+import { runSignalTimers } from "./commands/signals";
 import { runVocabularyTimers } from "./commands/vocabulary";
 import { getDb, type Db } from "./db/client";
 import * as t from "./db/schema";
@@ -33,7 +35,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   const db = opts.db ?? (await getDb());
   const now = opts.now ?? appNow;
   const run: TimerRun = { failed: [], read: [] };
-  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runVocabularyTimers]) {
+  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runVocabularyTimers, runSignalTimers]) {
     // One failing timer does not stop the others; it runs again next minute
     try {
       await timer({ db, now: now() });
