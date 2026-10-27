@@ -171,11 +171,11 @@ describe("the story's save (step 4 and 5)", () => {
 describe("capture and proposals (5.1)", () => {
   it("E1 the same note arriving twice is dropped and changes nothing", async () => {
     const again = await createCapture(kemar(), { channel: "atlas", messageId: "atl-msg-0858", kind: "voice", text: KEMAR_NOTE, messageAt: KEMAR_NOTE_AT, receivedAt: at(1), transcriptConfidence: "high" });
-    expect(again).toEqual({ captureId: CAP, duplicate: true });
+    expect(again).toEqual({ captureId: CAP, duplicate: true, conversationId: "conv-atlas-kemar" });
     const first = await createCapture(kemar(), { channel: "atlas", kind: "text", text: "hello", messageAt: at(2), receivedAt: at(2), messageId: "atl-7" });
     const retry = await createCapture(kemar(), { channel: "atlas", kind: "text", text: "hello", messageAt: at(2), receivedAt: at(3), messageId: "atl-7" });
     expect(first.duplicate).toBe(false);
-    expect(retry).toEqual({ captureId: first.captureId, duplicate: true });
+    expect(retry).toEqual({ captureId: first.captureId, duplicate: true, conversationId: first.conversationId });
     expect(await db.select().from(t.captures)).toHaveLength(2);
   });
 

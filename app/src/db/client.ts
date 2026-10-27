@@ -32,9 +32,12 @@ export function openPostgres(url: string): Opened {
 // otherwise PGlite in app/.data/pglite (DPM_DATA_DIR moves it: the story test uses its own).
 // Migrations run once, on first use.
 // A failed open is not cached, so the next request tries again.
-/** Where the server's PGlite lives: DPM_DATA_DIR, or app/.data/pglite. */
+/**
+ * Where the server's PGlite lives: DPM_DATA_DIR, or app/.data/pglite. The data folder is not part of the
+ * build, so Turbopack is told not to trace it (otherwise it traces the whole project).
+ */
 export function pgliteDir(): string {
-  return path.resolve(process.cwd(), process.env.DPM_DATA_DIR?.trim() || path.join(".data", "pglite"));
+  return path.resolve(/* turbopackIgnore: true */ process.cwd(), process.env.DPM_DATA_DIR?.trim() || path.join(".data", "pglite"));
 }
 
 const globalForDb = globalThis as unknown as { dpmDb?: Promise<Db> };

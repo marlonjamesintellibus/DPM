@@ -145,6 +145,7 @@ const WITHDRAWN_NOTE: Record<WithdrawReason, string | null> = {
   left_project: "You are no longer in this project",
   discarded: null,
   expired: null,
+  replaced: "Replaced by a later message",
 };
 
 const WORK_CHOICES = ["to_do", "in_progress", "blocked", "done"] as const;

@@ -53,6 +53,8 @@ export type ExtractedItemDraft = {
   braid?: { kind: BraidKind; title: string; match: MatchState; matchEntryId: string | null; seenState?: string | null };
   /** Leave items (D6): it matches live leave, changes it, or is a new request. */
   leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
+  /** Section 16: the earlier unsaved item this one corrects; it is withdrawn as replaced when this one is proposed. */
+  replaces?: string;
 };
 
 /** "a risk", "an issue". */

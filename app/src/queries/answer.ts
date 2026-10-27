@@ -90,6 +90,8 @@ export async function answerFor(conn: Conn, viewerId: string, question: AskedQue
       return { ...(await blocked(conn, viewerId, question.projectId, now)), asOf };
     case "project_status":
       return { ...(await standing(conn, viewerId, question.projectId, now)), asOf };
+    case "unclear":
+      return { text: "I'm not sure what you mean. Ask the whole question, for example: What's blocked on Forager?", lines: [], asOf };
     case "other": {
       const fallback = await needsMe(conn, viewerId, now);
       const today = fallback.lines.length ? ` Here is what needs you today: ${fallback.text.replace(/:$/, ".")}` : " Nothing needs you right now.";

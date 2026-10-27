@@ -51,6 +51,8 @@ export type RawProposal = {
   note?: string | null;
   /** routing basis "ambiguous": the projects the model thinks it could be (filtered to candidates). */
   options?: readonly string[] | null;
+  /** Section 16: an item of an unsaved update earlier in this conversation that this one corrects. */
+  replacesItemId?: string | null;
   /** The exact words, found in the capture text by check 2. */
   quote: string;
   confidence: Confidence;
@@ -106,6 +108,18 @@ export type CheckContext = {
   notConnected: readonly { id: string; name: string }[];
   /** The author's leave target ("Leave Kemar Brown") and their approved leave (M8). */
   leave: { targetId: string; existing: readonly ExistingLeave[] };
+  /** Section 16: the author's earlier messages in the same conversation, oldest first, for reading follow-ups. */
+  earlier?: readonly EarlierTurn[];
+};
+
+/** One earlier message in the conversation: the author's own words, what it asked, and what can still be corrected. */
+export type EarlierTurn = {
+  captureId: string;
+  at: Date;
+  text: string;
+  asked: { topic: string; projectId: string | null } | null;
+  /** Items of an update not saved yet: what a later message may replace (CV10). */
+  openItems: readonly { id: string; summary: string }[];
 };
 
 export const CHECK_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;

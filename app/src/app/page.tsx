@@ -28,7 +28,7 @@ const VIEWS: ViewItem[] = [
 async function Today({ searchParams }: { searchParams: PageProps<"/">["searchParams"] }) {
   // Per request: the viewer, the database and the clock are all read at request time
   await connection();
-  const { item, view, capture, ask } = await searchParams;
+  const { item, view, c, ask } = await searchParams;
   const viewer = await currentViewer();
   const reader = await projectReader(await getDb(), viewer.id);
   const leads = reader.world.memberships.some((m) => m.personId === viewer.id && m.state === "member" && (m.role === "pm" || m.role === "lead"));
@@ -47,7 +47,7 @@ async function Today({ searchParams }: { searchParams: PageProps<"/">["searchPar
           <InboxToday viewerId={viewer.id} selectedId={typeof item === "string" ? item : undefined} at={at} />
         </div>
       ) : (
-        <ChatToday viewerId={viewer.id} firstName={viewer.name.split(" ")[0]} captureId={typeof capture === "string" ? capture : undefined} ask={ask === "1"} />
+        <ChatToday viewerId={viewer.id} firstName={viewer.name.split(" ")[0]} conversationId={typeof c === "string" ? c : undefined} ask={ask === "1"} at={at} />
       )}
     </ViewerShell>
   );

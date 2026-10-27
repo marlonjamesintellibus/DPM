@@ -7,10 +7,16 @@ import { itemOf } from "../db/records";
 import * as t from "../db/schema";
 import type { Answer } from "../domain/question";
 import type { CaptureState } from "../domain/machines/capture";
-import { clockTime } from "./project";
+import { weekday } from "../domain/dates";
+import { clockTime, daysAgo, NOT_YOURS, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine } from "./review";
 
-export type ChatSummaryRow = { projectId: string; name: string; changes: number; needsOk: number };
+export type ChatSummaryRow = {
+  projectId: string;
+  name: string;
+  changes: number;
+  needsOk: number;
+};
 
 export type ChatCapture = {
   id: string;
@@ -38,15 +44,31 @@ export type ChatCapture = {
 };
 
 /** D15: what Atlas told the viewer about their reports ("Alicia approved your risk: ..."), newest first. */
-export type ChatNotice = { id: string; at: Date; time: string; text: string; subject: { type: string; id: string } };
+export type ChatNotice = {
+  id: string;
+  at: Date;
+  time: string;
+  text: string;
+  subject: { type: string; id: string };
+};
 
-export type ChatSummary = { viewerId: string; latest: ChatCapture | null; notices: ChatNotice[] };
+export type ChatSummary = {
+  viewerId: string;
+  latest: ChatCapture | null;
+  notices: ChatNotice[];
+};
 
 const NOTICES_SHOWN = 10;
 
 async function noticesFor(conn: Conn, viewerId: string): Promise<ChatNotice[]> {
   const rows = await conn.select().from(t.notices).where(eq(t.notices.personId, viewerId)).orderBy(desc(t.notices.at), desc(t.notices.id)).limit(NOTICES_SHOWN);
-  return rows.map((n) => ({ id: n.id, at: n.at, time: clockTime(n.at), text: n.text, subject: { type: n.subjectType, id: n.subjectId } }));
+  return rows.map((n) => ({
+    id: n.id,
+    at: n.at,
+    time: clockTime(n.at),
+    text: n.text,
+    subject: { type: n.subjectType, id: n.subjectId },
+  }));
 }
 
 // What Atlas says in the chat while it reads, and when a read ends with nothing to review (E4, E18, D1)
@@ -59,9 +81,7 @@ function chatLine(state: CaptureState, failedStep: "transcribe" | "read" | null,
     case "retry_wait":
       return "Reading your update…";
     case "failed":
-      return failedStep === "transcribe"
-        ? "I couldn't hear that voice note. Can you send it again, or type it?"
-        : "Atlas could not read this. Try again or type the update.";
+      return failedStep === "transcribe" ? "I couldn't hear that voice note. Can you send it again, or type it?" : "Atlas could not read this. Try again or type the update.";
     case "nothing_to_update":
       return "Got it. Nothing in this one changes a project.";
     case "answered":
@@ -73,19 +93,97 @@ function chatLine(state: CaptureState, failedStep: "transcribe" | "read" | null,
   }
 }
 
-/** The viewer's own updates, newest first, for the chat's conversation list (L1). */
-export async function getConversations(conn: Conn, viewerId: string, limit = 12): Promise<{ id: string; title: string; kind: "text" | "voice"; messageAt: Date; time: string; state: CaptureState }[]> {
-  const rows = await conn
-    .select({ id: t.captures.id, text: t.captures.text, kind: t.captures.kind, messageAt: t.captures.messageAt, state: t.captures.state })
+/** Section 16: a conversation as the list shows it. */
+export type ConversationRow = {
+  id: string;
+  title: string;
+  channel: "app" | "atlas";
+  state: "active" | "archived";
+  lastMessageAt: Date;
+  /** "9:27am" today, "yesterday", "Mon 19 Oct" before that */
+  when: string;
+  version: number;
+};
+
+function whenLabel(at: Date, now: Date): string {
+  const ago = daysAgo(at, now);
+  if (ago === "today") return clockTime(at);
+  if (ago === "yesterday") return "Yesterday";
+  return `${weekday(todayIn(at)).slice(0, 3)} ${shortDate(todayIn(at))}`;
+}
+
+function rowOf(c: typeof t.conversations.$inferSelect, now: Date): ConversationRow {
+  return {
+    id: c.id,
+    title: c.title,
+    channel: c.channel,
+    state: c.state === "archived" ? "archived" : "active",
+    lastMessageAt: c.lastMessageAt,
+    when: whenLabel(c.lastMessageAt, now),
+    version: c.version,
+  };
+}
+
+/** The viewer's conversations, newest first; archived ones apart. Only ever their own (section 16). */
+export async function getConversationList(conn: Conn, viewerId: string, now: Date): Promise<{ active: ConversationRow[]; archived: ConversationRow[] }> {
+  const rows = await conn.select().from(t.conversations).where(eq(t.conversations.ownerId, viewerId)).orderBy(desc(t.conversations.lastMessageAt), desc(t.conversations.id));
+  const all = rows.map((c) => rowOf(c, now));
+  return {
+    active: all.filter((c) => c.state === "active"),
+    archived: all.filter((c) => c.state === "archived"),
+  };
+}
+
+export type ThreadNotice = ChatNotice;
+export type Thread = {
+  found: true;
+  conversation: ConversationRow;
+  turns: ChatCapture[];
+  notices: ThreadNotice[];
+};
+
+/**
+ * One conversation with every message in it and Atlas's reply to each, oldest first, and the notices
+ * that belong to it (CV14): one about something reported in this conversation, or, with no such link,
+ * those shown in the viewer's newest conversation. Someone else's conversation is not found (CV2).
+ */
+export async function getThread(conn: Conn, viewerId: string, conversationId: string, now: Date): Promise<Thread | NotYours> {
+  const [c] = await conn.select().from(t.conversations).where(eq(t.conversations.id, conversationId));
+  if (!c || c.ownerId !== viewerId) return NOT_YOURS;
+  const captures = await conn
+    .select()
     .from(t.captures)
-    .where(eq(t.captures.authorId, viewerId))
-    .orderBy(desc(t.captures.messageAt), desc(t.captures.receivedAt))
-    .limit(limit);
-  return rows.map((r) => {
-    const words = r.text.trim().split(/\s+/);
-    const title = r.text.trim() ? words.slice(0, 6).join(" ") + (words.length > 6 ? "…" : "") : r.kind === "voice" ? "Voice note" : "Update";
-    return { id: r.id, title, kind: r.kind, messageAt: r.messageAt, time: clockTime(r.messageAt), state: r.state };
-  });
+    .where(and(eq(t.captures.conversationId, conversationId), eq(t.captures.authorId, viewerId)))
+    .orderBy(t.captures.messageAt, t.captures.receivedAt);
+  const turns: ChatCapture[] = [];
+  for (const capture of captures) turns.push(await chatCaptureOf(conn, capture));
+  const [newest] = await conn
+    .select({ id: t.conversations.id })
+    .from(t.conversations)
+    .where(and(eq(t.conversations.ownerId, viewerId), eq(t.conversations.state, "active")))
+    .orderBy(desc(t.conversations.lastMessageAt), desc(t.conversations.id))
+    .limit(1);
+  const notices: ThreadNotice[] = [];
+  for (const n of await noticesFor(conn, viewerId)) {
+    const home = await noticeHome(conn, viewerId, n);
+    if (home === conversationId || (home === null && newest?.id === conversationId)) notices.push(n);
+  }
+  return { found: true, conversation: rowOf(c, now), turns, notices };
+}
+
+/** The conversation a notice belongs to: where the viewer reported the entry it is about, if anywhere. */
+async function noticeHome(conn: Conn, viewerId: string, n: ChatNotice): Promise<string | null> {
+  if (n.subject.type !== "braid_entry") return null;
+  const sources = await conn
+    .select({
+      conversationId: t.captures.conversationId,
+      at: t.captures.messageAt,
+    })
+    .from(t.braidSources)
+    .innerJoin(t.captures, eq(t.captures.id, t.braidSources.captureId))
+    .where(and(eq(t.braidSources.originEntryId, n.subject.id), eq(t.braidSources.personId, viewerId)))
+    .orderBy(desc(t.captures.messageAt));
+  return sources[0]?.conversationId ?? null;
 }
 
 /** The viewer's latest update, or the one they picked; only ever their own (M1). */
@@ -98,7 +196,11 @@ export async function getChatSummary(conn: Conn, viewerId: string, captureId?: s
     .limit(1);
   const notices = await noticesFor(conn, viewerId);
   if (!capture) return { viewerId, latest: null, notices };
+  return { viewerId, notices, latest: await chatCaptureOf(conn, capture) };
+}
 
+/** One message and what Atlas made of it, counted per project as the review counts them. */
+async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<ChatCapture> {
   const items = (await conn.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id)).orderBy(t.extractions.ordinal)).map(itemOf);
   const counts = countItems(items);
   const ids = [...counts.perProject.keys()];
@@ -106,30 +208,30 @@ export async function getChatSummary(conn: Conn, viewerId: string, captureId?: s
   // Rows in the order the note first mentions each project, as the review groups them
   const order = items.map((i) => i.draft.projectId);
   const rows = ids
-    .map((id) => ({ projectId: id, name: names.find((n) => n.id === id)?.name ?? id, ...counts.perProject.get(id)! }))
+    .map((id) => ({
+      projectId: id,
+      name: names.find((n) => n.id === id)?.name ?? id,
+      ...counts.perProject.get(id)!,
+    }))
     .sort((a, b) => order.indexOf(a.projectId) - order.indexOf(b.projectId));
 
   return {
-    viewerId,
-    notices,
-    latest: {
-      id: capture.id,
-      text: capture.text,
-      channel: capture.channel,
-      kind: capture.kind,
-      durationSeconds: capture.durationSeconds,
-      messageAt: capture.messageAt,
-      time: clockTime(capture.messageAt),
-      state: capture.state,
-      rows,
-      personal: counts.personal,
-      notFiled: counts.notFiled,
-      changes: counts.changes,
-      projects: counts.projects,
-      needsOk: counts.needsOk,
-      needsProject: counts.needsProject,
-      line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
-      answer: capture.answer ?? null,
-    },
+    id: capture.id,
+    text: capture.text,
+    channel: capture.channel,
+    kind: capture.kind,
+    durationSeconds: capture.durationSeconds,
+    messageAt: capture.messageAt,
+    time: clockTime(capture.messageAt),
+    state: capture.state,
+    rows,
+    personal: counts.personal,
+    notFiled: counts.notFiled,
+    changes: counts.changes,
+    projects: counts.projects,
+    needsOk: counts.needsOk,
+    needsProject: counts.needsProject,
+    line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
+    answer: capture.answer ?? null,
   };
 }

@@ -5,7 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-export const ASK_ATLAS_HREF = "/?view=chat&ask=1";
+/** Like Claude or ChatGPT: Ask Atlas opens a new conversation (section 16). */
+export const ASK_ATLAS_HREF = "/?view=chat&c=new&ask=1";
 export const ASK_ATLAS_INPUT = "ask-atlas";
 
 function useOpenAtlas() {

@@ -37,6 +37,7 @@ import {
   type Rematch,
 } from "@/commands/capture";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
+import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonWithAtlas, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
 import { getDb } from "@/db/client";
@@ -75,19 +76,44 @@ export async function viewAs(id: string): Promise<void> {
 
 // ---- Today chat: send an update, Atlas reads it after the reply (5.1) ----
 
-export async function sendUpdate(_: ActionResult | null, form: FormData): Promise<ActionResult> {
+export type SendResult = ActionResult & { conversationId?: string };
+
+/** Section 16: the message goes into the conversation open on screen, or starts a new one. */
+export async function sendUpdate(_: SendResult | null, form: FormData): Promise<SendResult> {
   const text = String(form.get("text") ?? "").trim();
-  if (!text) return { ok: false, message: "Write your update first." };
+  if (!text) return { ok: false, message: "Write your message first." };
   const ctx = await as();
   // DPM's own chat sends a message id too, so a double submit is one capture (D14)
   const messageId = String(form.get("messageId") ?? "") || randomUUID();
-  const { captureId } = await createCapture(ctx, { channel: "app", kind: "text", text, messageAt: ctx.now, receivedAt: ctx.now, messageId });
+  const conversationId = String(form.get("conversationId") ?? "") || null;
+  let created;
+  try {
+    created = await createCapture(ctx, { channel: "app", kind: "text", text, messageAt: ctx.now, receivedAt: ctx.now, messageId, conversationId });
+  } catch (e) {
+    if (e instanceof CommandRefused) return { ok: false, message: "That conversation is not yours, or no longer there. Start a new one." };
+    throw e;
+  }
+  const { captureId } = created;
   // The model call can take seconds: the chat shows "Reading your update…" and refreshes until it lands
   after(async () => {
     await readCapture({ ...ctx, now: now() }, captureId, atlasFromEnv().extractor, { clock: now });
   });
   refresh();
-  return { ok: true };
+  return { ok: true, conversationId: created.conversationId ?? undefined };
+}
+
+// ---- Conversations (M18, section 16) ----
+
+export async function renameConversationAction(conversationId: string, title: string): Promise<ActionResult> {
+  return run((ctx) => renameConversation(ctx, conversationId, title), "Renamed.");
+}
+
+export async function archiveConversationAction(conversationId: string): Promise<ActionResult> {
+  return run((ctx) => archiveConversation(ctx, conversationId), "Archived.");
+}
+
+export async function restoreConversationAction(conversationId: string): Promise<ActionResult> {
+  return run((ctx) => restoreConversation(ctx, conversationId), "Restored.");
 }
 
 // ---- Review my update (L16b) ----

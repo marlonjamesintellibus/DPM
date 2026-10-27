@@ -38,6 +38,22 @@ describe("the rule, without a model (QA8)", () => {
   });
 });
 
+describe("follow-ups by the rule (CV8, CV9)", () => {
+  const earlier = (asked: { topic: string; projectId: string | null } | null) => [{ captureId: "c0", at: new Date(), text: "What's blocked on Forager?", asked, openItems: [] }];
+  it("CV8 'and on GQ?' takes its topic from the question before it", () => {
+    expect(ruleQuestion({ ...ctx("and on GQ & Academy?"), earlier: earlier({ topic: "blocked", projectId: "forager" }) })).toEqual({ asked: "and on GQ & Academy?", topic: "blocked", projectId: "gq" });
+  });
+  it("a project the asker is not in is never named (QA3 holds)", () => {
+    expect(ruleQuestion({ ...ctx("what about Store Insights?"), earlier: earlier({ topic: "blocked", projectId: "forager" }) })).toEqual({ asked: "what about Store Insights?", topic: "blocked", projectId: null });
+  });
+  it("CV9 with nothing before it, it is unclear", () => {
+    expect(ruleQuestion(ctx("and on that one?"))).toEqual({ asked: "and on that one?", topic: "unclear", projectId: null });
+  });
+  it("an update that starts with 'and' is not a follow-up", () => {
+    expect(ruleQuestion({ ...ctx("And #145 is done. The export too."), earlier: earlier({ topic: "blocked", projectId: null }) })).toBeNull();
+  });
+});
+
 describe("the checks on what Atlas says was asked", () => {
   const text = "Finished #145. What's blocked on Forager?";
   it("keeps a known topic, a candidate project and words from the message", () => {

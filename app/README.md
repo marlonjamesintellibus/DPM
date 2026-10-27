@@ -30,7 +30,7 @@ The seed (`src/db/seed/`) is the 20 Oct 2026 snapshot from the use case: Kemar's
 |---|---|---|
 | `/` | Today: a chat for someone who reports into a project, an inbox for a PM or Lead; `?view=chat` or `?view=inbox` switches | L1, L18f, L6b, L6c |
 | `/review/[captureId]` | Review my update: what you said, what Atlas will change per project, and who sees what | L16b |
-| `/` chat, asking | A message can also ask Atlas something: what needs you, what is blocked, how a project stands. DPM answers from your own data, with links and the time it answered (machines doc, section 15). Ask Atlas and ⌘K open the chat ready to type | L1, L18e |
+| `/` chat | Conversations as in Claude or ChatGPT: New starts one, the list continues one, and each can be renamed, archived or restored. Atlas app messages go to their own conversation. A message can also ask Atlas something (what needs you, what is blocked, how a project stands); follow-ups and corrections are read with the conversation (machines doc, sections 15 and 16). Ask Atlas and ⌘K open a new conversation | L1, L18e |
 | `/projects`, `/projects/[projectId]` | The projects you can see. A project's Dashboard: the plan, the BRAID summary by kind and the milestones. `?view=table`: the BRAID log as a table, where a PM or Lead changes an entry's kind and a member asks for it (machines doc, section 13) | L14, L14c, L14d |
 
 The header's View as menu (L0) switches between Kemar, Alicia and Andre; everything then runs as that person. The demo clock starts at 9:10am on Tue 20 Oct 2026 and moves in real time (`DPM_CLOCK=real` for the real time). Run `pnpm db:reset` to start the story again.

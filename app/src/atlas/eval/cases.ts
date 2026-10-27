@@ -10,6 +10,7 @@
 //   resolve:<entryId>                  says a blocker or issue is cleared (D7)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
+import type { EarlierTurn } from "../../domain/atlas-checks/types";
 import type { QuestionTopic } from "../../domain/question";
 
 export type EvalAuthor = "kemar" | "alicia" | "andre";
@@ -30,6 +31,10 @@ export type EvalCase = {
   forbidWords?: string[];
   /** Section 15: the question it asks, after the checks; a list of topics is met by any one. */
   ask?: { topic: QuestionTopic | QuestionTopic[]; projectId: string | null };
+  /** Section 16: earlier messages in the same conversation, as Atlas is shown them. */
+  earlier?: EarlierTurn[];
+  /** Section 16: the earlier item a correction must name in replacesItemId. */
+  replaces?: string;
 };
 
 export const EVAL_CASES: EvalCase[] = [
@@ -335,6 +340,42 @@ export const EVAL_CASES: EvalCase[] = [
     about: "QA4 a request to change something is an update",
     text: "Can you mark #145 as done?",
     expect: ["upd:wi-145.state=done"],
+  },
+  // Section 16: follow-ups and corrections, read with the conversation
+  {
+    id: "f-follow-up",
+    author: "alicia",
+    about: "CV8 a follow-up takes its topic from the question before it",
+    earlier: [{ captureId: "c-1", at: new Date("2026-10-20T14:20:00Z"), text: "What's blocked on Forager?", asked: { topic: "blocked", projectId: "forager" }, openItems: [] }],
+    text: "and on GQ & Academy?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "blocked", projectId: "gq" },
+  },
+  {
+    id: "f-unclear",
+    about: "CV9 a follow-up with nothing before it",
+    text: "and on that one?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: ["unclear", "other"], projectId: null },
+  },
+  {
+    id: "f-correction",
+    about: "CV10 a correction names the unsaved item it replaces",
+    earlier: [
+      {
+        captureId: "c-2",
+        at: new Date("2026-10-20T14:20:00Z"),
+        text: "#145 is done.",
+        asked: null,
+        openItems: [{ id: "c-2-1", summary: "update work_item wi-145: state to done" }],
+      },
+    ],
+    text: "Sorry, I meant #147 is done, not #145.",
+    expect: ["upd:wi-147.state=done"],
+    forbid: ["upd:wi-145.state=done"],
+    replaces: "c-2-1",
   },
   {
     id: "q-injection",

@@ -605,6 +605,9 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     // Leave rationale is the server's own words, so nothing said around the dates is stored (E17)
     rationale: t?.type === "leave" ? "Leave dates you mentioned" : w.p.rationale,
   };
+  // CV10, CV12: a correction replaces only an open item of an earlier message in this conversation
+  const replaces = w.p.replacesItemId;
+  if (replaces && s.ctx.earlier?.some((turn) => turn.openItems.some((i) => i.id === replaces))) draft.replaces = replaces;
   if (w.kind === "update" && t) {
     if (t.type === "record") {
       draft.target = { type: t.record.type, id: t.record.id, field: w.field, oldValue: w.oldValue, newValue: w.newValue ?? "" };

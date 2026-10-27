@@ -104,7 +104,11 @@ export async function seedSnapshot(db: Db, options: SeedOptions = {}): Promise<S
       tries: 1,
       proposals: items.length,
     };
-    if (kemarNote) await tx.insert(t.captures).values(capture);
+    // Section 16: an Atlas app message goes into its author's Atlas conversation
+    if (kemarNote) {
+      await tx.insert(t.conversations).values({ id: "conv-atlas-kemar", ownerId: "kemar", state: "active", title: "Atlas", channel: "atlas", atlasChatId: "dm", lastMessageAt: capture.messageAt });
+      await tx.insert(t.captures).values({ ...capture, conversationId: "conv-atlas-kemar" });
+    }
 
     await tx.insert(t.braidEntries).values(
       BRAID.map(({ sources: _sources, ...e }) => ({

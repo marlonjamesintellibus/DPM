@@ -24,6 +24,7 @@ import type { CaptureState } from "../domain/machines/capture";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
+import type { ConversationState } from "../domain/machines/conversation";
 import type { KindRequestState } from "../domain/machines/kind-request";
 import type { Answer, AskedQuestion } from "../domain/question";
 import type { LeaveState } from "../domain/machines/leave";
@@ -364,9 +365,31 @@ export const statusReasonLinks = pgTable(
 // ---- Captures and extracted items (M1 to M4) ----
 
 /** M1: never edited. Its text belongs to the author; projects only see the spans routed to them. */
+/** M18. A person's conversation with Atlas: it groups their captures and is private to them (section 16). */
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull().references(() => people.id),
+    state: text("state").$type<ConversationState>().notNull(),
+    title: text("title").notNull(),
+    titleBy: text("title_by").$type<"auto" | "person">().notNull().default("auto"),
+    channel: text("channel").$type<"atlas" | "app">().notNull(),
+    /** The Atlas chat it mirrors ("dm" for the app's direct chat); null for one started in DPM. */
+    atlasChatId: text("atlas_chat_id"),
+    lastMessageAt: instant("last_message_at").notNull(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("conversations_owner").on(t.ownerId, t.state, t.lastMessageAt)],
+);
+
 export const captures = pgTable("captures", {
   id: text("id").primaryKey(),
   authorId: text("author_id").notNull().references(() => people.id),
+  /** Section 16: the conversation it was sent in. */
+  conversationId: text("conversation_id").references(() => conversations.id),
   /** atlas: the Atlas messaging app, which always sends a message id. app: DPM's own chat. */
   channel: text("channel").$type<"atlas" | "app">().notNull(),
   kind: text("kind").$type<"text" | "voice">().notNull(),

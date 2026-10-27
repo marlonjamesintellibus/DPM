@@ -50,6 +50,35 @@ test("Section 15. Kemar asks Atlas what needs him: the answer links his waiting 
   await expect(page.getByText("1 thing needs you:")).toBeVisible();
   await expect(page.getByText("Got it. Nothing in this one changes a project.")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Your update from 8:58am is waiting for review: 4 need your OK" })).toHaveAttribute("href", "/review/cap-kemar-0858");
+  // Ask Atlas started a new conversation, titled from the question (section 16)
+  await expect(page).toHaveURL(/c=conv-/);
+  await expect(page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: /What needs me to review it today\?/ })).toBeVisible();
+});
+
+test("Section 16. Conversations: a follow-up continues one, New starts another, and one is archived", async () => {
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What's blocked on Forager?");
+  await box.press("Enter");
+  await expect(page.getByText("1 thing is blocked on Forager 2.0:")).toBeVisible();
+  // A follow-up is read with the question before it
+  await box.fill("and on Store Insights?");
+  await box.press("Enter");
+  await expect(page.getByText("Nothing is blocked on Store Insights.")).toBeVisible();
+  const list = page.getByRole("navigation", { name: "Conversations" });
+  const rows = list.locator('a[href*="c=conv-"]:visible');
+  await expect(rows).toHaveCount(2); // the Atlas app's conversation and this one
+
+  await page.getByRole("link", { name: "New", exact: true }).click();
+  await expect(page.getByText("You can also ask me what needs you")).toBeVisible();
+  await box.fill("and on that one?");
+  await box.press("Enter");
+  await expect(page.getByText("I'm not sure what you mean. Ask the whole question")).toBeVisible();
+  await expect(rows).toHaveCount(3);
+
+  await page.getByRole("button", { name: "More for and on that one?" }).click();
+  await page.getByRole("menuitem", { name: "Archive" }).click();
+  await expect(rows).toHaveCount(2);
+  await expect(list.getByText("Archived (1)")).toBeVisible();
 });
 
 test("3. Alicia set Forager 2.0 Off track at 9:02 with no reason", async () => {

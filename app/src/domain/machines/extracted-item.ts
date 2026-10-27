@@ -31,7 +31,8 @@ export const UNDECIDED_STATES = ["proposed", "needs_ok", "conflict"] as const;
 const DECIDABLE = ["pre_accepted", "needs_ok", "conflict"] as const;
 const DECIDED = ["accepted", "edited", "rejected"] as const;
 
-export type WithdrawReason = "target_cancelled" | "discarded" | "expired" | "left_project";
+/** replaced: a later message in the conversation corrected it before it was saved (section 16, CV10). */
+export type WithdrawReason = "target_cancelled" | "discarded" | "expired" | "left_project" | "replaced";
 
 export type ExtractedItem = {
   /** The item ID that makes applying once only (rule 6). */

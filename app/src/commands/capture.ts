@@ -37,6 +37,7 @@ import {
   type ItemState,
   type WithdrawReason,
 } from "../domain/machines/extracted-item";
+import { applyConversationEvent, autoTitle, draftConversation, type ConversationRecord, type ConversationState } from "../domain/machines/conversation";
 import { applyHandover, type HandoverRecord } from "../domain/machines/handover";
 import { evaluateCause } from "../domain/machines/inbox-item";
 import { acceptExtractedLeave, changeLeave, fitLeave, type ExtractedLeave, type LeaveRecord } from "../domain/machines/leave";
@@ -160,9 +161,13 @@ export type NewCapture = {
   durationSeconds?: number | null;
   /** Voice only: how sure the transcriber was (E5). */
   transcriptConfidence?: Confidence | null;
+  /** Section 16, app only: the conversation it continues; none starts a new one. */
+  conversationId?: string | null;
+  /** Section 16, Atlas only: the Atlas chat it came from; the direct chat ("dm") when not given. */
+  atlasChatId?: string | null;
 };
 
-export type Created = { captureId: string; duplicate: boolean };
+export type Created = { captureId: string; duplicate: boolean; conversationId: string | null };
 
 /** Stores a message as received. A repeat of one already received (same dedup key) is dropped and changes nothing (E1). */
 export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Created> {
@@ -170,13 +175,19 @@ export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Creat
     // D14: Atlas always sends its message id; without it a resend could not be told from a new message
     if (input.channel === "atlas" && !input.messageId) throw new CommandRefused("a message from Atlas needs its message id");
     const dedupKey = captureDedupKey({ channel: input.channel, author: ctx.actorId, text: input.text, sentAt: input.messageAt, messageId: input.messageId });
-    const seen = await tx.select({ id: t.captures.id, dedupKey: t.captures.dedupKey }).from(t.captures).where(eq(t.captures.dedupKey, dedupKey));
+    const seen = await tx
+      .select({ id: t.captures.id, dedupKey: t.captures.dedupKey, conversationId: t.captures.conversationId })
+      .from(t.captures)
+      .where(eq(t.captures.dedupKey, dedupKey));
     const received = receiveCapture({ dedupKey, kind: input.kind }, new Set(seen.map((s) => s.dedupKey)));
-    if (!received.ok) return { captureId: seen[0].id, duplicate: true };
+    // CV5: the same message again is one capture, in the conversation it is already in
+    if (!received.ok) return { captureId: seen[0].id, duplicate: true, conversationId: seen[0].conversationId };
+    const conversationId = await conversationFor(tx, ctx, input);
     const id = `cap-${randomUUID()}`;
     await tx.insert(t.captures).values({
       id,
       authorId: ctx.actorId,
+      conversationId,
       channel: input.channel,
       kind: input.kind,
       text: input.text,
@@ -198,9 +209,70 @@ export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Creat
       subjectId: id,
       toState: "received",
       captureId: id,
-      detail: { channel: input.channel, authorId: ctx.actorId },
+      detail: { channel: input.channel, authorId: ctx.actorId, conversationId },
     });
-    return { captureId: id, duplicate: false };
+    return { captureId: id, duplicate: false, conversationId };
+  });
+}
+
+/**
+ * Section 16: the conversation a new message goes into. An Atlas app message goes to its author's Atlas
+ * conversation (CV4); an app message continues the one named (CV2: only the sender's own) or starts one
+ * (CV1). Sending to an archived conversation brings it back (CV3).
+ */
+async function conversationFor(tx: Tx, ctx: CommandCtx, input: NewCapture): Promise<string> {
+  let row: typeof t.conversations.$inferSelect | undefined;
+  if (input.channel === "atlas") {
+    const chat = input.atlasChatId ?? "dm";
+    [row] = await tx
+      .select()
+      .from(t.conversations)
+      .where(and(eq(t.conversations.ownerId, ctx.actorId), eq(t.conversations.channel, "atlas"), eq(t.conversations.atlasChatId, chat)));
+    if (!row) return startConversation(tx, ctx, draftConversation({ id: `conv-${randomUUID()}`, ownerId: ctx.actorId, channel: "atlas", atlasChatId: chat, title: chat === "dm" ? "Atlas" : "Atlas chat" }), input);
+  } else if (input.conversationId) {
+    [row] = await tx.select().from(t.conversations).where(eq(t.conversations.id, input.conversationId));
+    // CV2: someone else's conversation reads exactly like one that does not exist (P10)
+    if (!row || row.ownerId !== ctx.actorId) throw new CommandRefused(`no conversation ${input.conversationId}`, "not_found");
+  } else {
+    return startConversation(tx, ctx, draftConversation({ id: `conv-${randomUUID()}`, ownerId: ctx.actorId, channel: "app" }), input);
+  }
+  const r = applyConversationEvent(conversationOf(row), { type: "MESSAGE" }, ctx.actorId);
+  const moved_ = moved(r.outcome);
+  const lastMessageAt = row.lastMessageAt > input.messageAt ? row.lastMessageAt : input.messageAt;
+  const rows = await tx
+    .update(t.conversations)
+    .set({ state: r.record.state, lastMessageAt, version: nextVersion(t.conversations.version), updatedAt: ctx.now })
+    .where(and(eq(t.conversations.id, row.id), eq(t.conversations.version, row.version)))
+    .returning({ id: t.conversations.id });
+  expectOne(rows, `conversation ${row.id}`);
+  if (moved_.from !== moved_.to) await auditConversation(tx, ctx, row.id, moved_);
+  return row.id;
+}
+
+async function startConversation(tx: Tx, ctx: CommandCtx, draft: ConversationRecord, input: NewCapture): Promise<string> {
+  const r = applyConversationEvent(draft, { type: "FIRST_MESSAGE", text: input.text }, ctx.actorId);
+  const outcome = moved(r.outcome);
+  const c = r.record;
+  await tx.insert(t.conversations).values({ id: c.id, ownerId: c.ownerId, state: c.state, title: c.title || autoTitle(input.text, input.kind), titleBy: c.titleBy, channel: c.channel, atlasChatId: c.atlasChatId, lastMessageAt: input.messageAt, createdAt: ctx.now, updatedAt: ctx.now });
+  await auditConversation(tx, ctx, c.id, outcome);
+  return c.id;
+}
+
+export function conversationOf(row: typeof t.conversations.$inferSelect): ConversationRecord {
+  return { id: row.id, ownerId: row.ownerId, state: row.state, title: row.title, titleBy: row.titleBy, channel: row.channel, atlasChatId: row.atlasChatId };
+}
+
+export function auditConversation(tx: Tx, ctx: CommandCtx, id: string, outcome: Moved<ConversationState>, detail: Record<string, unknown> = {}) {
+  return audit(tx, ctx.now, {
+    actorType: "person",
+    actorId: ctx.actorId,
+    action: outcome.event,
+    machine: "conversation",
+    subjectType: "conversation",
+    subjectId: id,
+    fromState: outcome.from,
+    toState: outcome.to,
+    detail,
   });
 }
 
@@ -230,7 +302,7 @@ export type ReadStarted = {
 const atlasActor: Actor = { type: "atlas", id: null };
 
 async function readContextOf(tx: Tx, row: CaptureRow, record: CaptureRecord): Promise<CheckContext> {
-  return loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence });
+  return loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence, captureId: row.id });
 }
 
 /** The capture as this attempt left it, or ReadSuperseded when it has moved on. */
@@ -329,7 +401,7 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       if ((record.state as CaptureState) === "transcribing") step({ type: "TRANSCRIBED", confidence: row.transcriptConfidence ?? "medium" });
     }
 
-    const checkCtx = await loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence });
+    const checkCtx = await loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence, captureId: row.id });
     const checked = runChecks(proposals, checkCtx);
     const { kept, more } = capProposals(checked.items);
     const capped = checked.dropped.filter((d) => d.check === "cap").length;
@@ -361,6 +433,30 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       );
     }
     await persistCapture(tx, captureId, row.version, record, ctx.now);
+    // CV10: a correction withdraws the earlier unsaved item it replaces; the checks kept only such links
+    for (const item of items.filter((i) => i.draft.replaces)) {
+      const replaced = item.draft.replaces!;
+      const [old] = await tx.select({ captureId: t.extractions.captureId }).from(t.extractions).where(eq(t.extractions.id, replaced));
+      if (!old) continue;
+      const { items: before, versions } = await loadItems(tx, old.captureId);
+      const target = before.find((i) => i.id === replaced);
+      if (!target) continue;
+      const r = applyItemEvent(target, { type: "WITHDRAW", because: "replaced" });
+      if (!r.outcome.ok) continue;
+      await persistItems(tx, before, before.map((i) => (i.id === replaced ? r.item : i)), versions, ctx.now);
+      await audit(tx, ctx.now, {
+        actorType: "atlas",
+        action: "WITHDRAW",
+        machine: "extracted_item",
+        subjectType: "extraction",
+        subjectId: replaced,
+        fromState: r.outcome.from,
+        toState: r.outcome.to,
+        captureId: old.captureId,
+        extractionId: replaced,
+        detail: { because: "replaced", by: item.id },
+      });
+    }
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
     const answer = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
     if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));

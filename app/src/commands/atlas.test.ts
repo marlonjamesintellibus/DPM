@@ -142,7 +142,7 @@ describe("D1, D14, D19: voice notes, message ids and reads that never answer", (
     const a = await createCapture(kemar(), { ...input, channel: "atlas", messageId: "atl-9" });
     const resend = await createCapture(kemar(), { ...input, channel: "atlas", messageId: "atl-9", receivedAt: at(1) });
     const app = await createCapture(kemar(), { ...input, channel: "app" });
-    expect(resend).toEqual({ captureId: a.captureId, duplicate: true });
+    expect(resend).toEqual({ captureId: a.captureId, duplicate: true, conversationId: a.conversationId });
     expect(app.duplicate).toBe(false);
   });
 

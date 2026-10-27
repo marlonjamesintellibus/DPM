@@ -5,7 +5,8 @@
 // read from the asker's own data (queries/answer.ts).
 import type { CheckContext } from "./atlas-checks/types";
 
-export const QUESTION_TOPICS = ["needs_me", "blocked", "project_status", "other"] as const;
+// unclear: a follow-up whose subject cannot be told, because nothing earlier in the conversation says it (CV9)
+export const QUESTION_TOPICS = ["needs_me", "blocked", "project_status", "other", "unclear"] as const;
 export type QuestionTopic = (typeof QUESTION_TOPICS)[number];
 
 /** What Atlas said was asked, before the checks. */
@@ -23,6 +24,7 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
   return { asked, topic, projectId };
 }
 
+const FOLLOW_UP = /^(and|what about|how about)\b/i;
 const ASKING = /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can)\b/i;
 // QA4: "Can you mark #145 done?" asks for a change, so it is an update, not a question
 const ASKS_FOR_A_CHANGE = /\b(mark|set|move|change|update|add|log|close|resolve|approve|assign)\b.*\b(#\d+|done|blocked|to\b)/i;
@@ -41,8 +43,17 @@ export function topicOf(text: string): QuestionTopic {
  * is left to the model (and fails as not connected when there is none). Names a project only when its
  * name or alias is in the words.
  */
-export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects">): AskedQuestion | null {
+export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earlier">): AskedQuestion | null {
   const text = ctx.text.trim();
+  // CV8, CV9: "and on Store Insights?" takes its topic from the question before it in this conversation
+  if (FOLLOW_UP.test(text) && !ASKS_FOR_A_CHANGE.test(text) && (text.endsWith("?") || text.split(/\s+/).length <= 6) && !/[.!]\s/.test(text)) {
+    const before = [...(ctx.earlier ?? [])].reverse().find((t) => t.asked)?.asked;
+    const lower_ = text.toLowerCase();
+    const named = ctx.projects.find((p) => [p.name, ...p.aliases].some((n) => n && lower_.includes(n.toLowerCase())));
+    if (!before) return { asked: text, topic: "unclear", projectId: null };
+    const topic = (QUESTION_TOPICS as readonly string[]).includes(before.topic) ? (before.topic as QuestionTopic) : "other";
+    return { asked: text, topic, projectId: named?.id ?? null };
+  }
   const sentences = text.split(/(?<=[.!?])\s+|\n+/).filter((s) => s.trim());
   if (sentences.length !== 1) return null;
   if (!(text.endsWith("?") || ASKING.test(text)) || ASKS_FOR_A_CHANGE.test(text)) return null;

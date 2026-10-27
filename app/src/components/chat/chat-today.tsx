@@ -1,66 +1,112 @@
-// Today as a chat (Figma L1 for the web layout, L18e and L18f for the capture): the viewer's
-// updates as conversations, the open one with what Atlas made of it per project and the way into
-// the review, DPM's answer when it asked something (section 15), what Atlas told them since (D15),
-// and the box for the next message. Only the viewer's own captures are read (M1).
+// Today as a chat (Figma L1 for the web layout, L18e and L18f for the capture), working as Claude or
+// ChatGPT do (section 16): the viewer's conversations, newest first, with New, rename, archive and
+// restore; the open one with every message in it, what Atlas made of each per project and the way into
+// the review, DPM's answer when one asked something (section 15), the notices that belong to it (D15,
+// CV14), and the box for the next message. Only the viewer's own conversations are read (M1).
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { Icon } from "@/components/shell/icon";
 import { startReview } from "@/app/actions";
 import { getDb } from "@/db/client";
 import type { Answer } from "@/domain/question";
-import { getChatSummary, getConversations, type ChatCapture } from "@/queries/chat";
+import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
 import { clockTime } from "@/queries/project";
 import { Composer } from "./composer";
+import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
 
 const READING = new Set(["received", "transcribing", "transcribe_wait", "reading", "retry_wait"]);
 
-export async function ChatToday({ viewerId, firstName, captureId, ask = false }: { viewerId: string; firstName: string; captureId?: string; ask?: boolean }) {
+export async function ChatToday({ viewerId, firstName, conversationId, ask = false, at }: { viewerId: string; firstName: string; conversationId?: string; ask?: boolean; at: Date }) {
   const db = await getDb();
-  const [summary, conversations] = await Promise.all([getChatSummary(db, viewerId, captureId), getConversations(db, viewerId)]);
-  const open = summary.latest;
-  const reading = conversations.some((c) => READING.has(c.state));
+  const list = await getConversationList(db, viewerId, at);
+  // A new conversation is only a screen until its first message (CV1); otherwise the newest one opens
+  const openId = conversationId === "new" ? null : (conversationId ?? list.active[0]?.id ?? null);
+  const thread = openId ? await getThread(db, viewerId, openId, at) : null;
+  if (thread && !thread.found) notFound();
+  const open = thread?.found ? thread : null;
+  const reading = !!open?.turns.some((c) => READING.has(c.state));
   return (
     <div className="flex min-h-0 flex-1">
       <RefreshWhile active={reading} />
-      <nav aria-label="Conversations" className="flex w-[250px] shrink-0 flex-col gap-0.5 border-r border-line px-2.5 py-4">
-        <span className="flex items-center px-2 pb-2 type-label text-fg-2">Conversations</span>
-        {conversations.length === 0 && <span className="px-2.5 type-caption text-fg-3">Your updates will show here.</span>}
-        {conversations.map((c) => (
-          <Link
-            key={c.id}
-            href={`/?view=chat&capture=${c.id}`}
-            aria-current={c.id === open?.id ? "true" : undefined}
-            className={`flex flex-col gap-px rounded-control px-2.5 py-2 ${c.id === open?.id ? "bg-hover" : "hover:bg-hover"}`}
-          >
-            <span className={`truncate type-body ${c.id === open?.id ? "text-fg-1" : "text-fg-2"}`}>{c.title}</span>
-            <span className="type-caption text-fg-3">{c.time}</span>
+      <nav aria-label="Conversations" className="flex w-[260px] shrink-0 flex-col gap-0.5 overflow-auto border-r border-line px-2.5 py-4">
+        <div className="flex items-center gap-2 px-2 pb-2">
+          <span className="flex-1 type-label text-fg-2">Conversations</span>
+          <Link href="/?view=chat&c=new&ask=1" className="flex items-center gap-1 rounded-control border border-line-strong bg-panel px-2 py-0.5 type-label text-fg-1 hover:bg-hover">
+            <Icon name="plus-14" />
+            New
           </Link>
+        </div>
+        {list.active.length === 0 && <span className="px-2.5 type-caption text-fg-3">Your conversations will show here.</span>}
+        {list.active.map((c) => (
+          <ConversationLink key={c.id} c={c} open={c.id === open?.conversation.id} />
         ))}
+        {list.archived.length > 0 && (
+          <details className="mt-3 flex flex-col">
+            <summary className="cursor-pointer list-none px-2 py-1.5 type-caption text-fg-3 hover:text-fg-2">Archived ({list.archived.length})</summary>
+            {list.archived.map((c) => (
+              <ConversationLink key={c.id} c={c} open={c.id === open?.conversation.id} />
+            ))}
+          </details>
+        )}
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex flex-1 flex-col gap-[18px] overflow-auto px-20 pt-6 pb-4">
-          {!open && (
+          {open ? (
+            <>
+              {open.conversation.state === "archived" && <p className="type-caption text-fg-3">This conversation is archived. Sending a message brings it back.</p>}
+              <Messages thread={open} />
+            </>
+          ) : (
             <AtlasLine>
               Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what needs
               you, what is blocked, or how a project stands.
             </AtlasLine>
           )}
-          {open && <Thread capture={open} />}
-          {[...summary.notices].reverse().map((n) => (
-            <AtlasLine key={n.id}>
-              <span>
-                {n.text} <span className="type-micro text-fg-3">· {n.time}</span>
-              </span>
-            </AtlasLine>
-          ))}
         </div>
         <div className="flex flex-col gap-2 px-20 pt-2 pb-5">
-          <Composer focus={ask} />
+          <Composer key={open?.conversation.id ?? "new"} focus={ask} conversationId={open?.conversation.id ?? null} />
         </div>
       </div>
     </div>
   );
+}
+
+function ConversationLink({ c, open }: { c: ConversationRow; open: boolean }) {
+  return (
+    <div className={`group flex items-start gap-1 rounded-control pr-1 ${open ? "bg-hover" : "hover:bg-hover"}`}>
+      <Link href={`/?view=chat&c=${c.id}`} aria-current={open ? "true" : undefined} className="flex min-w-0 flex-1 flex-col gap-px px-2.5 py-2">
+        <span className={`truncate type-body ${open ? "text-fg-1" : "text-fg-2"}`}>{c.title}</span>
+        <span className="type-caption text-fg-3">
+          {c.channel === "atlas" ? "Atlas app · " : ""}
+          {c.when}
+        </span>
+      </Link>
+      <div className={`pt-2 ${open ? "" : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"}`}>
+        <ConversationMenu id={c.id} title={c.title} archived={c.state === "archived"} open={open} />
+      </div>
+    </div>
+  );
+}
+
+/** Every message and Atlas's reply to each, with the notices that belong here, in time order. */
+function Messages({ thread }: { thread: Thread }) {
+  const items = [
+    ...thread.turns.map((c) => ({ at: c.messageAt.getTime(), key: c.id, node: <Turn key={c.id} capture={c} /> })),
+    ...thread.notices.map((n) => ({
+      at: n.at.getTime(),
+      key: n.id,
+      node: (
+        <AtlasLine key={n.id}>
+          <span>
+            {n.text} <span className="type-micro text-fg-3">· {n.time}</span>
+          </span>
+        </AtlasLine>
+      ),
+    })),
+  ].sort((a, b) => a.at - b.at || a.key.localeCompare(b.key));
+  return <>{items.map((i) => i.node)}</>;
 }
 
 function AtlasLine({ children }: { children: React.ReactNode }) {
@@ -123,7 +169,7 @@ function AnswerLine({ answer }: { answer: Answer }) {
   );
 }
 
-function Thread({ capture }: { capture: ChatCapture }) {
+function Turn({ capture }: { capture: ChatCapture }) {
   const waiting = capture.state === "proposed" || capture.state === "reviewing";
   const reading = READING.has(capture.state);
   const rows = [

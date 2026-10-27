@@ -32,7 +32,7 @@ export type CaseScore = {
 };
 
 export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: CheckContext, question: RawQuestion | null = null): CaseScore {
-  const items = runChecks(proposals, { ...ctx, text: c.text }).items;
+  const items = runChecks(proposals, { ...ctx, text: c.text, ...(c.earlier ? { earlier: c.earlier } : {}) }).items;
   const keys = items.map(itemKey);
   const used = new Set<number>();
   const missing: string[] = [];
@@ -50,6 +50,8 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   const q = checkQuestion(question, { ...ctx, text: c.text });
   const asked = q ? `${q.topic}@${q.projectId ?? "none"}` : null;
   if (!c.ask && q) forbidden.push(`asks ${asked}`);
+  // Section 16: a correction must name the earlier item it replaces (the checks keep only listed ones)
+  if (c.replaces && !items.some((i) => i.replaces === c.replaces)) missing.push(`replaces ${c.replaces}`);
   if (c.ask) {
     const topics = Array.isArray(c.ask.topic) ? c.ask.topic : [c.ask.topic];
     if (!q || !topics.includes(q.topic) || q.projectId !== c.ask.projectId) missing.push(`ask ${topics.join("|")}@${c.ask.projectId ?? "none"}`);
