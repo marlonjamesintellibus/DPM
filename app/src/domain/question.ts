@@ -7,12 +7,13 @@ import { namesProject, numbersOf } from "./atlas-checks/checks";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { GREETING, smallTalk } from "./topics/small-talk";
+import { subjectById, subjectIn, type WhySubject } from "./topics/why";
 
 // Each topic is defined in domain/topics, its answer in queries/answers
 export { QUESTION_TOPICS, type QuestionTopic };
 
-/** What Atlas said was asked, before the checks. */
-export type RawQuestion = { asked: string; topic: string; projectId: string | null };
+/** What Atlas said was asked, before the checks. Phase C: subjectId, what a why question is about. */
+export type RawQuestion = { asked: string; topic: string; projectId: string | null; subjectId?: string | null };
 
 /** A question that passed the checks: safe to answer from the asker's data. */
 export type AskedQuestion = {
@@ -21,6 +22,8 @@ export type AskedQuestion = {
   projectId: string | null;
   /** CV8, CQ14: the words of the earlier questions a follow-up follows, newest first, the asker's own. */
   follows?: string[];
+  /** Phase C: what a why question is about, in a project the asker can read (WY1); only on topic why. */
+  subject?: WhySubject;
 };
 
 /**
@@ -34,7 +37,9 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
   const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
   const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
-  return { asked, topic, projectId, ...(follows.length ? { follows } : {}) };
+  // Phase C, WY1: a subject outside the asker's lists is no subject, never a sign that it exists
+  const subject = topic === "why" ? subjectById(raw.subjectId, ctx.projects) : null;
+  return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(subject ? { subject } : {}) };
 }
 
 /**
@@ -73,7 +78,8 @@ const GREETED = new RegExp(
   "i",
 );
 // QA4: "Can you mark #145 done?" asks for a change, so it is an update, not a question
-const ASKS_FOR_A_CHANGE = /\b(mark|set|move|change|update|add|log|close|resolve|approve|assign)\b.*\b(#\d+|done|blocked|to\b)/i;
+// Phase C: a question that starts with why asks about a change ("Why did Alicia set Forager to Off track?"), never for one
+const ASKS_FOR_A_CHANGE = /^(?!(?:why|how come|wha mek|wah mek|wa mek)\b).*\b(mark|set|move|change|update|add|log|close|resolve|approve|assign)\b.*\b(#\d+|done|blocked|to\b)/i;
 
 /** The topic a question is about, from its words: what the rule can tell without a model. */
 export function topicOf(text: string): QuestionTopic {
@@ -98,12 +104,19 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
     const named = namedProject(text, ctx.projects);
     if (!before) return { asked: text, topic: "unclear", projectId: null };
     const topic = (QUESTION_TOPICS as readonly string[]).includes(before.topic) ? (before.topic as QuestionTopic) : "other";
-    return { asked: text, topic, projectId: named?.id ?? null };
+    return withSubject({ asked: text, topic, projectId: named?.id ?? null }, ctx.projects);
   }
   const sentences = text.split(/(?<=[.!?])\s+|\n+/).filter((s) => s.trim());
   if (sentences.length !== 1) return null;
   if (!(text.endsWith("?") || ASKING.test(text.replace(GREETED, ""))) || ASKS_FOR_A_CHANGE.test(text)) return null;
-  return { asked: text, topic: topicOf(text), projectId: namedProject(text, ctx.projects)?.id ?? null };
+  return withSubject({ asked: text, topic: topicOf(text), projectId: namedProject(text, ctx.projects)?.id ?? null }, ctx.projects);
+}
+
+/** Phase C: a why question by the rule takes its subject from the words ("#151", "the trend model", "Forager"). */
+function withSubject(q: AskedQuestion, projects: CheckContext["projects"]): AskedQuestion {
+  if (q.topic !== "why") return q;
+  const subject = subjectIn(q.asked, projects, q.projectId);
+  return subject ? { ...q, subject } : q;
 }
 
 /**

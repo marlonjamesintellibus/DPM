@@ -16,7 +16,8 @@ import { CONFIDENCES } from "../domain/shared";
 // phase R, built alongside: Jamaican English and Patois are read as written, quotes kept exactly, and what
 // Atlas writes is standard English (CD20); a hedge in Patois is a hedge ("mi tink"), and a project name
 // that is also a word ("di academy") is not the project (JA7). read-11: all of them together.
-export const PROMPT_VERSION = "read-11";
+// read-wave2-c: the conversational plan's phase C, the why topic and its subjectId (WY1 to WY8).
+export const PROMPT_VERSION = "read-wave2-c";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -68,6 +69,9 @@ Questions
 - If the message asks you for information ("What needs me today?", "What am I working on?", "What's due this week?", "Any updates?", "Who has mentioned me?", "Tell me about Forager"), fill question. Otherwise question is null.
 - asked: the question's exact words from the update. topic: ${TOPIC_LIST}.
 - projectId: the listed project the question names, or null. Never a project that is not listed.
+- A why question is topic why: why something has its status ("Why is Forager at risk?"), what holds it up ("What's holding up the trend model?"), when it was decided ("When did we decide to drop the TikTok scrape?") or why it changed ("Why was #145 moved to Friday?"). It asks, even when it names a change: it is never an update.
+- subjectId, for topic why only: the id of the listed project, record or BRAID entry the question is about (a decision is a BRAID entry). null when it names none of them; never an id that is not listed. For every other topic subjectId is null.
+- A why about a person ("Why is Kemar late?") is topic why with subjectId null. DPM answers about records, not people.
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.
@@ -171,6 +175,8 @@ export const questionSchema = z.object({
   asked: z.string(),
   topic: z.enum(QUESTION_TOPICS),
   projectId: z.string().nullable(),
+  // Phase C: a why question's subject; optional, so a question without it keeps its shape (QA7)
+  subjectId: z.string().nullable().optional(),
 });
 
 export const TOOL_NAME = "propose_items";

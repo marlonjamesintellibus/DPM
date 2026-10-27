@@ -35,8 +35,12 @@ export type EvalCase = {
   held?: string[];
   /** Words that must not appear in any titles, notes or rationales that pass. */
   forbidWords?: string[];
-  /** Section 15: the question it asks, after the checks; a list of topics is met by any one. */
-  ask?: { topic: QuestionTopic | QuestionTopic[]; projectId: string | null };
+  /**
+   * Section 15: the question it asks, after the checks; a list of topics or projects is met by any one.
+   * Phase C: subject, what a why question is about after the checks (an id, or null for none); a list is
+   * met by any one, and leaving it out does not score it.
+   */
+  ask?: { topic: QuestionTopic | QuestionTopic[]; projectId: string | null | (string | null)[]; subject?: string | null | (string | null)[] };
   /** Section 16: earlier messages in the same conversation, as Atlas is shown them. */
   earlier?: EarlierTurn[];
   /** Section 16: the earlier item a correction must name in replacesItemId. */
@@ -761,5 +765,74 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Mi did eat some sprouts fi lunch, nutten else fi report.",
     expect: [],
     forbid: ["*"],
+  },
+  // Conversational plan phase C: why questions, each with its subject from the lists (WY1 to WY8)
+  {
+    id: "w-status",
+    author: "alicia",
+    about: "why a project has its status: the project is the subject",
+    text: "Why is Forager at risk?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: "forager", subject: ["forager", null] },
+  },
+  {
+    id: "w-holdup",
+    about: "what holds up a work item, by its number",
+    text: "What's holding up #151?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: [null, "forager"], subject: "wi-151" },
+  },
+  {
+    id: "w-holdup-milestone",
+    about: "what holds up a milestone, by its name",
+    text: "What's holding up the trend model?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: [null, "forager"], subject: ["ms-trend", "wi-147"] },
+  },
+  {
+    id: "w-decided",
+    about: "WY4 when a decision was made: the decision is the subject",
+    text: "When did we decide to drop the TikTok scrape?",
+    braid: [{ projectId: "forager", id: "br-tiktok-drop", kind: "decision", title: "Drop the TikTok scrape and use the trends API", state: "approved" }],
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: [null, "forager"], subject: ["br-tiktok-drop", null] },
+  },
+  {
+    id: "w-changed",
+    about: "why a field changed is a question, never an update",
+    text: "Why was the trend model moved to Saturday?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: [null, "forager"], subject: "ms-trend" },
+  },
+  {
+    id: "w-not-member",
+    author: "alicia",
+    about: "WY1 a record in a project she is not in is no subject",
+    text: "Why is the weekly sales export blocked?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: null, subject: null },
+  },
+  {
+    id: "w-person",
+    author: "alicia",
+    about: "WY8 a why about a person has no subject",
+    text: "Why is Kemar late?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: null, subject: null },
+  },
+  {
+    id: "w-patois",
+    about: "phase R: 'wha mek' asks why",
+    text: "Wha mek di trend model late?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "why", projectId: [null, "forager"], subject: ["ms-trend", "wi-147"] },
   },
 ];

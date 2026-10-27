@@ -31,7 +31,7 @@ export type CaseScore = {
   /** Items the checks held back for a project choice (E71); counted, not failed. */
   chooseProject: number;
   keys: string[];
-  /** Section 15: "topic@project" as asked after the checks, or null. */
+  /** Section 15: "topic@project" as asked after the checks, or null; phase C adds "#subject" when one is kept. */
   asked: string | null;
 };
 
@@ -56,13 +56,19 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   const extra = keys.filter((k, i) => !used.has(i) && !(c.allow ?? []).some((p) => matches(p, k)) && !forbidden.includes(k));
   // Section 15: a case without ask must ask nothing; one with ask must ask that, about that project
   const q = checkQuestion(question, { ...ctx, text: c.text });
-  const asked = q ? `${q.topic}@${q.projectId ?? "none"}` : null;
+  const asked = q ? `${q.topic}@${q.projectId ?? "none"}${q.subject ? `#${q.subject.id}` : ""}` : null;
   if (!c.ask && q) forbidden.push(`asks ${asked}`);
   // Section 16: a correction must name the earlier item it replaces (the checks keep only listed ones)
   if (c.replaces && !items.some((i) => i.replaces === c.replaces)) missing.push(`replaces ${c.replaces}`);
   if (c.ask) {
     const topics = Array.isArray(c.ask.topic) ? c.ask.topic : [c.ask.topic];
-    if (!q || !topics.includes(q.topic) || q.projectId !== c.ask.projectId) missing.push(`ask ${topics.join("|")}@${c.ask.projectId ?? "none"}`);
+    const projects = Array.isArray(c.ask.projectId) ? c.ask.projectId : [c.ask.projectId];
+    if (!q || !topics.includes(q.topic) || !projects.includes(q.projectId)) missing.push(`ask ${topics.join("|")}@${projects.map((p) => p ?? "none").join("|")}`);
+    // Phase C: what a why question is about, as the checks kept it (WY1)
+    if (c.ask.subject !== undefined) {
+      const subjects = Array.isArray(c.ask.subject) ? c.ask.subject : [c.ask.subject];
+      if (!q || !subjects.includes(q.subject?.id ?? null)) missing.push(`subject ${subjects.map((s) => s ?? "none").join("|")}`);
+    }
   }
   return {
     id: c.id,

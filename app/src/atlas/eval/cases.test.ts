@@ -1,8 +1,10 @@
 // The evaluation cases name only records and entries their author can actually reach (D22).
 import { describe, expect, it } from "vitest";
 import { seededDb } from "../../test/seeded-db";
+import { ruleQuestion } from "../../domain/question";
 import { EVAL_CASES } from "./cases";
 import { caseContext, evalContexts } from "./contexts";
+import { scoreCase } from "./score";
 
 describe("evaluation cases", () => {
   it("every id an expected item names is in its author's candidate data", async () => {
@@ -19,6 +21,20 @@ describe("evaluation cases", () => {
         if (type === "outcome") expect(entries, `${c.id}: ${key}`).toContain(rest.split("=")[0]);
         if (type === "new") expect(projects, `${c.id}: ${key}`).toContain(rest.split(":")[1].split("@")[0]);
       }
+    }
+  });
+
+  it("phase C: every subject a why case names is in its author's lists, and the rule (no model) reads each one as it should", async () => {
+    const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
+    const why = EVAL_CASES.filter((c) => c.ask?.topic === "why");
+    expect(why.length).toBeGreaterThanOrEqual(8);
+    for (const c of why) {
+      const ctx = caseContext(c, contexts);
+      const ids = new Set([...ctx.projects.map((p) => p.id), ...ctx.projects.flatMap((p) => [...p.records.map((r) => r.id), ...p.braid.map((e) => e.id)])]);
+      for (const s of [c.ask!.subject ?? null].flat()) if (s) expect(ids, `${c.id}: ${s}`).toContain(s);
+      const asked = ruleQuestion(ctx);
+      const score = scoreCase(c, [], ctx, asked && { ...asked, subjectId: asked.subject?.id ?? null });
+      expect(score.missing, c.id).toEqual([]);
     }
   });
 
