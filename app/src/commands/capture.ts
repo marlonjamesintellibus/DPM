@@ -46,8 +46,10 @@ import { applyMilestone, type MilestoneRecord } from "../domain/machines/milesto
 import { applyWorkItem, workItemEventTo, type WorkItemEvent, type WorkItemRecord } from "../domain/machines/work-item";
 import { mayReport, mayResolve } from "../domain/rights";
 import { applyRouting, planRoutingAtSave, type Author, type Route, type RoutingEvent } from "../domain/routing";
+import { checkQuestion, type Answer, type RawQuestion } from "../domain/question";
 import type { Confidence, ExtractedItemDraft, MatchState } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
+import { answerFor } from "../queries/answer";
 import { loadCheckContext } from "../queries/check-context";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
@@ -281,7 +283,15 @@ export function failTranscribe(ctx: CommandCtx, captureId: string, attempt: numb
 }
 
 /** What Atlas reported about a read, kept in the audit so the model can be measured (phase 4). */
-export type ReadMeta = { model: string; usage?: unknown; malformed?: unknown[]; message?: string; attempt?: number };
+export type ReadMeta = {
+  model: string;
+  usage?: unknown;
+  malformed?: unknown[];
+  message?: string;
+  attempt?: number;
+  /** Section 15: what Atlas says the message asks; checked here like the proposals. */
+  question?: RawQuestion | null;
+};
 
 /** The model failed, timed out or sent something unreadable: wait, then try again (E18, E19). */
 export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" | "timeout" | "bad_output", meta: ReadMeta & { attempt: number }): Promise<CaptureState> {
@@ -294,7 +304,7 @@ export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" 
   });
 }
 
-export type Proposed = { state: CaptureState; items: ExtractedItem[]; dropped: DroppedProposal[]; moreFound: boolean };
+export type Proposed = { state: CaptureState; items: ExtractedItem[]; dropped: DroppedProposal[]; moreFound: boolean; answer?: Answer | null };
 
 /**
  * Runs the server checks on what Atlas returned and stores the items that pass. Atlas is the actor;
@@ -324,7 +334,8 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     const { kept, more } = capProposals(checked.items);
     const capped = checked.dropped.filter((d) => d.check === "cap").length;
     const items = kept.map((draft) => startItem(`${captureId}-${draft.ordinal}`, draft, { maxConfidence: confidenceCap(record) }));
-    step({ type: "PROPOSALS_READY", count: items.length + more + capped });
+    const asked = checkQuestion(meta?.question, checkCtx);
+    step({ type: "PROPOSALS_READY", count: items.length + more + capped, asked: asked !== null });
 
     if (items.length) {
       await tx.insert(t.extractions).values(
@@ -350,9 +361,12 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       );
     }
     await persistCapture(tx, captureId, row.version, record, ctx.now);
+    // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
+    const answer = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
+    if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)
-      const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped, ...meta } : undefined;
+      const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped, ...meta, question: asked } : undefined;
       await auditCapture(tx, ctx.now, captureId, m, atlas, detail);
     }
     for (const item of items) {
@@ -369,7 +383,7 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
         detail: { mark: item.draft.mark, confidence: item.confidence, projectId: item.draft.projectId, routing: item.draft.routing },
       });
     }
-    return { state: record.state, items, dropped: checked.dropped, moreFound: record.moreFound };
+    return { state: record.state, items, dropped: checked.dropped, moreFound: record.moreFound, answer };
   });
 }
 

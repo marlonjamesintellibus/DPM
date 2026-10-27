@@ -78,6 +78,7 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
         usage: extraction.usage,
         malformed: extraction.malformed,
         attempt: readAttempt,
+        question: extraction.question ?? null,
       });
       return { outcome: "proposed", ...proposed, model: extraction.model };
     }

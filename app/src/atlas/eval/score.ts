@@ -2,6 +2,7 @@
 import { runChecks } from "../../domain/atlas-checks/checks";
 import type { CheckContext, RawProposal } from "../../domain/atlas-checks/types";
 import type { ExtractedItemDraft } from "../../domain/shared";
+import { checkQuestion, type RawQuestion } from "../../domain/question";
 import type { EvalCase } from "./cases";
 
 export function itemKey(i: ExtractedItemDraft): string {
@@ -26,9 +27,11 @@ export type CaseScore = {
   /** Items the checks held back for a project choice (E71); counted, not failed. */
   chooseProject: number;
   keys: string[];
+  /** Section 15: "topic@project" as asked after the checks, or null. */
+  asked: string | null;
 };
 
-export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: CheckContext): CaseScore {
+export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: CheckContext, question: RawQuestion | null = null): CaseScore {
   const items = runChecks(proposals, { ...ctx, text: c.text }).items;
   const keys = items.map(itemKey);
   const used = new Set<number>();
@@ -43,15 +46,24 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   const words = items.flatMap((i) => [i.braid?.title ?? "", i.target?.note ?? "", i.rationale]).join(" \n ").toLowerCase();
   for (const w of c.forbidWords ?? []) if (words.includes(w.toLowerCase())) forbidden.push(`says "${w}"`);
   const extra = keys.filter((k, i) => !used.has(i) && !(c.allow ?? []).some((p) => matches(p, k)) && !forbidden.includes(k));
+  // Section 15: a case without ask must ask nothing; one with ask must ask that, about that project
+  const q = checkQuestion(question, { ...ctx, text: c.text });
+  const asked = q ? `${q.topic}@${q.projectId ?? "none"}` : null;
+  if (!c.ask && q) forbidden.push(`asks ${asked}`);
+  if (c.ask) {
+    const topics = Array.isArray(c.ask.topic) ? c.ask.topic : [c.ask.topic];
+    if (!q || !topics.includes(q.topic) || q.projectId !== c.ask.projectId) missing.push(`ask ${topics.join("|")}@${c.ask.projectId ?? "none"}`);
+  }
   return {
     id: c.id,
     pass: missing.length === 0 && forbidden.length === 0,
-    expected: c.expect.length,
-    hit: c.expect.length - missing.length,
+    expected: c.expect.length + (c.ask ? 1 : 0),
+    hit: c.expect.length + (c.ask ? 1 : 0) - missing.length,
     missing,
     extra,
     forbidden,
     chooseProject: items.filter((i) => i.routing === "choose_project").length,
     keys,
+    asked,
   };
 }

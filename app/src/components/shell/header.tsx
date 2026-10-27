@@ -1,3 +1,4 @@
+import { AskAtlasLink } from "./ask-atlas";
 import { Icon } from "./icon";
 
 export type HeaderProps = {
@@ -37,13 +38,10 @@ export function Header({ breadcrumb, asOf, roleLabel, roleMenu }: HeaderProps) {
           <Icon name="chevron-down-sm" />
         </button>
       )}
-      <button
-        type="button"
-        className="flex items-center gap-1.5 rounded-control bg-inverse px-2.5 py-[5px]"
-      >
+      <AskAtlasLink className="flex items-center gap-1.5 rounded-control bg-inverse px-2.5 py-[5px]">
         <Icon name="sparkles-inverse" />
         <span className="type-label text-on-inverse">Ask Atlas</span>
-      </button>
+      </AskAtlasLink>
     </header>
   );
 }

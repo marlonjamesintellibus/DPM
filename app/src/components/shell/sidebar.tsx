@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AccountMenu } from "./account-menu";
+import { AskAtlasLink, AskAtlasShortcut } from "./ask-atlas";
 import { Icon, type IconName } from "./icon";
 
 export type NavItem = {
@@ -42,16 +43,14 @@ export function Sidebar({
         <Icon name="chevron-down" />
       </button>
 
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 rounded-control border border-line bg-panel px-2 py-[7px] text-left"
-      >
+      <AskAtlasLink className="flex w-full items-center gap-2 rounded-control border border-line bg-panel px-2 py-[7px] text-left hover:bg-hover">
         <Icon name="sparkles" />
         <span className="flex-1 type-body text-fg-2">Ask Atlas</span>
         <kbd className="rounded-sm border border-line-strong bg-panel px-1.5 py-px font-sans type-micro text-fg-2">
           ⌘K
         </kbd>
-      </button>
+      </AskAtlasLink>
+      <AskAtlasShortcut />
 
       <nav aria-label="Main" className="flex w-full flex-col gap-px">
         {nav.map((item) => (

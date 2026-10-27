@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { Sidebar, type SidebarProps } from "./sidebar";
+
+// Ask Atlas uses the router; these tests render the sidebar on its own
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/" }));
 
 // Kemar's sidebar as L16 draws it
 const kemarSidebar: Omit<SidebarProps, "activeHref"> = {

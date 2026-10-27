@@ -15,6 +15,7 @@ export const CAPTURE_STATES = [
   "failed",
   "proposed",
   "nothing_to_update",
+  "answered", // section 15: it only asked something, and the answer is kept with it
   "reviewing",
   "saving",
   "saved",
@@ -24,7 +25,7 @@ export const CAPTURE_STATES = [
 export type CaptureState = (typeof CAPTURE_STATES)[number];
 
 /** Nothing about a capture in these states changes again (ExpiryIsFinal, and its siblings). */
-export const FINAL_CAPTURE_STATES: readonly CaptureState[] = ["failed", "nothing_to_update", "saved", "rejected", "expired"];
+export const FINAL_CAPTURE_STATES: readonly CaptureState[] = ["failed", "nothing_to_update", "answered", "saved", "rejected", "expired"];
 /** Waiting on the author: the review timers run here. */
 const WAITING = ["proposed", "reviewing"] as const;
 
@@ -52,7 +53,7 @@ export type CaptureEvent =
   | { type: "READ_FAILED"; why: "model_error" | "timeout" | "bad_output" } // E18, E19
   | { type: "RETRY" } // the retry timer fired
   | { type: "STALE" } // D19: no answer for config.staleReadMinutes while transcribing or reading
-  | { type: "PROPOSALS_READY"; count: number } // count passed the server checks
+  | { type: "PROPOSALS_READY"; count: number; asked?: boolean } // count passed the server checks; asked: a question passed them too
   | { type: "OPEN_REVIEW" }
   | { type: "SAVE" }
   | { type: "SAVE_DONE" }
@@ -134,6 +135,8 @@ export const captureMachine = defineMachine<CaptureState, CaptureEvent, Ctx>({
       to: "proposed",
       guard: (_, { count }) => (count > 0 ? null : "nothing to propose"),
     },
+    // Section 15, QA12: nothing to propose, but it asked something; the answer is kept with it
+    { from: ["reading"], on: "PROPOSALS_READY", to: "answered", guard: (_, { asked }) => (asked ? null : "nothing was asked") },
     { from: ["reading"], on: "PROPOSALS_READY", to: "nothing_to_update" }, // E4
     {
       from: ["proposed"],

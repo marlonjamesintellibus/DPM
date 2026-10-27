@@ -28,7 +28,7 @@ const VIEWS: ViewItem[] = [
 async function Today({ searchParams }: { searchParams: PageProps<"/">["searchParams"] }) {
   // Per request: the viewer, the database and the clock are all read at request time
   await connection();
-  const { item, view, capture } = await searchParams;
+  const { item, view, capture, ask } = await searchParams;
   const viewer = await currentViewer();
   const reader = await projectReader(await getDb(), viewer.id);
   const leads = reader.world.memberships.some((m) => m.personId === viewer.id && m.state === "member" && (m.role === "pm" || m.role === "lead"));
@@ -38,7 +38,7 @@ async function Today({ searchParams }: { searchParams: PageProps<"/">["searchPar
   return (
     <ViewerShell breadcrumb={["Intellibus", "Today"]} activeHref="/">
       <PageHead title="Today">
-        <span className="type-body text-fg-2">{asInbox ? "What needs you, worst first" : "Tell Atlas what you did"}</span>
+        <span className="type-body text-fg-2">{asInbox ? "What needs you, worst first" : "Tell Atlas what you did, or ask it"}</span>
         <div className="flex-1" />
         <ViewSwitch items={VIEWS} active={asInbox ? "inbox" : "chat"} />
       </PageHead>
@@ -47,7 +47,7 @@ async function Today({ searchParams }: { searchParams: PageProps<"/">["searchPar
           <InboxToday viewerId={viewer.id} selectedId={typeof item === "string" ? item : undefined} at={at} />
         </div>
       ) : (
-        <ChatToday viewerId={viewer.id} firstName={viewer.name.split(" ")[0]} captureId={typeof capture === "string" ? capture : undefined} />
+        <ChatToday viewerId={viewer.id} firstName={viewer.name.split(" ")[0]} captureId={typeof capture === "string" ? capture : undefined} ask={ask === "1"} />
       )}
     </ViewerShell>
   );

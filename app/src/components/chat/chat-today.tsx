@@ -1,18 +1,20 @@
 // Today as a chat (Figma L1 for the web layout, L18e and L18f for the capture): the viewer's
 // updates as conversations, the open one with what Atlas made of it per project and the way into
-// the review, what Atlas told them since (D15), and the box for the next update. Only the viewer's
-// own captures are read (M1).
+// the review, DPM's answer when it asked something (section 15), what Atlas told them since (D15),
+// and the box for the next message. Only the viewer's own captures are read (M1).
 import Link from "next/link";
 import { Icon } from "@/components/shell/icon";
 import { startReview } from "@/app/actions";
 import { getDb } from "@/db/client";
+import type { Answer } from "@/domain/question";
 import { getChatSummary, getConversations, type ChatCapture } from "@/queries/chat";
+import { clockTime } from "@/queries/project";
 import { Composer } from "./composer";
 import { RefreshWhile } from "./refresh-while";
 
 const READING = new Set(["received", "transcribing", "transcribe_wait", "reading", "retry_wait"]);
 
-export async function ChatToday({ viewerId, firstName, captureId }: { viewerId: string; firstName: string; captureId?: string }) {
+export async function ChatToday({ viewerId, firstName, captureId, ask = false }: { viewerId: string; firstName: string; captureId?: string; ask?: boolean }) {
   const db = await getDb();
   const [summary, conversations] = await Promise.all([getChatSummary(db, viewerId, captureId), getConversations(db, viewerId)]);
   const open = summary.latest;
@@ -38,7 +40,12 @@ export async function ChatToday({ viewerId, firstName, captureId }: { viewerId: 
 
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex flex-1 flex-col gap-[18px] overflow-auto px-20 pt-6 pb-4">
-          {!open && <AtlasLine>Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check.</AtlasLine>}
+          {!open && (
+            <AtlasLine>
+              Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what needs
+              you, what is blocked, or how a project stands.
+            </AtlasLine>
+          )}
           {open && <Thread capture={open} />}
           {[...summary.notices].reverse().map((n) => (
             <AtlasLine key={n.id}>
@@ -49,7 +56,7 @@ export async function ChatToday({ viewerId, firstName, captureId }: { viewerId: 
           ))}
         </div>
         <div className="flex flex-col gap-2 px-20 pt-2 pb-5">
-          <Composer />
+          <Composer focus={ask} />
         </div>
       </div>
     </div>
@@ -93,6 +100,29 @@ function YourMessage({ capture }: { capture: ChatCapture }) {
   );
 }
 
+/** Section 15: DPM's answer from the asker's own data, with the time it was given (QA10). */
+function AnswerLine({ answer }: { answer: Answer }) {
+  return (
+    <AtlasLine>
+      <span>
+        {answer.text} <span className="type-micro text-fg-3">· as of {clockTime(new Date(answer.asOf))}</span>
+      </span>
+      {answer.lines.length > 0 && (
+        <ul className="overflow-hidden rounded-panel border border-line">
+          {answer.lines.map((l) => (
+            <li key={`${l.href}|${l.label}`} className="border-b border-line last:border-b-0">
+              <Link href={l.href} className="flex items-center gap-2 px-3 py-2.5 hover:bg-hover">
+                <span className="min-w-0 flex-1 type-body text-fg-2">{l.label}</span>
+                <Icon name="chevron-right-12" />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </AtlasLine>
+  );
+}
+
 function Thread({ capture }: { capture: ChatCapture }) {
   const waiting = capture.state === "proposed" || capture.state === "reviewing";
   const reading = READING.has(capture.state);
@@ -102,6 +132,14 @@ function Thread({ capture }: { capture: ChatCapture }) {
     ...(capture.notFiled ? [`${capture.notFiled} not filed in any project`] : []),
   ];
   const line = waiting && capture.needsOk ? capture.line.replace(/;/, ", and") : capture.line;
+  if (capture.state === "answered" && capture.answer) {
+    return (
+      <>
+        <YourMessage capture={capture} />
+        <AnswerLine answer={capture.answer} />
+      </>
+    );
+  }
   return (
     <>
       <YourMessage capture={capture} />
@@ -142,6 +180,7 @@ function Thread({ capture }: { capture: ChatCapture }) {
           </Link>
         )}
       </AtlasLine>
+      {capture.answer && !reading && <AnswerLine answer={capture.answer} />}
     </>
   );
 }

@@ -1,11 +1,13 @@
 "use client";
-// Tell Atlas what you did. The message is stored as received, Atlas reads it after the reply, and
-// the chat shows "Reading your update…" until the proposals are ready (5.1).
+// Tell Atlas what you did, or ask it something. The message is stored as received, Atlas reads it
+// after the reply, and the chat shows "Reading your update…" until the proposals or the answer are
+// ready (5.1, section 15). Ask Atlas and ⌘K open the chat with this box ready to type.
 import { useActionState, useRef } from "react";
 import { sendUpdate, type ActionResult } from "@/app/actions";
+import { ASK_ATLAS_INPUT } from "@/components/shell/ask-atlas";
 import { ActionNote } from "@/components/ui/controls";
 
-export function Composer() {
+export function Composer({ focus = false }: { focus?: boolean }) {
   const [state, action, pending] = useActionState<ActionResult | null, FormData>(async (prev, form) => {
     const r = await sendUpdate(prev, form);
     if (r.ok) formRef.current?.reset();
@@ -18,8 +20,10 @@ export function Composer() {
         <textarea
           name="text"
           rows={1}
-          aria-label="Your update"
-          placeholder="Tell Atlas what you did, or what changed…"
+          id={ASK_ATLAS_INPUT}
+          autoFocus={focus}
+          aria-label="Message to Atlas"
+          placeholder="Tell Atlas what you did, or ask what needs you…"
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();

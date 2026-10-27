@@ -1,6 +1,7 @@
 // Atlas reads one capture and proposes items (build plan 5.1 step 3, phase 4). An extractor only
 // proposes: what it returns is untrusted and goes through the 14 server checks before anyone sees it.
 import type { CheckContext, RawProposal } from "../domain/atlas-checks/types";
+import type { RawQuestion } from "../domain/question";
 
 /** Why a read failed, as the capture machine records it (M2 READ_FAILED, E18, E19). */
 export type ReadFailure = "model_error" | "timeout" | "bad_output";
@@ -22,6 +23,8 @@ export type Malformed = { index: number; issues: string };
 
 export type Extraction = {
   proposals: RawProposal[];
+  /** Section 15: what the message asks, if anything. Untrusted, like the proposals (checkQuestion). */
+  question?: RawQuestion | null;
   malformed: Malformed[];
   /** The model that answered, as the provider names it ("anthropic/claude-sonnet-5.5", "fixture"). */
   model: string;

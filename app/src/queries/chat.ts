@@ -5,6 +5,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
 import * as t from "../db/schema";
+import type { Answer } from "../domain/question";
 import type { CaptureState } from "../domain/machines/capture";
 import { clockTime } from "./project";
 import { countItems, countsLine } from "./review";
@@ -32,6 +33,8 @@ export type ChatCapture = {
   needsProject: number;
   /** "Got it. 9 updates for 2 projects; 4 need your OK." */
   line: string;
+  /** Section 15: DPM's answer, when the message asked something, as given then. */
+  answer: Answer | null;
 };
 
 /** D15: what Atlas told the viewer about their reports ("Alicia approved your risk: ..."), newest first. */
@@ -61,6 +64,8 @@ function chatLine(state: CaptureState, failedStep: "transcribe" | "read" | null,
         : "Atlas could not read this. Try again or type the update.";
     case "nothing_to_update":
       return "Got it. Nothing in this one changes a project.";
+    case "answered":
+      return ""; // the answer is the reply
     case "saved":
       return `Saved. ${counts}`;
     default:
@@ -124,6 +129,7 @@ export async function getChatSummary(conn: Conn, viewerId: string, captureId?: s
       needsOk: counts.needsOk,
       needsProject: counts.needsProject,
       line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
+      answer: capture.answer ?? null,
     },
   };
 }

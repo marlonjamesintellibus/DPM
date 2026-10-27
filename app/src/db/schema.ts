@@ -25,6 +25,7 @@ import type { ItemState, WithdrawReason } from "../domain/machines/extracted-ite
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { KindRequestState } from "../domain/machines/kind-request";
+import type { Answer, AskedQuestion } from "../domain/question";
 import type { LeaveState } from "../domain/machines/leave";
 import type { MembershipState } from "../domain/machines/membership";
 import type { OverrideState } from "../domain/machines/set-status";
@@ -383,6 +384,9 @@ export const captures = pgTable("captures", {
   reminded: boolean("reminded").notNull().default(false),
   transcriptConfidence: text("transcript_confidence").$type<Confidence>(),
   failedStep: text("failed_step").$type<"transcribe" | "read">(),
+  /** Section 15: what it asked, after the checks, and DPM's answer as given then. */
+  question: jsonb("question").$type<AskedQuestion>(),
+  answer: jsonb("answer").$type<Answer>(),
   version: version(),
   createdAt: created(),
   updatedAt: updated(),

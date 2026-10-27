@@ -40,6 +40,18 @@ test("1, 2. Kemar's voice note: Atlas proposes 9 updates for 2 projects, 4 need 
   await expect(page.getByRole("button", { name: "Save 9 updates" })).toBeDisabled();
 });
 
+test("Section 15. Kemar asks Atlas what needs him: the answer links his waiting review", async () => {
+  await viewAs("kemar", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await expect(box).toBeFocused();
+  await box.fill("What needs me to review it today?");
+  await box.press("Enter");
+  await expect(page.getByText("1 thing needs you:")).toBeVisible();
+  await expect(page.getByText("Got it. Nothing in this one changes a project.")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Your update from 8:58am is waiting for review: 4 need your OK" })).toHaveAttribute("href", "/review/cap-kemar-0858");
+});
+
 test("3. Alicia set Forager 2.0 Off track at 9:02 with no reason", async () => {
   await viewAs("alicia");
   await expect(page.getByRole("link", { name: /Forager 2.0 is set Off track, but the plan says/ }).first()).toBeVisible();

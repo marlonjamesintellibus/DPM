@@ -111,7 +111,16 @@ describe("reading the answer", () => {
   });
 
   it("an empty list is a real answer: nothing to update (E4)", () => {
-    expect(parseItems('{"items":[]}')).toEqual({ proposals: [], malformed: [] });
+    expect(parseItems('{"items":[]}')).toEqual({ proposals: [], malformed: [], question: null });
+  });
+
+  it("section 15: reads what the message asks; a question without the right shape is set aside (QA7)", () => {
+    const asked = { asked: "What needs me today?", topic: "needs_me", projectId: null };
+    expect(parseItems(JSON.stringify({ items: [], question: asked }))).toEqual({ proposals: [], malformed: [], question: asked });
+    const bad = parseItems(JSON.stringify({ items: [], question: { asked: 3, topic: "gossip" } }));
+    expect(bad.question).toBeNull();
+    expect(bad.malformed).toHaveLength(1);
+    expect(bad.malformed[0].issues).toMatch(/^question:/);
   });
 
   it.each([
