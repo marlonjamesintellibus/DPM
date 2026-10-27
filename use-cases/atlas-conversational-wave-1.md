@@ -41,7 +41,7 @@
 | W-D3 | LF8: who sees counts from fewer than 5 people? | DPM maintainers see every count and rate (never words or names). Executives get the strict view: a whole row is hidden when fewer than 5 people are behind it | `usageNumbers` and `pnpm atlas:usage`: suppression only for the executive view (`--org`) |
 | W-D4 | Should JA7 also apply to people's names in routing? | Yes, the W-D1 rule: a person's first name ties an item to a project when it is capitalised, or in any case when it is not a common word. Full names in any case | Check 14's tied_person basis uses the same matcher as `namesPerson` |
 
-W2 is closed by W-D1 and W1 by W-D2.
+W2 is closed by W-D1 and W1 by W-D2. W-D1, W-D3 and W-D4 are built: one rule for names in `app/src/domain/names.ts`, used by mentions and by check 14's tied_person basis, and `usageNumbers` takes a view (`maintainer` or `executive`); `pnpm atlas:usage` is the maintainer view, and `--org` the executive one.
 
 ## 3. Corrections for the plan and the machines doc
 

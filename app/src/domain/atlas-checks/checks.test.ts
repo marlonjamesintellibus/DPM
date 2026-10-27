@@ -431,6 +431,18 @@ describe("check 14: the routing reason is real", () => {
     expect(item).toMatchObject({ routing: "routed", projectId: "forager" });
   });
 
+  it("W-D4: a lowercase name still ties an item to its project; a name that is also a word needs its capital", () => {
+    const kyle = one(braid({ braidKind: "blocker", quote: "still waiting on kyle for the store feed", routingReason: { basis: "tied_person", evidence: "kyle", label: "Kyle is the contact on #151" } }), KEMAR_CONTEXT);
+    expect(kyle.item).toMatchObject({ routing: "routed", projectId: "forager" });
+    // A contact named Will on GQ: "mi will send it" is the word, so Atlas cannot file it by him
+    const will = { personId: "will", name: "Will Grant", role: null, tie: "contact at the Academy" };
+    const projects = KEMAR_CONTEXT.projects.map((p) => (p.id === "gq" ? { ...p, people: [...p.people, will] } : p));
+    const said = (quote: string) =>
+      one(braid({ braidKind: "risk", projectId: "gq", quote, routingReason: { basis: "tied_person", evidence: "Will", label: "Will is the contact at the Academy" } }), ctxWith(`${quote}.`, { projects })).item;
+    expect(said("mi will send di slides late")?.routing).toBe("choose_project");
+    expect(said("Will may send the slides late")).toMatchObject({ routing: "routed", projectId: "gq" });
+  });
+
   it("E82: two projects with the same issue title; the number wins, the title alone does not", () => {
     const twin = { type: "work_item" as const, id: "wi-301", number: "#301", title: "Google Trends connector", ownerId: "kemar", values: { state: "in_progress" } };
     const projects = KEMAR_CONTEXT.projects.map((p) => (p.id === "insights" ? { ...p, records: [...p.records, twin] } : p));

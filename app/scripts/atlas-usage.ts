@@ -3,12 +3,13 @@
 // whoever runs this is the maintainer. Stop `pnpm dev` first when the database is the local PGlite.
 //
 //   pnpm atlas:usage [--weeks 4]                     each org's numbers per week and topic, then the candidates
-//   pnpm atlas:usage --org intellibus                one org's counts only, never words (LF7)
+//   pnpm atlas:usage --org intellibus                one org's counts as its executives see them, never words (LF7)
 //   pnpm atlas:usage --accept <id> --as <name> --case "<words with seed names and ids>" --expected "<what Atlas should do>"
 //   pnpm atlas:usage --dismiss <id> --as <name> [--note "<why>"]
 //
-// A number from fewer than 5 people, or one the numbers beside it would give by subtraction, shows as
-// "-" (LF8, CD28). There is no total across orgs, so one org's numbers cannot be taken from it (LF7).
+// A maintainer sees every count (W-D3). The executive view (--org) shows "-" for a number from fewer than
+// 5 people, or one the numbers beside it would give by subtraction (LF8, CD28). There is no total across
+// orgs, so one org's numbers cannot be taken from it (LF7).
 import { acceptCandidate, dismissCandidate } from "../src/commands/learning";
 import { CommandRefused } from "../src/commands/core";
 import { openPglite, openPostgres, pgliteDir } from "../src/db/client";
@@ -63,8 +64,10 @@ async function main() {
     const orgs = (await usageOrgs(opened.db)).filter((o) => orgId === null || o.id === orgId);
     if (!orgs.length) console.log(`No org ${orgId}.`);
     for (const org of orgs) {
-      const numbers = await usageNumbers(opened.db, { now: ctx.now, weeks: Number.isInteger(weeks) && weeks > 0 ? weeks : 4, orgId: org.id });
-      console.log(`\nAtlas usage for ${org.name}, by week (a number from fewer than ${config.metricMinimumCount} people shows as "-")`);
+      const view = orgId === null ? "maintainer" : "executive";
+      const numbers = await usageNumbers(opened.db, { now: ctx.now, weeks: Number.isInteger(weeks) && weeks > 0 ? weeks : 4, orgId: org.id, view });
+      const hiding = view === "executive" ? ` (a number from fewer than ${config.metricMinimumCount} people shows as "-")` : " (every count, for DPM maintainers)";
+      console.log(`\nAtlas usage for ${org.name}, by week${hiding}`);
       numbers.forEach(printWeek);
     }
     // LF7: an org's executives see its counts, never anyone's words

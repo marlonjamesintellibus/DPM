@@ -299,9 +299,19 @@ describe("CQ9, CQ10: whose name the words say (decision CD29)", () => {
     expect(namesPerson("waiting on kemar brown for the feed", "Kemar Brown", true)).toBe(true);
     expect(namesPerson("Kemar's runbook is done", "Kemar Brown", false)).toBe(true);
   });
-  it("a first name inside another word, or not written as a name, does not count", () => {
+  it("a first name inside another word does not count", () => {
     expect(namesPerson("Kemarbrook is the vendor", "Kemar Brown", false)).toBe(false);
-    expect(namesPerson("the andre feed", "Andre Mitchell", false)).toBe(false);
+    expect(namesPerson("#kemar is the channel", "Kemar Brown", false)).toBe(false);
+  });
+  it("W-D1: a first name counts in lower case, unless it is also an everyday word", () => {
+    expect(namesPerson("waiting on kemar for the slides", "Kemar Brown", false)).toBe(true);
+    expect(namesPerson("the andre feed", "Andre Mitchell", false)).toBe(true);
+    expect(namesPerson("waiting on kemar for the slides", "Kemar Brown", true)).toBe(false); // CQ9 still holds
+    expect(namesPerson("mark #145 done", "Mark Reid", false)).toBe(false);
+    expect(namesPerson("ask Mark about #145", "Mark Reid", false)).toBe(true);
+    expect(namesPerson("mark reid has the slides", "Mark Reid", false)).toBe(true); // a full name, in any case
+    expect(namesPerson("still waiting on kyle", "Kyle", false)).toBe(true); // one name: that name alone
+    expect(namesPerson("we may slip", "May", false)).toBe(false);
   });
 });
 

@@ -8,7 +8,7 @@ import * as t from "../db/schema";
 import { DAY_MS } from "../domain/dates";
 import type { RawQuestion } from "../domain/question";
 import { getThread } from "../queries/chat";
-import { evalCandidateList, topicsShown, usageNumbers, weekOf } from "../queries/usage";
+import { evalCandidateList, topicsShown, usageNumbers, weekOf, type UsageView } from "../queries/usage";
 import { at, seededDb } from "../test/seeded-db";
 import { readCapture } from "./atlas";
 import { createCapture, openReview, proposeItems, routeExtraction } from "./capture";
@@ -315,7 +315,7 @@ describe("with Help improve Atlas on", () => {
 });
 
 describe("usage numbers (LF7, LF8)", () => {
-  const intellibus = (weeks = 1) => usageNumbers(db, { now: at(60), weeks, orgId: "intellibus" });
+  const intellibus = (weeks = 1, view: UsageView = "executive") => usageNumbers(db, { now: at(60), weeks, orgId: "intellibus", view });
 
   /** People on Forager's group, so they are Intellibus people (LF7). */
   async function addPeople(count: number) {
@@ -343,6 +343,18 @@ describe("usage numbers (LF7, LF8)", () => {
     expect(week.topics.find((t) => t.topic === "due")!.numbers).toEqual({ shown: true, people: 5, asked: 5, thumbsUp: 4, thumbsDown: 1 });
     expect(week.topics.find((t) => t.topic === "other")!.numbers).toEqual({ shown: true, people: 5, asked: 5, thumbsUp: 0, thumbsDown: 0 });
     expect(week.rest).toEqual({ shown: false }); // nothing left out
+  });
+
+  it("W-D3: a maintainer sees every count, however few people are behind it", async () => {
+    await addPeople(1);
+    await giveFeedback(as("kemar"), await ask("kemar", "What's due?", "due"), { rating: "down" });
+    await ask("p1", "Can you book my flight?", "other");
+    const [executive] = await intellibus();
+    expect(executive.answers).toEqual({ shown: false });
+    const [week] = await intellibus(1, "maintainer");
+    expect(week.answers).toEqual({ shown: true, people: 2, asked: 2, answerRate: 0.5, cantAnswerRate: 0.5, unclearRate: 0, thumbsUp: 0, thumbsDown: 1 });
+    expect(week.topics.find((t) => t.topic === "due")!.numbers).toEqual({ shown: true, people: 1, asked: 1, thumbsUp: 0, thumbsDown: 1 });
+    expect(week.rest).toEqual({ shown: false }); // every topic asked is shown on its own
   });
 
   it("LF8: one person's question cannot be worked out by subtraction from the numbers shown with it", async () => {

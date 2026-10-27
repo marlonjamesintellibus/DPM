@@ -4,6 +4,7 @@
 // nothing here asks a model, and nothing the model says about current values or states is used.
 import { config } from "../config";
 import { fitLeave, type LeaveFit } from "../machines/leave";
+import { namesPerson } from "../names";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind } from "../rights";
 import { CONFIDENCES, lowerTo, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type RoutingState, type SourceSpan } from "../shared";
 
@@ -581,7 +582,8 @@ function reasonHolds(w: Work, s: Scope): boolean {
     case "tied_person": {
       const isNamed = (n: string) => norm(n) === norm(reason.evidence) || norm(n.split(" ")[0]) === norm(reason.evidence);
       const person = project.people.find((x) => isNamed(x.name));
-      if (!person || !mentions(near, reason.evidence)) return false;
+      // W-D4: the name must be said as a name, by the rule mentions use ("mi will send it" ties nobody named Will)
+      if (!person || !mentions(near, reason.evidence) || !namesPerson(near, person.name, false)) return false;
       // A person tied to two of the author's projects does not decide between them
       return !others.some((p) => p.people.some((x) => x.personId === person.personId));
     }

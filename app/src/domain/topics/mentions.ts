@@ -11,15 +11,5 @@ export const mentions = {
   suggest: ["Any updates?", "What needs me today?"],
 } as const satisfies Topic;
 
-const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/**
- * CQ9 (decision CD29): whether these words name the person. Their full name always counts, in any case;
- * their first name, written as a name (capitalised), counts only where no other member of that project
- * shares it.
- */
-export function namesPerson(quote: string, name: string, firstNameShared: boolean): boolean {
-  if (new RegExp(`\\b${escaped(name)}\\b`, "i").test(quote)) return true;
-  const first = name.split(" ")[0];
-  return !firstNameShared && first !== name && new RegExp(`\\b${escaped(first)}\\b`).test(quote);
-}
+// The rule for names lives in domain/names.ts, shared with routing (W-D4)
+export { namesPerson } from "../names";

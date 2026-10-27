@@ -1,12 +1,12 @@
 // Phase S numbers for the team building DPM (conversational plan, section 21): per week and per topic,
 // how often Atlas answered, could not answer, got a thumbs up or down, and how often an update was
 // corrected or moved in review. Counts come from the answers, feedback and reviews themselves, so they
-// hold for everyone, "Help improve Atlas" or not, and carry no one's words (LF1). A number from fewer
-// than config.metricMinimumCount people is not shown at all, and neither is one that the numbers shown
-// beside it would give by subtraction (LF8, CD28). Numbers are always one org's, of its own people (LF7):
-// there is no total across orgs to subtract an org's numbers from. DPM maintainers read these and the
-// candidate list; an org's executives would read their own org's counts only (CD21). There is no
-// maintainer role or screen yet: `pnpm atlas:usage` prints them.
+// hold for everyone, "Help improve Atlas" or not, and carry no one's words (LF1). Numbers are always one
+// org's, of its own people (LF7): there is no total across orgs to subtract an org's numbers from. DPM
+// maintainers read every count, since they decide what to build (W-D3); an org's executives read their own
+// org's counts only (CD21), where a number from fewer than config.metricMinimumCount people is not shown
+// at all, and neither is one that the numbers shown beside it would give by subtraction (LF8, CD28). There
+// is no maintainer role or screen yet: `pnpm atlas:usage` prints them.
 import { and, eq, gte, inArray, isNotNull } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import * as t from "../db/schema";
@@ -24,8 +24,14 @@ export function weekOf(at: Date): IsoDate {
 /** LF8: a number with the count of people behind it, or nothing when they are too few to hide among. */
 export type Shown<T> = ({ shown: true; people: number } & T) | { shown: false };
 
-function shown<T extends object>(people: ReadonlySet<string>, numbers: T): Shown<T> {
-  return people.size >= config.metricMinimumCount ? { shown: true, people: people.size, ...numbers } : { shown: false };
+/** W-D3: who reads the numbers. A maintainer sees every count; an executive only counts from enough people (LF8). */
+export type UsageView = "maintainer" | "executive";
+
+/** The fewest people a number is shown for: any for a maintainer, config.metricMinimumCount for an executive. */
+const minimumFor = (view: UsageView) => (view === "maintainer" ? 1 : config.metricMinimumCount);
+
+function shown<T extends object>(people: ReadonlySet<string>, numbers: T, min: number): Shown<T> {
+  return people.size >= min ? { shown: true, people: people.size, ...numbers } : { shown: false };
 }
 
 const rate = (n: number, of: number) => (of ? n / of : 0);
@@ -86,8 +92,7 @@ async function orgPeople(conn: Conn, orgId: string): Promise<Set<string>> {
  * out come from fewer people together too, the smallest one shown joins them, so the week's total less the
  * topics shown never gives a number from fewer people. Topics nobody asked about are left out of both.
  */
-export function topicsShown(askersOf: ReadonlyMap<string, ReadonlySet<string>>): Set<string> {
-  const min = config.metricMinimumCount;
+export function topicsShown(askersOf: ReadonlyMap<string, ReadonlySet<string>>, min: number = config.metricMinimumCount): Set<string> {
   const asked = [...askersOf].filter(([, people]) => people.size > 0);
   const alone = new Set(asked.filter(([, people]) => people.size >= min).map(([topic]) => topic));
   const restPeople = () => new Set(asked.filter(([topic]) => !alone.has(topic)).flatMap(([, people]) => [...people])).size;
@@ -101,7 +106,11 @@ export function topicsShown(askersOf: ReadonlyMap<string, ReadonlySet<string>>):
  * One org's last `weeks` weeks, oldest first, the current one last. Feedback counts in the week of the
  * answer it is about, however late it was given (LF6); a move counts in the week of the update it moved.
  */
-export async function usageNumbers(conn: Conn, { now, weeks = 4, orgId }: { now: Date; weeks?: number; orgId: string }): Promise<UsageWeek[]> {
+export async function usageNumbers(
+  conn: Conn,
+  { now, weeks = 4, orgId, view }: { now: Date; weeks?: number; orgId: string; view: UsageView },
+): Promise<UsageWeek[]> {
+  const min = minimumFor(view);
   const first = addDays(weekOf(now), -7 * (weeks - 1));
   const since = new Date(now.getTime() - (weeks + 1) * 7 * DAY_MS);
   const within = await orgPeople(conn, orgId);
@@ -134,7 +143,7 @@ export async function usageNumbers(conn: Conn, { now, weeks = 4, orgId }: { now:
     const numbersOf = (of: Asked): TopicNumbers => ({ asked: of.length, thumbsUp: thumbs(of, "up"), thumbsDown: thumbs(of, "down") });
     const on = (topic: string) => asked.filter((c) => c.question!.topic === topic);
     const askersOf = new Map<string, Set<string>>(QUESTION_TOPICS.map((topic) => [topic, askers(on(topic))]));
-    const alone = topicsShown(askersOf);
+    const alone = topicsShown(askersOf, min);
     // LF8: a rate gives its topic's count, so it is shown only with that topic (or when nobody asked it)
     const known = (topic: string) => alone.has(topic) || askersOf.get(topic)!.size === 0;
     const n = asked.length;
@@ -147,10 +156,10 @@ export async function usageNumbers(conn: Conn, { now, weeks = 4, orgId }: { now:
       unclearRate: known("unclear") ? rate(unclear, n) : null,
       thumbsUp: thumbs(asked, "up"),
       thumbsDown: thumbs(asked, "down"),
-    });
-    const topics = QUESTION_TOPICS.map((topic) => ({ topic, numbers: alone.has(topic) ? shown(askersOf.get(topic)!, numbersOf(on(topic))) : ({ shown: false } as const) }));
+    }, min);
+    const topics = QUESTION_TOPICS.map((topic) => ({ topic, numbers: alone.has(topic) ? shown(askersOf.get(topic)!, numbersOf(on(topic)), min) : ({ shown: false } as const) }));
     const restOf = asked.filter((c) => !alone.has(c.question!.topic));
-    const rest = shown(askers(restOf), numbersOf(restOf));
+    const rest = shown(askers(restOf), numbersOf(restOf), min);
     const sent = captures.filter((c) => weekOf(c.receivedAt) === week);
     const their = items.filter((i) => sent.some((c) => c.id === i.captureId));
     const updated = sent.filter((c) => their.some((i) => i.captureId === c.id));
@@ -159,7 +168,7 @@ export async function usageNumbers(conn: Conn, { now, weeks = 4, orgId }: { now:
       items: their.length,
       corrections: their.filter((i) => !!i.draft.replaces).length,
       moved: their.filter((i) => movedIds.has(i.id)).length,
-    });
+    }, min);
     out.push({ week, answers, topics, rest, updates });
   }
   return out;
