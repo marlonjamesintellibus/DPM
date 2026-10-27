@@ -149,6 +149,23 @@ describe("due: what's due, and the next milestone", () => {
     expect(dueWindow("What's due this week?", "2026-10-25")).toEqual({ from: "2026-10-25", to: "2026-10-25", label: "this week", late: true });
   });
 
+  it("phase R: the window as the team writes it too", () => {
+    expect(dueWindow("Wah due tideh?", "2026-10-23")).toMatchObject({ label: "today" });
+    expect(dueWindow("Anyting due tumaro?", "2026-10-23")).toMatchObject({ label: "tomorrow" });
+    expect(dueWindow("Wah due nex week?", "2026-10-23")).toMatchObject({ label: "next week" });
+    expect(dueWindow("Wah due dis week?", "2026-10-23")).toMatchObject({ label: "this week" });
+    expect(dueWords("and on GQ?", ["Wah due tumaro?"])).toBe("Wah due tumaro?");
+  });
+
+  it("CQ14 every spelling that sets a window is one a follow-up reads too", () => {
+    const spellings = ["today", "tiday", "tideh", "tomorrow", "tumaro", "tumoro", "tomorra", "this week", "dis week", "next week", "nex week"];
+    for (const w of spellings) expect(dueWords("and on GQ?", [`Wah due ${w}?`, "What's due next week?"]), w).toBe(`Wah due ${w}?`);
+  });
+
+  it("phase R: 'Wah due tumaro?' with no model is answered as 'Anything due tomorrow?' is, in standard English", async () => {
+    expect((await ask("kemar", "Wah due tumaro?")).answer.text).toBe("1 work item of yours is due tomorrow. The next milestone is Trend model, forecast Fri 23 Oct.");
+  });
+
   it("tomorrow and next week", async () => {
     expect((await ask("kemar", "Anything due tomorrow?")).answer.text).toBe("1 work item of yours is due tomorrow. The next milestone is Trend model, forecast Fri 23 Oct.");
     expect(titles((await ask("kemar", "What's due next week?", { when: at(31) })).answer)).toEqual(["#152 Store feed connector", "Trend model"]);
@@ -395,6 +412,26 @@ describe("small talk", () => {
     const wrong: Extractor = { name: "fake", extract: async () => ({ proposals: [done], question: hello, malformed: [], model: "fake", usage: null }) };
     const again = await ask("kemar", "Morning! Finished #145.", { when: at(32), extractor: wrong });
     expect(again.row).toMatchObject({ state: "proposed", question: null, answer: null });
+  });
+
+  it("JA5 'Wha gwaan?' with no model gets the hello; 'Tank yuh' gets 'Any time.'; both in standard English (CD20)", async () => {
+    const { row, answer } = await ask("kemar", "Wha gwaan?");
+    expect(row.state).toBe("answered");
+    expect(answer).toMatchObject({ topic: "small_talk", wording: "rules", text: expect.stringMatching(/^Hi Kemar\. Send me an update/) });
+    expect((await ask("kemar", "Tank yuh", { when: at(31) })).answer.text).toBe("Any time.");
+  });
+
+  it("JA6 'Weh mi fi do today?' with no model is answered from what needs him", async () => {
+    const { row, answer } = await ask("kemar", "Weh mi fi do today?");
+    expect(row.state).toBe("answered");
+    expect(answer.topic).toBe("needs_me");
+  });
+
+  it("JA1 to JA3 a Patois update with no model is not taken for a question: it waits for Atlas", async () => {
+    for (const [i, text] of ["Di access nuh come yet", "Mi done wid #208", "Him a go send it"].entries()) {
+      const { row } = await ask("kemar", text, { when: at(31 + i) });
+      expect(row).toMatchObject({ state: "failed", answer: null });
+    }
   });
 
   it("small talk is not worded: DPM's reply stands, and the model is not called", async () => {

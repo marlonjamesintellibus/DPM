@@ -166,6 +166,24 @@ describe("check 4: confidence floor, never raised", () => {
     expect(item).toMatchObject({ confidence: "medium", mark: "needs_ok" });
   });
 
+  // Phase R: the same guess said in Patois is held for the author's OK as it is in English
+  it.each(["I think #208 is done.", "Maybe #208 is done.", "Mi tink #208 done.", "Mi feel seh #208 done.", "Mussi #208 done.", "Mebbe #208 done."])(
+    "E12 a hedge lowers High to Medium in English and Patois: %s",
+    (text) => {
+      const { item } = one(update({ projectId: "insights", targetId: "wi-208", field: "state", newValue: "done", quote: text.slice(0, -1) }), ctxWith(text));
+      expect(item).toMatchObject({ confidence: "medium", mark: "needs_ok" });
+    },
+  );
+
+  it("JA2 'soon done' is not done: a done value from it is held for an OK; 'Mi done wid #208' keeps High", () => {
+    for (const text of ["#208 soon done.", "Mi almost done wid #208.", "Mi a go finish #208 likkle more."]) {
+      const { item } = one(update({ projectId: "insights", targetId: "wi-208", field: "state", newValue: "done", quote: text.slice(0, -1) }), ctxWith(text));
+      expect(item, text).toMatchObject({ confidence: "medium", mark: "needs_ok" });
+    }
+    const done = one(update({ projectId: "insights", targetId: "wi-208", field: "state", newValue: "done", quote: "Mi done wid #208" }), ctxWith("Mi done wid #208."));
+    expect(done.item).toMatchObject({ confidence: "high", mark: "pre_accepted" });
+  });
+
   it("never raises: Low stays Low, and an unknown level counts as Low", () => {
     const low = update({ targetId: "wi-145", field: "state", newValue: "done", quote: "the Google Trends connector is done too", confidence: "low" });
     expect(one(low, KEMAR_CONTEXT).item?.confidence).toBe("low");
@@ -393,6 +411,19 @@ describe("check 14: the routing reason is real", () => {
     const ctx = ctxWith("Alicia wants the deck redone.");
     const { item } = one(braid({ braidKind: "issue", quote: "Alicia wants the deck redone", routingReason: { basis: "tied_person", evidence: "Alicia", label: "Alicia is the PM" } }), ctx);
     expect(item?.routing).toBe("choose_project");
+  });
+
+  it("JA7 a project name that is also a word counts only written as a name, or next to one of its records", () => {
+    const room = (text: string, evidence: string, ctx = ctxWith(text)) =>
+      one(braid({ projectId: "gq", braidKind: "issue", quote: text.slice(0, -1), routingReason: { basis: "reference", evidence, label: evidence } }), ctx).item;
+    // A class at an academy is not GQ & Academy, whatever case Atlas gives the evidence in
+    expect(room("Mi a teach a class at di academy tomorrow but di room nuh book yet.", "academy")?.routing).toBe("choose_project");
+    expect(room("Mi a teach a class at di academy tomorrow but di room nuh book yet.", "Academy")?.routing).toBe("choose_project");
+    expect(room("Mi a teach a class at di Academy tomorrow but di room nuh book yet.", "Academy")).toMatchObject({ routing: "routed", projectId: "gq" });
+    const booking = { type: "work_item" as const, id: "wi-301", number: "#301", title: "Room booking", ownerId: "kemar", values: { state: "in_progress" } };
+    const projects = KEMAR_CONTEXT.projects.map((p) => (p.id === "gq" ? { ...p, records: [booking] } : p));
+    const text = "Di academy #301 room nuh book yet.";
+    expect(room(text, "academy", ctxWith(text, { projects }))).toMatchObject({ routing: "routed", projectId: "gq" });
   });
 
   it("Kyle settles the store feed: he is tied only to Forager", () => {

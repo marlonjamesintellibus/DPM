@@ -2,6 +2,7 @@
 // each failure maps to the capture machine's READ_FAILED reasons (E18, E19). No network.
 import { describe, expect, it } from "vitest";
 import { KEMAR_CONTEXT, KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
+import { ANSWER_SYSTEM_PROMPT } from "./answer";
 import { AtlasReadFailed } from "./extractor";
 import { createFixtureExtractor } from "./fixture";
 import { atlasFromEnv, withFallback } from "./index";
@@ -68,12 +69,26 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-6's words and order; a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-6");
+  it("the topics come from domain/topics in read-8's words and order; a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-8");
     expect(SYSTEM_PROMPT).toContain(
       "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
     );
     expect(questionSchema.shape.topic.options).toEqual(["needs_me", "my_work", "due", "blocked", "project_status", "updates", "mentions", "small_talk", "other", "unclear"]);
+  });
+
+  it("phase R: how the team writes is read as written, and what Atlas writes is standard English (JA1 to JA4, JA7, CD20)", () => {
+    const section = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("How the team writes\n"), SYSTEM_PROMPT.indexOf("\nQuestions\n"));
+    expect(section).toContain("Jamaican English and Patois");
+    expect(section).toContain('"mi tink", "mi feel seh", "mebbe" and "mussi" are "I think" and "maybe", so the confidence is medium'); // E12
+    expect(section).toContain('"Di access nuh come yet" means the blocker is still open: never a resolve'); // JA1
+    expect(section).toContain('"Soon done" and "almost done" mean still in progress, not done'); // JA2
+    expect(section).toContain('"A go", "ago" and "gwine" before a verb are the future'); // JA3
+    expect(section).toContain("quote and evidence are copied exactly as written, spelling and all"); // JA4
+    expect(section).toContain("Write braidTitle, note, label and rationale in standard English"); // CD20
+    expect(section).toContain("only when written as a name (capitalised) or next to one of their records"); // JA7
+    expect(SYSTEM_PROMPT).toContain('"Weh mi fi do today?" is needs_me'); // JA6
+    expect(ANSWER_SYSTEM_PROMPT).toContain("- Reply in standard English, even when they asked in Jamaican English or Patois. Never correct, translate or remark on how they wrote.\n");
   });
 
   it("puts the key only in the Authorization header", async () => {

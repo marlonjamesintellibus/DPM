@@ -5,7 +5,8 @@ import type { Topic } from "./topic";
 
 export const projectStatus = {
   id: "project_status",
-  rule: /\b(on track|at risk|off track|status|how is|how's|how are|tell me about)\b/,
+  // Phase R: "How Forager a go?", "Forager pon track?", "Tell mi bout GQ"
+  rule: /\b(on track|pon track|at risk|off track|status|how is|how's|how are|tell me about|tell mi (?:bout|about)|how tings)\b|\bhow (?:\S+ ){1,4}a (?:go|gwaan|gwan)\s*\??$/,
   prompt: "how a project stands",
   suggest: ["What's blocked?", "What's due this week?"],
 } as const satisfies Topic;

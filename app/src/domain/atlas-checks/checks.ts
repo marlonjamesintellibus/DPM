@@ -22,8 +22,14 @@ import type {
 } from "./types";
 
 
-/** Words that make a value a guess (E12). */
-export const HEDGES = ["i think", "maybe", "probably", "should", "might", "perhaps", "i guess", "not sure"];
+/** Words that make a value a guess (E12). Phase R: the same guesses as the team says them ("mi tink", "mussi"). */
+export const HEDGES = [
+  "i think", "maybe", "probably", "should", "might", "perhaps", "i guess", "not sure",
+  "mi tink", "mi think", "a tink", "mi feel seh", "mi feel like", "mebbe", "mussi", "mi guess", "nuh sure", "nah sure", "mi nuh know",
+];
+/** Phase R, JA2: words that say a thing is nearly finished, so a done or handed over value is a guess. */
+const NOT_YET = ["soon done", "soon finish", "almost done", "almost finished", "nearly done", "nearly finished", "a go done", "a go finish", "likkle more"];
+const FINISHED = ["done", "handed_over"];
 
 // Check 13 and E17. A floor, not a classifier: phase 4 evaluation measures what it misses.
 const HEALTH = [
@@ -105,6 +111,29 @@ function mentions(haystack: string, needle: string): boolean {
 }
 
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/**
+ * Phase R, JA7: a project's name or alias in the words names the project only in the shape of a
+ * reference: written with its capital, as it is stored ("Academy", "GQ"), or right next to one of the
+ * project's record numbers ("academy #301"). In "a class at di academy" it is a word, not GQ & Academy.
+ */
+export function namesProject(text: string, name: string, numbers: readonly string[] = []): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  const near = numbers.filter(Boolean).map(escapeRegex).join("|");
+  for (const m of text.matchAll(new RegExp(`(?<![\\w#])${escapeRegex(n).replace(/\s+/g, "\\s+")}(?!\\w)`, "gi"))) {
+    const first = m[0][0];
+    if (first === n[0] || first !== first.toLowerCase()) return true;
+    if (!near) continue;
+    const before = text.slice(0, m.index);
+    const after = text.slice(m.index + m[0].length);
+    if (new RegExp(`(?:${near})\\W{0,3}$`).test(before) || new RegExp(`^\\W{0,3}(?:${near})(?!\\d)`).test(after)) return true;
+  }
+  return false;
+}
+
+/** The record numbers of a project, for namesProject. */
+export const numbersOf = (p: CandidateProject): string[] => p.records.flatMap((r) => (r.number ? [r.number] : []));
 
 function scopeOf(ctx: CheckContext, options: CheckOptions) {
   const mayReport = options.mayReport ?? rightsMayReport;
@@ -272,6 +301,8 @@ const confidenceFloor: Check = [
     let c: Confidence = (CONFIDENCES as readonly string[]).includes(w.p.confidence) ? w.p.confidence : "low";
     const quote = s.quoteText(w);
     if (HEDGES.some((h) => mentions(quote, h))) c = lowerTo(c, "medium");
+    // JA2: "#208 soon done" is still in progress; if Atlas says done, the author decides
+    if (w.newValue && FINISHED.includes(w.newValue) && NOT_YET.some((n) => mentions(quote, n))) c = lowerTo(c, "medium");
     if (s.ctx.transcriptConfidence === "low") c = lowerTo(c, "medium"); // E5
     readDates(w, s);
     const d = w.leave ?? w.date;
@@ -536,10 +567,13 @@ function reasonHolds(w: Work, s: Scope): boolean {
       return w.kind !== "update" && thingHere();
     }
     case "reference": {
+      const name = [project.name, ...project.aliases].find((n) => norm(n) === norm(reason.evidence));
       const names = (p: CandidateProject) =>
         [p.name, ...p.aliases].some((n) => norm(n) === norm(reason.evidence)) ||
         p.records.some((r) => !!r.number && norm(r.number) === norm(reason.evidence));
-      return (mentions(near, reason.evidence) && names(project) && !others.some(names)) || (w.kind !== "update" && thingHere());
+      // JA7: a name that is also a word counts only in the shape of a reference ("di academy" is not GQ & Academy)
+      const said = name ? namesProject(near, name, numbersOf(project)) : mentions(near, reason.evidence);
+      return (said && names(project) && !others.some(names)) || (w.kind !== "update" && thingHere());
     }
     case "owned_record":
       if (w.target) return w.target.type === "record" && w.target.record.ownerId === s.ctx.author.id;

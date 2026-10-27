@@ -4,7 +4,7 @@ import type { Topic } from "./topic";
 
 export const due = {
   id: "due",
-  rule: /\b(due|deadlines?|next milestones?|milestones? left|upcoming milestones?)\b/,
+  rule: /\b(due|deadlines?|next milestones?|nex milestones?|milestones? left|upcoming milestones?)\b/,
   prompt: "what is due, or when the next milestone is",
   suggest: ["What am I working on?", "What's blocked?"],
 } as const satisfies Topic;

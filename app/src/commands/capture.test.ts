@@ -219,6 +219,56 @@ describe("capture and proposals (5.1)", () => {
     expect(moves.map((m) => m.action)).toEqual(["RECEIVED", "START", "TRANSCRIBED", "PROPOSALS_READY"]);
   });
 
+  it("JA8 a voice note in heavy Patois with low transcript confidence: items held for an OK at Medium (E5), the transcript shown as sent", async () => {
+    // DPM does not transcribe: the Atlas app sends the transcript and how sure it was (atlasTranscript).
+    // E5 caps items at Medium, not Low as JA8 says, and M2 has no step to fix a transcript before review yet
+    // (JA8 "shown to fix"): review shows it exactly as sent, so the author fixes the items, not the words.
+    const transcript = "Mi done wid di Google Trends connector, but di store feed access still nuh come thru from Kyle.";
+    const { captureId } = await createCapture(kemar(), {
+      channel: "atlas",
+      kind: "voice",
+      text: transcript,
+      messageAt: KEMAR_NOTE_AT,
+      receivedAt: at(0),
+      messageId: "atl-ja8",
+      transcriptConfidence: "low",
+    });
+    const proposals: RawProposal[] = [
+      {
+        kind: "update",
+        projectId: "forager",
+        routingReason: { basis: "target", evidence: "Google Trends connector", label: "#145" },
+        targetId: "wi-145",
+        field: "state",
+        newValue: "done",
+        quote: "Mi done wid di Google Trends connector",
+        confidence: "high",
+        rationale: "Kemar finished the Google Trends connector",
+      },
+      {
+        kind: "braid_same",
+        projectId: "forager",
+        routingReason: { basis: "target", evidence: "store feed access", label: "Same subject as #151" },
+        braidKind: "blocker",
+        matchEntryId: "br-feed-blocker",
+        quote: "di store feed access still nuh come thru from Kyle",
+        confidence: "high",
+        rationale: "The store feed access has still not come from Kyle",
+      },
+    ];
+    const r = await proposeItems(as("atlas"), captureId, proposals);
+    expect(r.items.map((i) => [i.confidence, i.state])).toEqual([
+      ["medium", "needs_ok"],
+      ["medium", "needs_ok"],
+    ]);
+    // The review shows the transcript exactly as Atlas sent it, never corrected, with each quote on its own words
+    await openReview(kemar(), captureId);
+    const review = (await getReview(db, "kemar", captureId)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(review.capture).toMatchObject({ kind: "voice", text: transcript });
+    expect(review.highlights.map((h) => h.text)).toEqual(["Mi done wid di Google Trends connector", "di store feed access still nuh come thru from Kyle"]);
+    expect(review.canSave).toBe(false);
+  });
+
   it("E7 past 20 proposals the rest wait: Atlas says it found more", async () => {
     const text = Array.from({ length: 25 }, (_, i) => `On Forager, problem ${i + 1} is open.`).join(" ");
     const { captureId } = await createCapture(kemar(), { channel: "app", kind: "text", text, messageAt: at(0), receivedAt: at(0) });

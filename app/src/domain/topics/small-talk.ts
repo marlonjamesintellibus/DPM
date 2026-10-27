@@ -3,8 +3,15 @@
 // nothing to word: DPM's reply stands.
 import type { Topic } from "./topic";
 
-const GREETINGS = ["hi", "hello", "hey", "hiya", "yo", "good morning", "good afternoon", "good evening", "morning", "afternoon", "evening", "wha gwaan", "wah gwaan"];
-const THANKS = ["thanks", "thank you", "thanks a lot", "thank you so much", "thx", "ty", "cheers", "ok", "okay", "k", "cool", "great", "nice", "perfect", "got it", "sounds good", "noted"];
+// Phase R, JA5: the team's own greetings and thanks ("Wha gwaan?", "Mawnin", "Tank yuh", "Bless up")
+const GREETINGS = [
+  "hi", "hello", "hey", "hiya", "yo", "good morning", "good afternoon", "good evening", "morning", "afternoon", "evening",
+  "wha gwaan", "wah gwaan", "wa gwaan", "wha gwan", "wah gwan", "wa gwan", "whaa gwaan", "yow", "mawnin", "good mawnin", "mornin", "good mornin", "evenin", "good evenin",
+];
+const THANKS = [
+  "thanks", "thank you", "thanks a lot", "thank you so much", "thx", "ty", "cheers", "ok", "okay", "k", "cool", "great", "nice", "perfect", "got it", "sounds good", "noted",
+  "tanks", "tank you", "tank yuh", "thank yuh", "nuff tanks", "respect", "nuff respect", "bless", "bless up", "blessings", "big up", "aright", "alright", "irie", "seen",
+];
 
 /** A greeting gets the hello; anything else small (thanks, ok) gets "Any time." */
 export const GREETING = new RegExp(`^(${GREETINGS.join("|")})\\b`);
