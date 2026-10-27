@@ -187,8 +187,8 @@ Phases 1 and 2 can run in parallel. Phase 4 can run in parallel with phase 5 onc
 | B5 | "Applied" vs "Pre-accepted" label on L16 | Keep the design's word, store as pre-accepted |
 | B6 | Where the code lives: this folder, or a new repo | **Decided 26 Oct:** `app/` in this folder, git at the root |
 | B7 | Privacy sign-off (F12) before real people's data | Seed data only until signed off |
-| B8 | Atlas to DPM contract: DPM pulls authorized streams, Atlas pushes captures, or both; who owns it (Malik, Carl) | Atlas pushes captures to one DPM endpoint that calls `createCapture`; DPM checks the stream's authorization on every call |
-| B9 | Where project roles are assigned: in Atlas (per the briefing) or in DPM | Atlas owns them; DPM reads them with the group. Seeded until the API exists |
+| B8 | Atlas to DPM contract: DPM pulls authorized streams, Atlas pushes captures, or both; who owns it (Malik, Carl) | Atlas pushes captures to one DPM endpoint that calls `createCapture`; DPM checks the stream's authorization on every call. **27 Oct:** the Atlas bot documents describe a different shape, a DPM bot in Atlas calling a DPM API; see `atlas-bot-plan.md` (draft, AQ10 asks whether the push still stands) |
+| B9 | Where project roles are assigned: in Atlas (per the briefing) or in DPM | Atlas owns them; DPM reads them with the group. Seeded until the API exists. **27 Oct:** the bot documents say the directory never decides product roles; `atlas-bot-plan.md` AQ3 proposes DPM keeps them |
 | B10 | BRAID rights not covered in the briefing | S10 to S12 decided 26 Oct (leads approve assumptions and dependencies; 1 decision approver; self-approval with the right). S13 decided 26 Oct (a blocker is resolved by the owner of the blocked work or a PM or Lead; anyone else proposes). S14 to S18 on defaults |
 
 ## 9. After use case 1

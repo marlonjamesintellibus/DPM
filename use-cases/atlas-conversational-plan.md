@@ -1,10 +1,10 @@
 # Atlas conversational plan
 
-**Goes with:** `01-update-to-plan-machines.md` sections 15 (questions in the chat) and 16 (talking to Atlas about your work)
+**Goes with:** `01-update-to-plan-machines.md` sections 15 (questions in the chat), 16 (conversations), 17 (the message flow) and 18 (talking to Atlas about your work); `atlas-bot-plan.md` (the DPM bot in Atlas)
 **Vocabulary:** the shapes in `research/state-machines/js/map-data.mjs` (Thing, Job, Ask, Switch, Stage, Status rule)
-**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. Nothing here is built. Items marked DECIDE need an answer before build; each has a default. New machines continue the numbering from M17 (M18 to M34) and are model checked in `research/state-machines/js` before any code.
+**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. Nothing here is built. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
 
-Atlas today reads updates and, with sections 15 and 16, answers questions. This plan goes from "a search box you type into" to a teammate: Atlas answers, lets you act on the answer, explains why, speaks first when something needs you, keeps track of what you promised, drafts what you would otherwise write, and asks when it is unsure. Then it moves from one person to the team: it works in the project group, runs the standup with you, spots trouble before anyone reports it, chases people for you, handles meetings and leave, and learns from how it is used.
+Atlas today reads updates, answers questions in conversations, follows up ("and on Store Insights?"), words its answers over DPM's facts, and shows cards with Accept (sections 15 to 17). This plan goes from "a search box you type into" to a teammate: Atlas answers, lets you act on the answer, explains why, speaks first when something needs you, keeps track of what you promised, drafts what you would otherwise write, and asks when it is unsure. Then it moves from one person to the team: it works in the project group, runs the standup with you, spots trouble before anyone reports it, chases people for you, handles meetings and leave, and learns from how it is used.
 
 ## 1. Rules every phase keeps
 
@@ -25,25 +25,25 @@ From section 1 of the machines doc, and the ones that matter most here:
 
 | Phase | What it gives | New machines | Waits on |
 |---|---|---|---|
-| A | Answers about your work: my work, updates, mentions, small talk, follow-ups ("And GQ?") | none | section 16 go-ahead |
-| B | Act from an answer: buttons on answer lines, and "approve the Kyle risk" as a reply | M18 Chat command | A |
+| A | Answers about your work: my work, due, updates, mentions, small talk (follow-ups are built, section 16) | none | none |
+| B | Act from an answer: more actions on cards (Accept is built, section 17), and "approve the Kyle risk" as a reply | M20 Chat command | A |
 | C | Ask why: why a status, what holds something up, when something was decided | none (reads only) | A; status rules must explain themselves |
-| D | Ask when unsure: Atlas asks "#208 or #212?" in the chat instead of a review card | M19 Clarification | A |
-| E | Commitments: "I'll send Kyle the request tomorrow" is tracked and checked on | M20 Commitment | D for check-ins in the chat; F for check-ins in the Atlas app |
-| F | Atlas speaks first: morning brief, mention alerts, due-date checks, missing-update reminders | M21 Nudge, M22 Nudge settings | Atlas app outbound contract (build plan B8, B9) |
-| G | Drafts: my standup, a client status, a weekly summary | M23 Draft | A; posting waits on B8, B9 (copying does not) |
+| D | Ask when unsure: Atlas asks "#208 or #212?" in the chat instead of a review card | M21 Clarification | A |
+| E | Commitments: "I'll send Kyle the request tomorrow" is tracked and checked on | M22 Commitment | D for check-ins in the chat; F for check-ins in the Atlas app |
+| F | Atlas speaks first: morning brief, mention alerts, due-date checks, missing-update reminders | M23 Nudge, M24 Nudge settings | the DPM bot in Atlas (`atlas-bot-plan.md`; AQ5: can the bot send first?) |
+| G | Drafts: my standup, a client status, a weekly summary | M25 Draft | A; posting waits on B8, B9 (copying does not) |
 | H | Ask about people: "What is Kemar working on?" | none (reads only) | a decision on what a viewer may see of someone else |
-| I | Atlas in the project group: group messages become updates, "@Atlas what's blocked?" answered for the whole group | M24 Group message, M25 Group answer | B8, B9 |
-| J | Standup with Atlas: two to four short questions from your open work | M26 Standup | F (to start it); in the DPM chat it works without |
-| K | Signals: Atlas spots trouble nobody reported and proposes a risk | M27 Signal | A |
-| L | Undo, "why did you file that?", and corrections that teach Atlas | M28 Undo, M29 Vocabulary change | A |
-| M | Chasing people for you: "Ask Kyle if the feed access is sorted" | M30 Outbound ask | B8, B9 |
+| I | Atlas in the project group: group messages become updates, "@Atlas what's blocked?" answered for the whole group | M26 Group message, M27 Group answer | the DPM bot in Atlas, in group chats |
+| J | Standup with Atlas: two to four short questions from your open work | M28 Standup | F (to start it); in the DPM chat it works without |
+| K | Signals: Atlas spots trouble nobody reported and proposes a risk | M29 Signal | A |
+| L | Undo, "why did you file that?", and corrections that teach Atlas | M30 Undo, M31 Vocabulary change | A |
+| M | Chasing people for you: "Ask Kyle if the feed access is sorted" | M32 Outbound ask | the DPM bot in Atlas |
 | N | Questions for leads and executives: who hasn't updated, what needs my decision, what's at risk this week | none (reads only) | A; "who's free" waits on H |
-| O | Meetings: a meeting note becomes everyone's updates, each confirmed by its owner; "Prep me for the Sprouts call" | M31 Meeting capture, M32 Attributed item | E, G |
-| P | Leave and handover in the chat: "I'm off next week", cover, "Catch me up" | M33 Cover request | A, E; suggestions wait on H |
+| O | Meetings: a meeting note becomes everyone's updates, each confirmed by its owner; "Prep me for the Sprouts call" | M33 Meeting capture, M34 Attributed item | E, G |
+| P | Leave and handover in the chat: "I'm off next week", cover, "Catch me up" | M35 Cover request | A, E; suggestions wait on H |
 | Q | "What is Forager?" for new joiners | none (reads only) | A |
 | R | Jamaican English and Patois, in reading, rules, transcription and evals | none | runs alongside every phase |
-| S | Learning from use: feedback, "can't answer" log, eval candidates, usage numbers | M34 Eval candidate | starts with A |
+| S | Learning from use: feedback, "can't answer" log, eval candidates, usage numbers | M36 Eval candidate | starts with A |
 
 Suggested order:
 
@@ -51,15 +51,12 @@ Suggested order:
 2. **B**, **C** and **L** together: act, explain, undo. These make Atlas trusted.
 3. **D**, **J** (in the DPM chat), **K**, **N**, **Q**.
 4. **E**, **G**, **O**, **P**.
-5. Once the Atlas app contract exists (B8, B9): **F**, **I**, **M**, and **J** started by Atlas.
+5. Once the DPM bot in Atlas is built (`atlas-bot-plan.md`): **F**, **I**, **M**, and **J** started by Atlas.
 6. Once phase H's rule is decided: **H**, then "who's free" (N) and cover suggestions (P).
 
 ## 3. Phase A. Answers about your work
 
-Planned in full in section 16 of the machines doc (topics my_work, updates, mentions, small_talk; richer project_status; follow-up context; edge cases CQ1 to CQ16). Repeated here only as the base everything else builds on:
-
-- Every answer is a list of lines, each with a link, kept with the message and shown "as of" when it was given.
-- The follow-up context (derived, not stored) is what later phases use to know what "the second one" or "that risk" means.
+Planned in section 18 of the machines doc (topics my_work, updates, mentions, small_talk; richer project_status; edge cases CQ1 to CQ16). Already built before it: answers as cards with "as of" and Accept, Atlas's wording over DPM's facts, and suggested follow-ups (section 17); conversations, whose earlier messages are how follow-ups and later phases know what "the second one" or "that risk" means (section 16).
 
 ### Added: the `due` topic
 
@@ -83,7 +80,7 @@ Planned in full in section 16 of the machines doc (topics my_work, updates, ment
   - Changes to records (state, forecast, due date) become normal proposals and go through review.
   - Decisions that belong to a person with a right (approve, decline, resolve, give a reason) cannot be proposals that someone else reviews; they become a **chat command**: a one-tap confirm card ("Approve risk 'Store sales feed access' on Forager?" [Approve] [Cancel]).
 
-### M18. Chat command (Ask). NEW
+### M20. Chat command (Ask). NEW
 
 ```
 proposed ──CONFIRM (guard: right held now, record version unchanged)──▶ done        final
@@ -147,7 +144,7 @@ A new topic `why`, with a subject: a project, work item, milestone, BRAID entry 
 
 When Atlas is unsure which project or record a message means, it asks in the chat ("Do you mean #208 Store sales feed or #212 Feed monitoring?") with the options as buttons, instead of only leaving a "choose a project" card in review. Today's review card stays as the fallback.
 
-### M19. Clarification (Ask). NEW
+### M21. Clarification (Ask). NEW
 
 ```
 (none) ──CHECKS_DONE (guard: an item is choose_project or has 2 or 3 close matches)──▶ asked
@@ -181,7 +178,7 @@ asked ──capture expires or is rejected──▶ closed
 
 "I'll send Kyle the access request tomorrow" is a promise, not a status change. Atlas proposes it as a **commitment** (a new item kind, reviewed like any other). Once saved, DPM checks on it when it is due: "Did you send Kyle the access request?" A later update that says it was done ("Sent Kyle the request") is proposed as done.
 
-### M20. Commitment (Ask, then Stage). NEW
+### M22. Commitment (Ask, then Stage). NEW
 
 ```
 proposed (an item in the capture's review, M3) ──SAVE──▶ open
@@ -230,7 +227,7 @@ Atlas sends messages to people without being asked, in the Atlas app (and in the
 | Missing update | Late on a working day (DECIDE: 4pm) with no update from them and open work | "What did you get done today?" |
 | Commitment check-in | Phase E | "Did you send Kyle the access request?" |
 
-### M21. Nudge (Job). NEW
+### M23. Nudge (Job). NEW
 
 ```
 scheduled ──TIMER send_at──▶ composing
@@ -246,7 +243,7 @@ sent ──TIMER nudgeReplyHours──▶ unanswered                            
 - The facts are read again at `composing`, so a nudge about something already fixed is skipped, not sent.
 - A reply is read with the nudge as its context, so "yes, still on" after a due-date check is an update about that work item.
 
-### M22. Nudge settings (Switch, per person per kind). NEW
+### M24. Nudge settings (Switch, per person per kind). NEW
 
 On or off per kind, plus their start time. Defaults (DECIDE): brief on, mention alerts on, due-date checks on, missing-update reminders off, commitment check-ins on. Leads cannot change other people's settings.
 
@@ -279,7 +276,7 @@ Atlas drafts text from DPM's facts; the person edits it and copies or posts it.
 | Client status | PM or Lead | Client-visible milestones only, the displayed status and its reason when the PM marks it shareable. Never BRAID internals |
 | Weekly summary | PM or Lead | The project's week: work done, milestones moved, BRAID entries opened and closed, status changes |
 
-### M23. Draft (Ask). NEW, the M11 shape
+### M25. Draft (Ask). NEW, the M11 shape
 
 ```
 requested ──DRAFTED (guard: passes the facts check)──▶ ready
@@ -340,13 +337,13 @@ Teams already talk in project groups in the Atlas app (`groups`, `group_members`
 - **"@Atlas" questions are answered in the group,** for everyone in it: only facts every member may see (rule 8).
 - **Personal questions are answered directly.** "@Atlas what needs me?" in the group gets "Sent you that directly" in the group and the answer in their one-to-one chat. That reply is the same whatever the answer, so it reveals nothing.
 
-### M24. Group message (Job). NEW
+### M26. Group message (Job). NEW
 
 ```
 received ──(guard: the group is connected to DPM and the sender is a DPM person in it)──▶ captured
 received ──(guard fails)──▶ ignored                                    final, logged
 captured: a capture of the sender (M1), channel "atlas", with the group as context
-  ├─ it @mentions Atlas and asks something ──▶ M25 for the question part
+  ├─ it @mentions Atlas and asks something ──▶ M27 for the question part
   └─ the rest goes through M2 as any update; nothing_to_update is silent in groups
 ```
 
@@ -354,7 +351,7 @@ captured: a capture of the sender (M1), channel "atlas", with the group as conte
 - The group's project is a routing hint (like "On Store Insights"), not a rule: an update about GQ sent in the Forager group still goes to GQ.
 - A reply to someone else's message ("same here", "+1") is read with the message it replies to as context, so it can be another report of the same blocker (M16 same-as), credited to the person replying.
 
-### M25. Group answer (Job). NEW
+### M27. Group answer (Job). NEW
 
 ```
 asked ──(guard: a personal topic: needs_me, my_work, mentions, updates, commitments)──▶ sent_directly     final
@@ -380,10 +377,10 @@ composing ──(nothing is left)──▶ answered with "Nothing I can share wi
 | GR6 | "@Atlas what needs me?" | "Sent you that directly"; the answer in their own chat |
 | GR7 | "+1, same for me" replying to Andre's blocker | A report of the same blocker by the replier, in their own review |
 | GR8 | Banter, lunch plans | nothing_to_update, silent |
-| GR9 | Someone posts another person's update for them ("Kemar says #145 is done") | Rule 10: proposed to Kemar to confirm (M32), not saved as the sender's |
+| GR9 | Someone posts another person's update for them ("Kemar says #145 is done") | Rule 10: proposed to Kemar to confirm (M34), not saved as the sender's |
 | GR10 | The same message delivered twice by the Atlas app | Once only by Atlas message id |
 | GR11 | An edited or deleted message | DECIDE: an edit before review is a new read; after save, nothing changes (default). A deleted message withdraws its unsaved capture |
-| GR12 | Someone asks Atlas in the group to approve something | A chat command (M18), confirmed by the person directly, never in the group |
+| GR12 | Someone asks Atlas in the group to approve something | A chat command (M20), confirmed by the person directly, never in the group |
 
 ## 12. Phase J. Standup with Atlas
 
@@ -397,12 +394,12 @@ Instead of waiting for a free-form update, Atlas asks two to four short question
 
 The answers become one capture, reviewed as usual. A free-form update is still always welcome; the standup only fills the gaps.
 
-A vague free-form update also gets one follow-up question ("Worked on the feed" → "Which one, #208 or #212?"), through M19.
+A vague free-form update also gets one follow-up question ("Worked on the feed" → "Which one, #208 or #212?"), through M21.
 
-### M26. Standup (Job). NEW
+### M28. Standup (Job). NEW
 
 ```
-scheduled ──TIMER standup time (M21 rules: working day, not on leave, turned on, under the cap)──▶ asking(1 of n)
+scheduled ──TIMER standup time (M23 rules: working day, not on leave, turned on, under the cap)──▶ asking(1 of n)
 scheduled ──(guard: they already sent an update today, or have no open work)──▶ skipped        final
 asking(k) ──ANSWER──▶ asking(k+1), or composed when k = n
 asking(k) ──SKIP──▶ asking(k+1), or composed when k = n
@@ -445,7 +442,7 @@ Atlas notices patterns in the data and raises them as signals to the people who 
 | Milestone at risk from its work | Most of a milestone's work is Blocked or past due while the milestone still shows On track | PM and Leads |
 | Quiet project | No update from any member for `quietProjectDays` working days | PM |
 
-### M27. Signal (Ask). NEW
+### M29. Signal (Ask). NEW
 
 ```
 (none) ──DETECTED (rule; nightly and on save)──▶ raised
@@ -482,7 +479,7 @@ raised ──TIMER signalExpiryDays──▶ expired                            
 - **Why did you file that?** For any of their items: the routing reason and the deciding words (`routingReason`, evidence), and the match for BRAID items. A read only.
 - **Corrections teach Atlas.** "Kyle is Sprouts, not Forager", "GQ also means the Academy", or moving an item to another project in review, proposes a change to the project's vocabulary (aliases, contacts, tied people) for a PM or Lead to approve. Next time Atlas reads it right.
 
-### M28. Undo (Job). NEW
+### M30. Undo (Job). NEW
 
 ```
 requested ──(guard: their own save, within undoMinutes, every record still at the version that save wrote, the right held now)──▶ undoing
@@ -495,7 +492,7 @@ undoing ──▶ each record goes back through its own machine's UNDO arrow (al
 - Notices sent by the save are followed by one more: "Kemar undid this."
 - Cannot be undone: anything someone else has acted on since (an approved decision, a resolved blocker).
 
-### M29. Vocabulary change (Ask). NEW
+### M31. Vocabulary change (Ask). NEW
 
 ```
 proposed ──APPROVE (PM or Lead of the project, checked now)──▶ applied                                 final
@@ -527,7 +524,7 @@ proposed ──TIMER reminders (S18 rhythm), then vocabExpiryDays──▶ expir
 
 "Ask Kyle if the feed access is sorted." Atlas drafts the message, sends it after the asker confirms (rule 9), tracks the reply, and turns the reply into an update for the asker to review. No reply in `chaseReminderWorkingDays`: one reminder; still none, the asker is told and the dependency shows "Asked Kyle on Mon, no reply".
 
-### M30. Outbound ask (Ask to someone else). NEW
+### M32. Outbound ask (Ask to someone else). NEW
 
 ```
 drafted ──CONFIRM (the asker)──▶ sending
@@ -597,20 +594,20 @@ New topics, answered only where the asker holds the role:
 - **A meeting note** (a voice note or a pasted transcript, marked as a meeting, with a project) is read for everyone in it. The recorder's own items go to their review. Items about other attendees (their work, their promises) go to each of them to confirm (rule 10). Decisions go to the deciders as proposals.
 - **"Prep me for the Sprouts call"**: a brief for a meeting, client-safe by default: client-visible milestones, the displayed status, open dependencies on the client's contacts, chases waiting on them (phase M), recent decisions the client view shows.
 
-### M31. Meeting capture (Job). NEW, extends M2
+### M33. Meeting capture (Job). NEW, extends M2
 
 ```
 received (marked meeting, project, attendees) ──ATTENDEES_CONFIRMED (the recorder confirms who was there, and that they knew it was recorded)──▶ transcribing
 transcribing ──▶ reading (as M2)
 reading ──PROPOSALS_READY──▶ split
 split: own items ──▶ the recorder's review (M3)
-       items about attendee X ──▶ M32 to X
+       items about attendee X ──▶ M34 to X
        decisions ──▶ proposed BRAID decisions (M15) to the deciders
 split ──every part saved, confirmed, declined or expired──▶ done                       final
 received ──TIMER (attendees never confirmed, reviewExpiryDays)──▶ expired              final
 ```
 
-### M32. Attributed item (Ask to the person it is about). NEW
+### M34. Attributed item (Ask to the person it is about). NEW
 
 ```
 proposed ──CONFIRM──▶ confirmed: saved as theirs (an update, a commitment)                         final
@@ -631,7 +628,7 @@ proposed ──TIMER attributedExpiryDays──▶ expired; not filed           
 | MT6 | A decision made by someone without the right | Proposed to the deciders like any decision |
 | MT7 | Two people record the same meeting | Matched by project and time; DECIDE: the second is offered to merge (default) |
 | MT8 | A meeting across two projects | Items routed per project (M14), as with any update |
-| MT9 | Prep for a call with a client contact who is in two projects | Only the project named, or asks which (M19) |
+| MT9 | Prep for a call with a client contact who is in two projects | Only the project named, or asks which (M21) |
 | MT10 | Prep asked by a member who cannot see the client view | Their own projects' facts; client-safe still applies |
 | MT11 | A long meeting | Over `maxProposalsPerCapture`: more found, as E-cases for long updates |
 | MT12 | An attendee is on leave by the time it arrives | Their item waits until they are back, then the timer starts |
@@ -644,7 +641,7 @@ proposed ──TIMER attributedExpiryDays──▶ expired; not filed           
 - **Cover requests** go to a teammate on that project to accept; an accepted cover proposes a handover (M7).
 - **"Catch me up"** after leave: the updates topic with "since" set to the start of their leave, plus what was handed over and where each item stands.
 
-### M33. Cover request (Ask to a teammate). NEW
+### M35. Cover request (Ask to a teammate). NEW
 
 ```
 suggested ──PICK (the person going on leave picks who)──▶ asked
@@ -678,7 +675,7 @@ asked ──the leave is cancelled──▶ withdrawn                           
 A new topic `explain_project`: "What is Forager?", "Explain Store Insights", "I'm new on GQ, where do I start?"
 
 - Answer, all from the project view: who it is for and when it runs, the owner; its threads and what each is for; the next milestones; the five most recent approved decisions; who owns what (thread and milestone owners); how it stands (project_status). A "Where to start" line links their own work on it, if any.
-- Members only. Optionally phrased by the drafter (M23) with the facts check.
+- Members only. Optionally phrased by the drafter (M25) with the facts check.
 
 ### Edge cases (EX1 to EX6)
 
@@ -688,7 +685,7 @@ A new topic `explain_project`: "What is Forager?", "Explain Store Insights", "I'
 | EX2 | A project with no threads or milestones | Says so, and how they get filled (P11) |
 | EX3 | Decisions from updates routed elsewhere | The decision shows; its quote does not (rule 9) |
 | EX4 | An outside contact asks | The client view only |
-| EX5 | Ambiguous name ("Insights") | Matched by alias; if two fit, asks (M19) |
+| EX5 | Ambiguous name ("Insights") | Matched by alias; if two fit, asks (M21) |
 | EX6 | Asked in a group (phase I) | Answered with the group's shared facts only |
 
 ## 20. Phase R. Jamaican English and Patois
@@ -724,7 +721,7 @@ The team writes and speaks the way it talks: "mi done wid di feed", "di access s
 - **"Can't answer" log:** every `other` answer, thumbs down, undo (L), correction (L) and item moved in review is logged as a candidate for the eval set.
 - **Numbers for the team building DPM:** answer rate, "I can't answer that yet" rate, acted-from-answer rate (B), correction and undo rate, standup completion (J), nudge reply rate (F), signal accept rate (K). Weekly, per topic. This decides which phase to build next.
 
-### M34. Eval candidate (Ask, for a DPM maintainer). NEW
+### M36. Eval candidate (Ask, for a DPM maintainer). NEW
 
 ```
 (none) ──LOGGED (guard: the person allows "Help improve Atlas")──▶ logged
@@ -792,29 +789,38 @@ Not planned yet; written down so they are not lost.
 | evalCandidateDays | 30 | S |
 | metricMinimumCount | 5 | S |
 
-## 24. Decisions to make (with defaults)
+## 24. Decisions (settled 27 Oct 2026)
 
-| # | Question | Default |
+Marlon asked for the best defaults to be chosen. Every DECIDE in this plan takes the answer below; where the answer differs from the default first written, the row says why.
+
+| # | Question | Decided |
 |---|---|---|
-| CV1 | "Approve all of them": one card per decision, or one tap for many? | One card each |
-| CV2 | How long a confirm card and a clarification stay open | 30 minutes; 2 hours |
-| CV3 | Is a commitment private, or shown on the project when it names a record there? | Private |
-| CV4 | A commitment with no date | Due next working day |
-| CV5 | A promise made for someone else | Not proposed |
-| CV6 | Which nudges are on by default, and the daily cap | Brief, mentions, due-date checks, check-ins on; missing update off; 4 a day |
-| CV7 | Holidays for nudges | Weekends only, until there is an org calendar |
-| CV8 | Quotes in drafts | Never |
-| CV9 | What a viewer may see of another person (phase H) | Section 10 above |
-| CV10 | In a connected group, does Atlas read every message, or only ones that @mention or reply to it? | Every message |
-| CV11 | An edited group message after its update was saved | Nothing changes |
-| CV12 | During a standup, ask about items a same-day update did not mention? | No |
-| CV13 | Can a project be marked paused, to stop quiet-project signals? | Yes |
-| CV14 | Propose a vocabulary correction after the same word is moved in review twice? | Yes |
-| CV15 | May a chase include the titles of internal records? | Yes, the asker confirms the text |
-| CV16 | "Who hasn't updated" for any day but today? | Today only; no history |
-| CV17 | A meeting note where attendees were not told it was recorded | Read as the recorder's own notes only |
-| CV18 | A second recording of the same meeting | Offered to merge |
-| CV19 | Does an accepted cover need the PM's OK before the handover? | No |
-| CV20 | Atlas's reply language | Standard English |
-| CV21 | Who sees the usage numbers | DPM maintainers; org executives see counts only for their org |
-| CV22 | When the lead digest is sent | Monday 8:30am |
+| CD1 | "Approve all of them": one card per decision, or one tap for many? | One card each |
+| CD2 | How long a confirm card and a clarification stay open | 30 minutes; 2 hours |
+| CD3 | Is a commitment private, or shown on the project when it names a record there? | Private |
+| CD4 | A commitment with no date | Due next working day |
+| CD5 | A promise made for someone else | Not proposed |
+| CD6 | Which nudges are on by default, and the daily cap | Brief, mentions, due-date checks, check-ins on; missing update off; 4 a day |
+| CD7 | Holidays for nudges | Weekends only, until there is an org calendar |
+| CD8 | Quotes in drafts | Never |
+| CD9 | What a viewer may see of another person (phase H) | Section 10 above |
+| CD10 | In a connected group, does Atlas read every message, or only ones that @mention or reply to it? | Every message |
+| CD11 | An edited group message after its update was saved | Nothing changes |
+| CD12 | During a standup, ask about items a same-day update did not mention? | No |
+| CD13 | Can a project be marked paused, to stop quiet-project signals? | Yes |
+| CD14 | Propose a vocabulary correction after the same word is moved in review twice? | Yes |
+| CD15 | May a chase include the titles of internal records? | Yes, the asker confirms the text |
+| CD16 | "Who hasn't updated" for any day but today? | Today only; no history |
+| CD17 | A meeting note where attendees were not told it was recorded | Read as the recorder's own notes only |
+| CD18 | A second recording of the same meeting | Offered to merge |
+| CD19 | Does an accepted cover need the PM's OK before the handover? | No, but the PM gets a notice (changed: a change of owner should never surprise the PM) |
+| CD20 | Atlas's reply language | Standard English |
+| CD21 | Who sees the usage numbers | DPM maintainers; org executives see counts only for their org |
+| CD22 | When the lead digest is sent | Monday 8:30am |
+| CD23 | Which item a clarification asks about when several are unsure | The first in the message |
+| CD24 | When a moved commitment asks whether to drop it | After 3 moves |
+| CD25 | Morning brief and missing-update times | 8:30am and 4pm, in the org time zone until people have their own |
+| CD26 | Daily cap on nudges | 4 |
+| CD27 | "Who hasn't updated" asked early | Before the standup time (9am) it says "It's early" (changed: the 4pm reminder time would hide the whole morning) |
+| CD28 | Smallest group a usage number is shown for | 5 |
+| CD29 | Mention matching on a shared first name | As CQ9: first name only where no other member of that project shares it |
