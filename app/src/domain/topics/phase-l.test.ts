@@ -27,11 +27,15 @@ describe("undo (M30)", () => {
 
 describe("why_filed", () => {
   it("knows the words without a model", () => {
-    for (const said of ["Why did you file that?", "Why did #151 go to Forager?", "why was that put in Store Insights", "Why did you log the blocker there?"]) {
+    for (const said of ["Why did you file that?", "Why did #151 go to Forager?", "why was that put in Store Insights", "Why did you log the blocker there?", "Why did my blocker end up in GQ?", "Why did you file Kemar's blocker?"]) {
       expect(topicOf(said), said).toBe("why_filed");
     }
-    // Not about filing: phase C's why questions are not taken
-    expect(topicOf("Why is Forager at risk?")).not.toBe("why_filed");
+  });
+
+  it("leaves why questions about the work to phase C: only Atlas's filing, or what they said, is why_filed", () => {
+    for (const said of ["Why is Forager at risk?", "Why did Forager go to at risk?", "Why hasn't Kyle sent the file?", "Why was the launch put on hold?", "Why did the feed go down?"]) {
+      expect(topicOf(said), said).not.toBe("why_filed");
+    }
   });
 });
 
@@ -49,6 +53,17 @@ describe("corrections (M31)", () => {
 
   it("a statement that is not a correction is left to the model", () => {
     for (const said of ["#151 is done", "Kyle is late with the feed", "The model is also slow"]) expect(ruleCorrection(ctx(said)), said).toBeNull();
+  });
+
+  it('QA8: an update said with "is also" stays an update; after a bare "is also" only a name is a new name', () => {
+    for (const said of ["Forager is also waiting on Kyle", "GQ is also late", "Store Insights is also blocked on the export"]) {
+      expect(ruleCorrection(ctx(said)), said).toBeNull();
+      expect(ruleQuestion(ctx(said))?.topic, said).not.toBe("correction");
+    }
+    expect(ruleCorrection(ctx("GQ is also the Guild"))).toMatchObject({ kind: "alias", projectId: "gq", word: "Guild" });
+    expect(ruleCorrection(ctx("GQ is also called the Guild"))).toMatchObject({ kind: "alias", projectId: "gq", word: "Guild" });
+    // About a person, it is a tie, not a name for the project
+    expect(ruleCorrection(ctx("Kyle is also on Store Insights"))).toMatchObject({ kind: "contact", projectId: "insights", personId: "kyle" });
   });
 
   it("P10: a project or person the asker does not have is dropped, and a word not in the message", () => {

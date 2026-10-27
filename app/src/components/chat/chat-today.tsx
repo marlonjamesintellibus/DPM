@@ -273,7 +273,7 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
         {capture.state === "saved" && (
           <div className="flex flex-wrap items-center gap-3">
             <Link href={`/review/${capture.id}`} className="type-caption text-accent hover:underline">
-              See what was saved
+              {capture.undo?.state === "undone" ? "See what was taken back" : "See what was saved"}
             </Link>
             {/* Phase L, M30: Undo while it may still work; once undone, when */}
             {capture.undo?.may && <UndoSave captureId={capture.id} />}

@@ -42,8 +42,12 @@ export type SavedRecord =
   | { type: "set_status"; id: string; projectId: string; version: number; before: SetStatusRecord & { setBy: string | null; setAt: string | null } }
   | { type: "leave"; id: string; projectId: null; version: number; before: (LeaveRange & { change: LeaveRange | null }) | null };
 
-/** Someone the save told (an inbox item it opened, a notice it sent): "Kemar undid this." follows. */
-export type Told = { personId: string; projectId: string; subjectType: "braid_entry"; subjectId: string };
+/**
+ * Someone the save told (an inbox item it opened, a notice it sent): "Kemar undid this." follows. The
+ * subject is what it told them about: a BRAID entry, a project's status, a work item, or a leave request
+ * (whose impact on projectId a lead was shown).
+ */
+export type Told = { personId: string; projectId: string; subjectType: "braid_entry" | "project" | "work_item" | "leave"; subjectId: string };
 
 export type SaveReceipt = { records: SavedRecord[]; told: Told[] };
 

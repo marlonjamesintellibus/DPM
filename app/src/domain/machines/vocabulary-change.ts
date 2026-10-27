@@ -23,6 +23,9 @@ export const VOCAB_REMINDERS = 2;
  * What changes, on one project. alias: another name for it ("Guild" for GQ & Academy). contact: a person
  * tied to it who is not a member (Kyle at Sprouts IT), with the tie the card shows. remove: take it off
  * ("not Forager"), which goes to that project's own PM or Lead.
+ * Section 14's third kind, a person tied to a record, is not built: DPM ties people to projects only
+ * (memberships and project_contacts), and routing reads a tied person from those, so there is no record
+ * tie for a correction to change. It waits for a per-record contact to exist.
  */
 export type VocabularyKind = "alias" | "contact";
 
@@ -130,9 +133,14 @@ export function alreadyNamed(word: string, project: NamedProject): boolean {
   return [project.name, ...project.aliases].some((n) => norm(n) === norm(word));
 }
 
-/** Rule 6: one proposal per change, whatever its state; the same correction said again changes nothing. */
-export function vocabularyKey(c: Pick<VocabularyChangeRecord, "projectId" | "kind" | "word" | "personId" | "remove">): string {
-  return `${c.projectId}|${c.kind}|${c.kind === "alias" ? norm(c.word ?? "") : c.personId}|${c.remove ? "remove" : "add"}`;
+/**
+ * Rule 6: one proposal per change, whatever its state; the same correction said again changes nothing.
+ * UN9, P10: a refusal is the asker's own, found among the projects they can open, so it is kept under
+ * `refusedFor` and never answers or stops someone else saying the same thing (they may see no clash).
+ */
+export function vocabularyKey(c: Pick<VocabularyChangeRecord, "projectId" | "kind" | "word" | "personId" | "remove">, refusedFor: string | null = null): string {
+  const key = `${c.projectId}|${c.kind}|${c.kind === "alias" ? norm(c.word ?? "") : c.personId}|${c.remove ? "remove" : "add"}`;
+  return refusedFor ? `${key}|refused for ${refusedFor}` : key;
 }
 
 /** The inbox cause for the project's PM and Leads while it waits (M10). */

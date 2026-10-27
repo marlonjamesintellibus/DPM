@@ -127,6 +127,11 @@ describe("clashes, keys and causes", () => {
     expect(vocabularyKey(change({ kind: "contact", word: null, personId: "kyle" }))).toBe("gq|contact|kyle|add");
   });
 
+  it("UN9, P10: a refusal is kept under the person refused, so it never stands for anyone else", () => {
+    expect(vocabularyKey(change(), "kemar")).not.toBe(vocabularyKey(change()));
+    expect(vocabularyKey(change(), "kemar")).not.toBe(vocabularyKey(change(), "andre"));
+  });
+
   it("M10: the PM's and Leads' item holds while it is proposed", () => {
     expect(vocabularyCauses(change())).toEqual(["vocab_change:voc-1"]);
     expect(vocabularyCauses(change({ state: "applied" }))).toEqual([]);

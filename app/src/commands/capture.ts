@@ -38,7 +38,7 @@ import {
   type WithdrawReason,
 } from "../domain/machines/extracted-item";
 import { applyConversationEvent, autoTitle, draftConversation, type ConversationRecord, type ConversationState } from "../domain/machines/conversation";
-import { applyHandover, type HandoverRecord } from "../domain/machines/handover";
+import { applyHandover, applyStep, STEP_STATES, type HandoverRecord, type StepState } from "../domain/machines/handover";
 import { evaluateCause } from "../domain/machines/inbox-item";
 import { acceptExtractedLeave, changeLeave, fitLeave, type ExtractedLeave, type LeaveRecord } from "../domain/machines/leave";
 import { redirectReport, saveMatch, type MatchRecord } from "../domain/machines/match";
@@ -60,7 +60,7 @@ import { ownsBlockedWork } from "./braid";
 import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
-import { noteBefore, toldBy, undoInTx, writeReceipt, type Receipt } from "./undo";
+import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
 import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
 
 type CaptureRow = typeof t.captures.$inferSelect;
@@ -593,7 +593,6 @@ export function decideExtraction(ctx: CommandCtx, extractionId: string, decision
   });
 }
 
-const STEP_ORDER = ["not_done", "in_progress", "handed_over"] as const;
 const SETTABLE_WORK_STATES: readonly string[] = ["to_do", "in_progress", "blocked", "done"];
 
 function parseLeave(value: string | null, personId: string): ExtractedLeave | null {
@@ -647,9 +646,9 @@ async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<
       const [step] = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, target.id));
       if (!step) return () => "this handover step no longer exists";
       return (value) => {
-        const to = STEP_ORDER.indexOf(value as (typeof STEP_ORDER)[number]);
-        if (to < 0) return `"${value}" is not a handover step state (${STEP_ORDER.join(", ")})`;
-        return to < STEP_ORDER.indexOf(step.state) ? `${step.title} is already ${step.state}; steps only move forward` : null;
+        const to = STEP_STATES.indexOf(value as (typeof STEP_STATES)[number]);
+        if (to < 0) return `"${value}" is not a handover step state (${STEP_STATES.join(", ")})`;
+        return to < STEP_STATES.indexOf(step.state) ? `${step.title} is already ${step.state}; steps only move forward` : null;
       };
     }
     case "leave": {
@@ -995,18 +994,19 @@ async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string | null>
       const [step] = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, w.target.id));
       const [handover] = await tx.select().from(t.handovers).where(eq(t.handovers.id, step.handoverId));
       const steps = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.handoverId, handover.id));
-      const to = STEP_ORDER.indexOf(w.value as (typeof STEP_ORDER)[number]);
-      if (to < 0 || to < STEP_ORDER.indexOf(step.state)) throw new CommandRefused(`${step.title} cannot go from ${step.state} to ${w.value}`);
+      // Phase L, rule 2: the step moves along its own arrows (handoverStepMachine), so an undo can take it back
+      const stepMove = applyStep(step.state, { type: "MOVE", to: w.value as StepState });
+      if (!stepMove.ok) throw new CommandRefused(`${step.title} cannot go from ${step.state} to ${w.value}`);
       noteBefore(s.receipt, { type: "handover_step", id: step.id, projectId: handover.projectId, version: 0, before: { state: step.state } });
       const rows = await tx
         .update(t.handoverSteps)
-        .set({ state: STEP_ORDER[to], version: nextVersion(t.handoverSteps.version), updatedAt: now })
+        .set({ state: stepMove.to, version: nextVersion(t.handoverSteps.version), updatedAt: now })
         .where(and(eq(t.handoverSteps.id, step.id), eq(t.handoverSteps.version, step.version)))
         .returning({ id: t.handoverSteps.id });
       expectOne(rows, `handover step ${step.id}`);
-      await recordAudit(s, item.id, { action: "STEP_CHANGED", machine: "handover_step", subjectType: "handover_step", subjectId: step.id, fromState: step.state, toState: STEP_ORDER[to] });
+      await recordAudit(s, item.id, { action: "STEP_CHANGED", machine: "handover_step", subjectType: "handover_step", subjectId: step.id, fromState: step.state, toState: stepMove.to });
       // "k of m" is the steps handed over, so only handing a step over moves the handover itself
-      if (STEP_ORDER[to] === "handed_over" && step.state !== "handed_over") {
+      if (stepMove.to === "handed_over" && step.state !== "handed_over") {
         const done = steps.filter((x) => x.state === "handed_over").length;
         const record: HandoverRecord = { ...handover, stepsDone: done, stepsTotal: steps.length };
         const r = applyHandover(record, { type: "STEPS_DONE", done: done + 1 });
@@ -1058,7 +1058,8 @@ async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string | null>
         leaveId = row.id;
         await recordAudit(s, item.id, { action: "CHANGE_ASKED", machine: "leave", subjectType: "leave", subjectId: row.id, fromState: row.state, toState: row.state, detail: { from: { start: row.startDate, end: row.endDate }, to: r.to } });
       }
-      if (leaveId) await syncLeaveImpact(tx, now, leaveId, { actorId: s.authorId });
+      // Phase L, M30: the leads shown its impact hear "Kemar undid this." if it is undone
+      if (leaveId) s.receipt.told.push(...toldOfLeave((await syncLeaveImpact(tx, now, leaveId, { actorId: s.authorId })).opened, s.authorId, leaveId));
       return null; // personal: no project is touched
     }
   }

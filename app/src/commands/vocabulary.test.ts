@@ -122,6 +122,49 @@ describe("name clashes (UN9, and the model's fixes)", () => {
     expect(await live("andre")).toEqual([]);
   });
 
+  it("UN9, P10: a refusal is the asker's own; someone who cannot open the clashing project is never told of it, and their correction is proposed", async () => {
+    await says("kemar", "Store Insights also means the Academy");
+    // Andre is on Store Insights only: from where he stands, nothing else is called the Academy
+    const answer = await says("andre", "Store Insights also means the Academy", 1);
+    expect(answer.text).toBe('"Academy" as a name for Store Insights is waiting in your inbox for you to approve. Until then I read it as before.');
+    expect(JSON.stringify(answer)).not.toContain("already names");
+    expect(JSON.stringify(answer)).not.toContain("GQ");
+    const rows = await changes();
+    expect(rows.map((c) => [c.forId, c.state]).sort()).toEqual([
+      ["andre", "proposed"],
+      ["kemar", "refused"],
+    ]);
+    expect(await live("andre")).toEqual([`vocab_change:${rows.find((c) => c.forId === "andre")!.id}`]);
+    // Kemar saying it again still hears his own refusal (rule 6), naming only what he can open
+    expect((await says("kemar", "Store Insights also means the Academy", 2)).text).toBe('"Academy" already names GQ & Academy, so I didn\'t ask: it would make it unclear where updates go.');
+    expect(await changes()).toHaveLength(2);
+  });
+
+  it("model check item 4: where one person is in both projects that use a word, M14 sends their item to choose_project", async () => {
+    const text = "The Academy launch may slip a week";
+    const academy: RawProposal = {
+      kind: "braid_new",
+      projectId: "gq",
+      routingReason: { basis: "reference", evidence: "Academy", label: "You said Academy" },
+      braidKind: "risk",
+      braidTitle: "Academy launch may slip a week",
+      quote: text,
+      confidence: "high",
+      rationale: "The launch may slip.",
+    };
+    const routing = async (n: number) => {
+      const { captureId } = await createCapture(as("kemar", n), { channel: "app", kind: "text", text, messageAt: at(n), receivedAt: at(n), messageId: `academy-${n}` });
+      return (await proposeItems(as("kemar", n), captureId, [academy])).items[0].draft;
+    };
+    expect(await routing(1)).toMatchObject({ projectId: "gq", routing: "routed" });
+    // Andre cannot open GQ, so for him "Academy" clashes with nothing: he proposes it, and approves it
+    await says("andre", "Store Insights also means the Academy", 2);
+    await decideVocabularyChange(as("andre", 3), (await changes())[0].id, "approve");
+    expect(await aliases("insights")).toContain("Academy");
+    // Kemar is in both: his "Academy" now names two of his projects, so he picks
+    expect(await routing(4)).toMatchObject({ routing: "choose_project", options: expect.arrayContaining(["gq", "insights"]) });
+  });
+
   it("P10: a project they cannot open is never looked at, so it is never named", async () => {
     const answer = await says("kemar", "GQ also means the Guild");
     expect(answer.text).not.toContain("HX");

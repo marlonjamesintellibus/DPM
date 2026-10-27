@@ -43,6 +43,20 @@ describe("why did you file that?", () => {
     expect((await asks("kemar", "Why did #160 go to Forager?")).text).toBe("I can only tell you about your own updates.");
   });
 
+  it("UN7: someone else's item named by title or by whose it is gets the same answer, never the asker's latest update", async () => {
+    expect((await asks("kemar", "Why did you file Feature store backfill?")).text).toBe("I can only tell you about your own updates.");
+    expect((await asks("kemar", "Why did you file Alicia's risk?")).text).toBe("I can only tell you about your own updates.");
+  });
+
+  it("a record or person named in the asker's own update: only those items", async () => {
+    const byTitle = await asks("kemar", "Why did you file Store sales feed access?");
+    // #151 is called that too: both are about it
+    expect(byTitle.cards.map((c) => c.title)).toEqual(["Issue #151 Store sales feed access: In progress to Blocked: waiting on Kyle (Sprouts IT)", "Blocker: Store sales feed access"]);
+    const byPerson = await asks("kemar", "Why did you file Kyle's blocker?");
+    expect(byPerson.cards.length).toBeGreaterThan(0);
+    expect(byPerson.cards.every((c) => c.detail?.includes("Kyle"))).toBe(true);
+  });
+
   it("P10: an item in a project the asker has left is left out, with its match", async () => {
     await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
     const answer = await asks("kemar", "Why did you file that?");

@@ -2,7 +2,7 @@
 // Undo "with the fixes"). Kemar saves the story's note at 9:12am, then says "Undo that" or presses Undo:
 // UN1 to UN6, the recheck when the UNDO arrows run, and who is told (P10).
 import { beforeEach, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { loadBraidLog } from "../db/records";
 import * as t from "../db/schema";
@@ -13,8 +13,9 @@ import { readReceipt } from "../queries/undo";
 import { at, seededDb } from "../test/seeded-db";
 import { decideBraidEntry } from "./braid";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./capture";
-import { setStatus } from "./status";
-import { undoSave } from "./undo";
+import { getReview } from "../queries/review";
+import { saveReason, setStatus } from "./status";
+import { runUndoArrows, toldOfLeave, undoSave } from "./undo";
 
 let db: Db;
 let saved: string;
@@ -33,9 +34,9 @@ async function kemarSaves(): Promise<string> {
 }
 
 /** "Undo that" in the chat, read without a model (QA8): the undo job runs as the message is read. */
-async function says(who: string, minutes: number, text = "Undo that") {
+async function says(who: string, minutes: number, text = "Undo that", topic = "undo") {
   const { captureId } = await createCapture(as(who, minutes), { channel: "app", kind: "text", text, messageAt: at(minutes), receivedAt: at(minutes), messageId: `say-${who}-${minutes}-${text}` });
-  const r = await proposeItems(as(who, minutes), captureId, [], { model: "fixture", question: { asked: text, topic: "undo", projectId: null } });
+  const r = await proposeItems(as(who, minutes), captureId, [], { model: "fixture", question: { asked: text, topic, projectId: null } });
   return { captureId, answer: r.answer! };
 }
 
@@ -79,7 +80,7 @@ describe("Undo (M30)", () => {
   it('"Undo that" within undoMinutes takes every record back through its own UNDO arrow, all at once', async () => {
     expect(await live("alicia")).toContain(`approve:${RISK(saved)}`);
     const { answer } = await says("kemar", 6);
-    expect(answer.text).toBe("Done. I undid your 9:12am update: 9 changes are back as they were. Anyone it told has been told it's undone.");
+    expect(answer.text).toBe("Done. I undid your 9:12am update: 9 changes are back as they were. I told Alicia and Andre it's undone.");
     expect(answer.wording).toBe("rules");
 
     expect(await work("wi-151")).toMatchObject({ state: "in_progress", blockedNote: null, blockedLinks: [] });
@@ -185,11 +186,39 @@ describe("Undo (M30)", () => {
     expect(await noticesTo("alicia")).toEqual(["Kemar undid this: Trend model may slip to 24 Oct."]);
   });
 
-  it('"Kemar undid this." goes only to people who can still open the record', async () => {
+  it('"Kemar undid this." goes only to people who can still open the record, and the answer says only who was told', async () => {
     await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "andre")));
-    await undoSave(as("kemar", 6), { commandId: "btn-1", captureId: saved });
+    const { answer } = await says("kemar", 6);
     expect(await noticesTo("andre")).toEqual([]);
     expect(await noticesTo("alicia")).toEqual(["Kemar undid this: Trend model may slip to 24 Oct."]);
+    expect(answer.text).toBe("Done. I undid your 9:12am update: 9 changes are back as they were. I told Alicia it's undone.");
+  });
+
+  it("the model's fix: a record that moves between the check and the arrows refuses the job as moved, by the recheck", async () => {
+    const receipt = (await readReceipt(db, saved))!;
+    const refusal = await db.transaction(async (tx) => {
+      // After CHECK passed: someone moves #151 before the UNDO arrows run
+      await tx.update(t.workItems).set({ version: sql`${t.workItems.version} + 1` }).where(eq(t.workItems.id, "wi-151"));
+      return runUndoArrows(tx, at(6), "kemar", receipt, "btn-1");
+    });
+    // Without the recheck the arrow's own version check refuses it as "failed", naming nothing
+    expect(refusal).toEqual({ why: "moved", records: [{ type: "work_item", id: "wi-151" }] });
+    expect((await work("wi-145")).state).toBe("done");
+  });
+
+  it("the model's fix: a right lost between the check and the arrows refuses the job, by the recheck", async () => {
+    const receipt = (await readReceipt(db, saved))!;
+    const refusal = await db.transaction(async (tx) => {
+      await tx.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+      return runUndoArrows(tx, at(6), "kemar", receipt, "btn-1");
+    });
+    expect(refusal).toEqual({ why: "no_right", records: [] });
+  });
+
+  it("a step goes back along its own UNDO arrow (rule 2), audited like any move", async () => {
+    await undoSave(as("kemar", 6), { commandId: "btn-1", captureId: saved });
+    const [step] = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.action, "UNDO"), eq(t.auditEntries.machine, "handover_step")));
+    expect(step).toMatchObject({ fromState: "handed_over", toState: "not_done" });
   });
 
   it("the thread shows the reply in DPM's words, and the inbox no longer offers the risk", async () => {
@@ -199,5 +228,44 @@ describe("Undo (M30)", () => {
     if (!thread.found) throw new Error("no thread");
     expect(thread.turns.at(-1)).toMatchObject({ state: "answered", answer: { topic: "undo" } });
     expect((await getInbox(db, "alicia", at(6))).items.map((i) => i.title)).toEqual(["Forager 2.0 is set At risk, but the plan says On track"]);
+  });
+});
+
+describe("Undo (M30): every notice the save sent gets one more, and nothing reads as filed after", () => {
+  beforeEach(async () => {
+    db = await seededDb({ kemarNote: false, aliciaSetsStatus: false });
+    // 9:02am: Alicia sets Off track and explains it; Kemar's save moves the plan, so her reason goes stale
+    await setStatus(as("alicia", -8), "forager", "off_track");
+    await saveReason(as("alicia", -7), "forager", { text: "The feed contact changed.", entryIds: ["br-feed-blocker"], draftedByAtlas: false, edited: false });
+    saved = await kemarSaves();
+  }, 30_000);
+
+  it('"Keep Off track?" from the rule is told too, and the reason stands again as it was', async () => {
+    expect(await live("alicia")).toContain("keep_set_status:forager");
+    expect((await readReceipt(db, saved))!.told).toContainEqual({ personId: "alicia", projectId: "forager", subjectType: "project", subjectId: "forager" });
+    await undoSave(as("kemar", 6), { commandId: "btn-1", captureId: saved });
+    expect(await live("alicia")).not.toContain("keep_set_status:forager");
+    expect(await noticesTo("alicia")).toContain("Kemar undid this: the update that moved Forager 2.0's plan.");
+    expect((await db.select().from(t.projects).where(eq(t.projects.id, "forager")))[0]).toMatchObject({ setOverride: "explained", setStatus: "off_track", setBy: "alicia" });
+    expect((await db.select().from(t.statusReasons).where(eq(t.statusReasons.projectId, "forager"))).map((r) => r.staleSince)).toEqual([null]);
+  });
+
+  it('after an undo, the review and "Why did you file that?" no longer read it as filed', async () => {
+    await undoSave(as("kemar", 6), { commandId: "btn-1", captureId: saved });
+    expect(await getReview(db, "kemar", saved)).toMatchObject({ found: true, undoneAt: at(6) });
+    const { answer } = await says("kemar", 7, "Why did you file that?", "why_filed");
+    expect(answer.text).toBe("You undid your 8:58am update at 9:16am, so nothing from it is filed now.");
+  });
+
+  it("a leave request's impact shown to leads is told too, and never back to its author", () => {
+    const opened = [
+      { ownerId: "alicia", causeKey: "leave_impact:lv-1@forager" },
+      { ownerId: "andre", causeKey: "leave_impact:lv-1@insights" },
+      { ownerId: "kemar", causeKey: "leave_impact:lv-1@gq" },
+    ];
+    expect(toldOfLeave(opened, "kemar", "lv-1")).toEqual([
+      { personId: "alicia", projectId: "forager", subjectType: "leave", subjectId: "lv-1" },
+      { personId: "andre", projectId: "insights", subjectType: "leave", subjectId: "lv-1" },
+    ]);
   });
 });

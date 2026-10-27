@@ -40,23 +40,32 @@ export function checkCorrection(raw: RawCorrection | null | undefined, ctx: Pick
 }
 
 const named = (projects: CheckContext["projects"], words: string) => projects.find((p) => [p.name, ...p.aliases].some((n) => norm(n) === norm(words)));
+const personNamed = (projects: CheckContext["projects"], words: string) =>
+  projects.flatMap((p) => p.people).find((x) => norm(x.name) === norm(words) || norm(x.name.split(" ")[0]) === norm(words));
+
+/** A name, as a new name for a project is written: one to three words, each capitalised ("Guild", "HX Pilot"). */
+const looksLikeAName = (words: string) => /^(?:[A-Z0-9][\w&'-]*)(?:\s+[A-Z0-9][\w&'-]*){0,2}$/.test(words.trim());
 
 /**
  * QA8 for corrections: without a model, the two shapes the plan names, as the whole message. "<project> also
  * means <word>" (either way round), and "<person> is <project>, not <project>" or "<person> is on <project>".
+ * A bare "is also" is how updates are said too ("Forager is also waiting on Kyle", "GQ is also late"), so
+ * after it only a name counts as a new name; anything else is left to be read as the update it is.
  */
 export function ruleCorrection(ctx: Pick<CheckContext, "text" | "projects">): Correction | null {
   const text = ctx.text.trim().replace(/[.!]+$/, "");
-  const also = /^(.+?)\s+(?:also means|means|is also)\s+(?:the\s+)?(.+?)(?:\s+too)?$/i.exec(text);
+  const also = /^(.+?)\s+(also means|means|is also called|is also known as|also goes by|goes by|is also)\s+(?:the\s+)?(.+?)(?:\s+too)?$/i.exec(text);
   if (also) {
-    const [left, right] = [also[1], also[2]];
+    const [left, verb, right] = [also[1], also[2].toLowerCase(), also[3]];
     const project = named(ctx.projects, left) ?? named(ctx.projects, right);
     const word = project && named(ctx.projects, left) === project ? right : left;
-    return project ? checkCorrection({ kind: "alias", projectId: project.id, word }, ctx) : null;
+    const loose = verb === "is also" && word === right && !looksLikeAName(right);
+    // "Kyle is also GQ" is about a person: the tie below reads it
+    if (project && !loose && !personNamed(ctx.projects, word)) return checkCorrection({ kind: "alias", projectId: project.id, word }, ctx);
   }
-  const tie = /^(.+?)\s+is\s+(?:on\s+|with\s+)?(.+?)(?:,?\s+not\s+(?:on\s+|with\s+)?(.+))?$/i.exec(text);
+  const tie = /^(.+?)\s+is\s+(?:also\s+)?(?:on\s+|with\s+)?(.+?)(?:,?\s+not\s+(?:on\s+|with\s+)?(.+))?$/i.exec(text);
   if (tie) {
-    const person = ctx.projects.flatMap((p) => p.people).find((x) => norm(x.name) === norm(tie[1]) || norm(x.name.split(" ")[0]) === norm(tie[1]));
+    const person = personNamed(ctx.projects, tie[1]);
     const project = named(ctx.projects, tie[2]);
     const not = tie[3] ? named(ctx.projects, tie[3]) : undefined;
     if (person && project) return checkCorrection({ kind: "contact", projectId: project.id, personId: person.personId, notProjectId: not?.id ?? null }, ctx);

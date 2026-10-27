@@ -35,6 +35,15 @@ export async function lastSave(conn: Conn, authorId: string): Promise<StoredRece
   return row ? receiptOf(row) : null;
 }
 
+/** Who heard "Kemar undid this." from an undo job, as the job recorded when it moved to undone. */
+export async function toldUndone(conn: Conn, jobId: string): Promise<string[]> {
+  const [row] = await conn
+    .select({ detail: t.auditEntries.detail })
+    .from(t.auditEntries)
+    .where(and(eq(t.auditEntries.machine, "undo"), eq(t.auditEntries.subjectId, jobId), eq(t.auditEntries.toState, "undone")));
+  return ((row?.detail ?? {}) as { told?: string[] }).told ?? [];
+}
+
 /**
  * What the chat shows under a saved message: the Undo button while it may work, or when it was undone, or
  * why it was not (note, filled by the chat from the undo answer).

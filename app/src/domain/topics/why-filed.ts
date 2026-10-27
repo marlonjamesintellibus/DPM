@@ -5,8 +5,10 @@ import type { Topic } from "./topic";
 
 export const whyFiled = {
   id: "why_filed",
-  // "Why did you file that?", "Why did #151 go to Forager?", "Why was that put in Store Insights?"
-  rule: /\bwhy\b.*\b(?:file|filed|filing|put|route|routed|log|logged|sen[dt]|(?:go|went|gone)\s+(?:to|in|into|on|under))\b/,
+  // "Why did you file that?", "Why did #151 go to Forager?", "Why was that put in Store Insights?". Only
+  // when Atlas did the filing ("you") or it is about what they said ("that", "#151", "my blocker"): "Why
+  // did Forager go to at risk?" or "Why was the launch put on hold?" are why questions about the work (phase C)
+  rule: /\bwhy\s+(?:did|was|were|has|have|is|are|'d)?\s*(?:you\b.*\b(?:file|filed|put|route|routed|log|logged|send|sent)\b|(?:that|this|it|those|these|#\d+|my\s+(?:\w+\s+)?(?:update|item|items|blocker|risk|issue|decision|note|message))\s+(?:get\s+|been\s+)?(?:filed|put|routed|logged|sent|go|went|gone|end(?:ed)?\s+up)\b)/,
   prompt: "why Atlas filed their update or an item of it where it did (\"Why did you file that?\")",
   suggest: ["What am I working on?", "Any updates?"],
 } as const satisfies Topic;

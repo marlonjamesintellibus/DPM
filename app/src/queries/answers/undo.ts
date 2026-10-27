@@ -1,14 +1,14 @@
 // Phase L, M30: what "Undo that" did, in DPM's own words (the undo job ran while the message was read; its
 // id is in question.made). The Undo button says the same. A refusal names and links only records the asker
 // can open now, and who changed them (UN2); after the window, it links the projects to change them from (UN1).
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import type { Conn } from "../../db/conn";
 import * as t from "../../db/schema";
 import { config } from "../../domain/config";
 import type { SavedRef } from "../../domain/machines/undo";
 import type { AnswerCard } from "../../domain/question";
 import { clockTime, firstName, projectReader } from "../project";
-import { readReceipt } from "../undo";
+import { readReceipt, toldUndone } from "../undo";
 import type { AnswerBuilder, Body } from "./shared";
 
 const NOTHING: Body = { text: "There's nothing of yours to undo.", cards: [], more: null };
@@ -31,9 +31,12 @@ export async function undoReply(conn: Conn, viewerId: string, jobId: string | nu
   if (job.state === "undone") {
     const n = receipt.records.filter((r) => r.type !== "set_status" && r.type !== "handover").length;
     const what = `${n} ${n === 1 ? "change is" : "changes are"} back as ${n === 1 ? "it was" : "they were"}`;
-    return earlier
-      ? { text: `You already undid your ${saved} update at ${clockTime(job.updatedAt)}.`, cards: projectCards, more: null }
-      : { text: `Done. I undid your ${saved} update: ${what}. Anyone it told has been told it's undone.`, cards: projectCards, more: null };
+    if (earlier) return { text: `You already undid your ${saved} update at ${clockTime(job.updatedAt)}.`, cards: projectCards, more: null };
+    // Rule 2: only who was told; each can open the record, as the asker can, so naming them hints at nothing
+    const told = await toldUndone(conn, job.id);
+    const names = told.length ? (await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(inArray(t.people.id, told))).map((p) => firstName(p.name)).sort() : [];
+    const tell = names.length ? ` I told ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} it's undone.` : "";
+    return { text: `Done. I undid your ${saved} update: ${what}.${tell}`, cards: projectCards, more: null };
   }
   const refusal = job.refusal;
   switch (refusal?.why) {

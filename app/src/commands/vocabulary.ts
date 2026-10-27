@@ -4,25 +4,23 @@
 // changes until one of them approves it, checked when they do (rule 4). Once applied, the check context
 // reads it (queries/check-context.ts), so Atlas routes by it next time.
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import { loadWorld, orgTagsOf } from "../db/records";
 import * as t from "../db/schema";
 import { actorIn, isCandidate, type World } from "../domain/machines/membership";
 import {
-  aliasClashes,
   alreadyNamed,
   applyVocabularyChange,
   vocabularyExpiryDue,
   vocabularyKey,
   vocabularyReminderDue,
-  type NamedProject,
   type VocabularyChangeRecord,
   type VocabularyEvent,
   type VocabularyKind,
 } from "../domain/machines/vocabulary-change";
-import { changeLabel } from "../queries/answers/correction";
+import { changeLabel, clashesFor, namedProjectsOf } from "../queries/answers/correction";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProject } from "./evaluate";
 import { notice } from "./notices";
@@ -50,12 +48,13 @@ export function vocabularyOf(row: VocabularyRow): VocabularyChangeRecord {
   };
 }
 
-/** The projects a person can open, by their names (P10: nobody else's are ever looked at). */
-async function readableNamed(tx: Tx, personId: string, world: World): Promise<NamedProject[]> {
-  const orgTags = await orgTagsOf(tx, personId);
-  const ids = world.projects.filter((p) => isCandidate(personId, orgTags, p.id, world)).map((p) => p.id);
-  if (!ids.length) return [];
-  return tx.select({ id: t.projects.id, name: t.projects.name, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids));
+/**
+ * M31 APPROVE concurrency: approvals of one word wait for each other until the first commits, so the clash
+ * recheck of the second reads the first's alias, whichever projects they are for (the model's fix: two
+ * waiting proposals for one word cannot both apply, with more than one connection too).
+ */
+async function lockWord(tx: Tx, word: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`vocabulary:${word.trim().toLowerCase().replace(/\s+/g, " ")}`}))`);
 }
 
 export type CorrectionInput = {
@@ -76,7 +75,9 @@ export type Proposal = { kind: "already" } | { kind: "change"; change: Vocabular
 /**
  * Proposes one change, inside a command's transaction. Rule 6: the same change said again changes
  * nothing, whatever its proposal's state. UN9: an alias already naming another project the person told
- * can open is refused before it is proposed, and the refusal names only those projects.
+ * can open is refused before it is proposed, and the refusal names only those projects. The refusal is
+ * theirs alone (vocabularyKey's refusedFor): someone who cannot open the clashing project is never told
+ * of it, and their own correction is still proposed.
  */
 export async function proposeVocabularyChange(tx: Tx, now: Date, input: CorrectionInput): Promise<Proposal> {
   const world = await loadWorld(tx);
@@ -112,7 +113,8 @@ export async function proposeVocabularyChange(tx: Tx, now: Date, input: Correcti
     decidedOn: null,
     clashesWith: [],
   };
-  const key = vocabularyKey(draft);
+  const clashes = clashesFor(draft, await namedProjectsOf(tx, input.forId)).map((p) => p.id);
+  const key = vocabularyKey(draft, clashes.length ? input.forId : null);
   const [seen] = await tx.select().from(t.vocabularyChanges).where(eq(t.vocabularyChanges.dedupKey, key));
   if (seen) return { kind: "change", change: vocabularyOf(seen), fresh: false };
 
@@ -120,7 +122,6 @@ export async function proposeVocabularyChange(tx: Tx, now: Date, input: Correcti
     const [person] = await tx.select({ title: t.people.title }).from(t.people).where(eq(t.people.id, personId));
     draft.tie = person?.title ? `contact (${person.title})` : "contact";
   }
-  const clashes = input.kind === "alias" && !remove ? aliasClashes(word!, input.projectId, await readableNamed(tx, input.forId, world)) : [];
   const r = applyVocabularyChange(draft, { type: "PROPOSE", clashesWith: clashes }, null, todayOf(now));
   const m = moved(r.outcome);
   const c = r.record;
@@ -153,12 +154,10 @@ export function decideVocabularyChange(ctx: CommandCtx, changeId: string, act: "
     let event: VocabularyEvent = { type: "DECLINE" };
     if (act === "approve") {
       // The model's fix: two waiting proposals for one word cannot both apply; only what the approver can open is checked (P10)
-      const clashes = before.kind === "alias" && !before.remove ? aliasClashes(before.word!, before.projectId, await readableNamed(tx, ctx.actorId, world)) : [];
-      event = { type: "APPROVE", clashesWith: clashes };
-      if (clashes.length) {
-        const names = (await readableNamed(tx, ctx.actorId, world)).filter((p) => clashes.includes(p.id)).map((p) => p.name);
-        throw new CommandRefused(`"${before.word}" already names ${names.join(" and ")}. Decline it, or take it off that project first`);
-      }
+      if (before.kind === "alias" && !before.remove) await lockWord(tx, before.word!);
+      const clashes = clashesFor(before, await namedProjectsOf(tx, ctx.actorId));
+      event = { type: "APPROVE", clashesWith: clashes.map((p) => p.id) };
+      if (clashes.length) throw new CommandRefused(`"${before.word}" already names ${clashes.map((p) => p.name).join(" and ")}. Decline it, or take it off that project first`);
     }
     const r = applyVocabularyChange(before, event, actor, todayOf(ctx.now));
     const m = moved(r.outcome);
@@ -186,12 +185,18 @@ export function decideVocabularyChange(ctx: CommandCtx, changeId: string, act: "
   });
 }
 
-/** The project's names and contacts as routing reads them. Aliases are data, not a machine's state, so no version moves. */
+/**
+ * The project's names and contacts as routing reads them. Aliases are data, not a machine's state, so no
+ * version moves; the list changes in one statement, never read then written back, so two approvals on one
+ * project at once both land.
+ */
 async function applyToVocabulary(tx: Tx, c: VocabularyChangeRecord): Promise<void> {
   if (c.kind === "alias") {
-    const [p] = await tx.select({ aliases: t.projects.aliases }).from(t.projects).where(eq(t.projects.id, c.projectId));
-    const rest = p.aliases.filter((a) => a.toLowerCase() !== c.word!.toLowerCase());
-    await tx.update(t.projects).set({ aliases: c.remove ? rest : [...rest, c.word!] }).where(eq(t.projects.id, c.projectId));
+    const rest = sql`array(select a from unnest(${t.projects.aliases}) as a where lower(a) <> lower(${c.word!}))`;
+    await tx
+      .update(t.projects)
+      .set({ aliases: c.remove ? rest : sql`array_append(${rest}, ${c.word!}::text)` })
+      .where(eq(t.projects.id, c.projectId));
   } else if (c.remove) {
     await tx.delete(t.projectContacts).where(and(eq(t.projectContacts.projectId, c.projectId), eq(t.projectContacts.personId, c.personId!)));
   } else {

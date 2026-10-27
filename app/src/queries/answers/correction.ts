@@ -1,11 +1,12 @@
 // Phase L, M31: what a correction proposed, as its proposals stand now (they were made while the message
 // was read, commands/capture.ts). Each part says who decides it (UN8: only a proposal), that it was refused
 // because the word already names another project the asker can open (UN9, nothing else is named), or that
-// nothing needed changing. Said again, it tells how the first one stands (rule 6).
+// nothing needed changing. Said again, it tells how the first one stands (rule 6). The clash is worked out
+// from the asker's own projects, as the proposal was, so one person's refusal never answers another (P10).
 import { and, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../../db/conn";
 import * as t from "../../db/schema";
-import { vocabularyKey, type VocabularyChangeRecord } from "../../domain/machines/vocabulary-change";
+import { aliasClashes, vocabularyKey, type NamedProject, type VocabularyChangeRecord } from "../../domain/machines/vocabulary-change";
 import type { AnswerCard } from "../../domain/question";
 import type { Correction } from "../../domain/topics/correction";
 import { firstName, projectReader, shortDate } from "../project";
@@ -21,6 +22,21 @@ export function correctionParts(c: Correction): Pick<VocabularyChangeRecord, "pr
   ];
 }
 
+/** The projects a person can open, by their names (P10: nobody else's are ever looked at). */
+export async function namedProjectsOf(conn: Conn, personId: string): Promise<NamedProject[]> {
+  const reader = await projectReader(conn, personId);
+  const ids = reader.world.projects.filter((p) => reader.mayRead(p.id)).map((p) => p.id);
+  if (!ids.length) return [];
+  return conn.select({ id: t.projects.id, name: t.projects.name, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids));
+}
+
+/** UN9: the projects, among those the person can open, that an added alias already names. */
+export function clashesFor(part: Pick<VocabularyChangeRecord, "projectId" | "kind" | "word" | "remove">, readable: readonly NamedProject[]): NamedProject[] {
+  if (part.kind !== "alias" || part.remove) return [];
+  const ids = aliasClashes(part.word ?? "", part.projectId, readable);
+  return readable.filter((p) => ids.includes(p.id));
+}
+
 /** What a change says, for a sentence: `"Guild" as a name for GQ & Academy`, `Kyle as a contact on Store Insights`. */
 export async function changeLabel(conn: Conn, c: Pick<VocabularyChangeRecord, "kind" | "word" | "personId" | "remove" | "projectId">): Promise<string> {
   const [p] = await conn.select({ name: t.projects.name }).from(t.projects).where(eq(t.projects.id, c.projectId));
@@ -32,12 +48,15 @@ export async function changeLabel(conn: Conn, c: Pick<VocabularyChangeRecord, "k
 export const correction: AnswerBuilder = async (conn, viewerId, question) => {
   if (!question.correction) return { text: HOW, cards: [], more: null };
   const reader = await projectReader(conn, viewerId);
+  const readable = await namedProjectsOf(conn, viewerId);
   const sentences: string[] = [];
   const cards: AnswerCard[] = [];
   for (const part of correctionParts(question.correction)) {
     if (!reader.mayRead(part.projectId)) continue;
     const [project] = await conn.select({ name: t.projects.name }).from(t.projects).where(eq(t.projects.id, part.projectId));
-    const [row] = await conn.select().from(t.vocabularyChanges).where(eq(t.vocabularyChanges.dedupKey, vocabularyKey(part)));
+    // UN9: a clash from where the asker stands is their own refusal; otherwise it is the change everyone shares
+    const clashes = clashesFor(part, readable);
+    const [row] = await conn.select().from(t.vocabularyChanges).where(eq(t.vocabularyChanges.dedupKey, vocabularyKey(part, clashes.length ? viewerId : null)));
     // Said again in other words or case, it is the first one, as it was first said
     const what = await changeLabel(conn, row ?? part);
     const href = `/projects/${part.projectId}`;
@@ -48,22 +67,28 @@ export const correction: AnswerBuilder = async (conn, viewerId, question) => {
     switch (row.state) {
       case "proposed": {
         const deciders = await conn
-          .select({ name: t.people.name })
+          .select({ id: t.people.id, name: t.people.name })
           .from(t.projectMemberships)
           .innerJoin(t.people, eq(t.people.id, t.projectMemberships.personId))
           .where(and(eq(t.projectMemberships.projectId, part.projectId), eq(t.projectMemberships.state, "member"), inArray(t.projectMemberships.role, ["pm", "lead"])));
-        const who = deciders.length ? deciders.map((d) => firstName(d.name)).sort().join(" or ") : `a PM or Lead of ${project.name}`;
-        sentences.push(`I asked ${who} to approve ${what}. Until then I read it as before.`);
-        cards.push({ title: what.charAt(0).toUpperCase() + what.slice(1), detail: `Waiting for ${who}`, tag: "Proposed", href });
+        const others = deciders.filter((d) => d.id !== viewerId);
+        const who = others.map((d) => firstName(d.name)).sort().join(" or ");
+        const title = what.charAt(0).toUpperCase() + what.slice(1);
+        if (others.length < deciders.length) {
+          // A PM or Lead correcting their own project: it waits in their own inbox, like any change they decide
+          sentences.push(others.length ? `I asked ${who} to approve ${what}, or you can from your inbox. Until then I read it as before.` : `${title} is waiting in your inbox for you to approve. Until then I read it as before.`);
+          cards.push({ title, detail: others.length ? `Waiting for you or ${who}` : "Waiting for you", tag: "Proposed", href: "/?view=inbox" });
+          break;
+        }
+        const asked = who || `a PM or Lead of ${project.name}`;
+        sentences.push(`I asked ${asked} to approve ${what}. Until then I read it as before.`);
+        cards.push({ title, detail: `Waiting for ${asked}`, tag: "Proposed", href });
         break;
       }
-      case "refused": {
-        // UN9: the clash was found among projects they could open; say only those they can open now
-        const names = row.clashesWith.filter(reader.mayRead);
-        const clash = names.length ? (await conn.select({ name: t.projects.name }).from(t.projects).where(inArray(t.projects.id, names))).map((p) => p.name).join(" and ") : "another project";
-        sentences.push(`"${part.word}" already names ${clash}, so I didn't ask: it would make it unclear where updates go.`);
+      case "refused":
+        // UN9: refused from where the asker stands now, so every project named is one they can open
+        sentences.push(`"${part.word}" already names ${clashes.map((p) => p.name).join(" and ")}, so I didn't ask: it would make it unclear where updates go.`);
         break;
-      }
       case "applied":
         sentences.push(`That's already how I read it: ${what}.`);
         break;

@@ -71,3 +71,38 @@ export function applyHandover(record: HandoverRecord, event: HandoverEvent): Han
   const stepsDone = event.type === "STEPS_DONE" || event.type === "UNDO" ? event.done : record.stepsDone;
   return { outcome, record: { ...record, state: outcome.to, stepsDone } };
 }
+
+// ---- One step of a handover ----
+
+export const STEP_STATES = ["not_done", "in_progress", "handed_over"] as const;
+export type StepState = (typeof STEP_STATES)[number];
+
+export type StepEvent =
+  // An update moves a step forward ("Jodian has the runbook"); saying where it already is is no change (compare and set)
+  | { type: "MOVE"; to: StepState }
+  // Phase L, M30: the save that moved it is undone; back to the state that save moved it from
+  | { type: "UNDO"; to: StepState };
+
+const isStep = (to: string): to is StepState => (STEP_STATES as readonly string[]).includes(to);
+const rank = (s: StepState) => STEP_STATES.indexOf(s);
+const goesTo = (to: StepState) => (_: null, e: StepEvent) => (e.to === to ? null : `goes to ${e.to}`);
+
+/**
+ * Phase L (rule 2 of section 1): a step's state moves only along these arrows, forward on a save and back
+ * on an undo; both used to write it directly by its version. Each MOVE has its UNDO drawn back
+ * (research/state-machines/js/models/undoArrows.mjs, HandoverStep).
+ */
+export const handoverStepMachine = defineMachine<StepState, StepEvent, null>({
+  name: "handover_step",
+  states: STEP_STATES,
+  arrows: [
+    ...STEP_STATES.flatMap((from) => STEP_STATES.filter((to) => rank(to) > rank(from)).map((to) => ({ from: [from], on: "MOVE" as const, to, guard: goesTo(to) }))),
+    ...STEP_STATES.flatMap((from) => STEP_STATES.filter((to) => rank(to) < rank(from)).map((to) => ({ from: [from], on: "UNDO" as const, to, guard: goesTo(to) }))),
+  ],
+});
+
+/** Moves one step. A value that is no step state is refused, like an arrow nobody drew. */
+export function applyStep(state: StepState, event: StepEvent): Outcome<StepState> {
+  if (!isStep(event.to)) return { ok: false, machine: "handover_step", event: event.type, from: state, reason: `"${event.to}" is not a handover step state (${STEP_STATES.join(", ")})` };
+  return transition(handoverStepMachine, state, event, null);
+}

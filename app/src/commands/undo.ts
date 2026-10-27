@@ -7,10 +7,10 @@
 // who can still open the record; a refusal names only what the asker can open now (queries/answers/undo.ts).
 import { and, eq, inArray } from "drizzle-orm";
 import type { Tx } from "../db/conn";
-import { leaveRecordOf, loadBraidLog, loadWorld, orgTagsOf, persistBraidLog, setStatusRecordOf } from "../db/records";
+import { leaveRecordOf, loadBraidLog, loadWorld, orgTagsOf, persistBraidLog, persistSetStatus, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
 import { applyBraidEvent, type BraidLog } from "../domain/machines/braid-entry";
-import { applyHandover } from "../domain/machines/handover";
+import { applyHandover, applyStep } from "../domain/machines/handover";
 import { applyLeaveEvent } from "../domain/machines/leave";
 import { actorIn, isCandidate, type World } from "../domain/machines/membership";
 import { applyMilestone } from "../domain/machines/milestone";
@@ -55,19 +55,34 @@ export async function versionsOf(tx: Tx, refs: readonly SavedRef[]): Promise<Map
   return out;
 }
 
-/** The people a save told: the owners of the inbox items it opened about BRAID entries, besides its author. */
+/**
+ * The people a save told: the owners of every inbox item it opened, besides its author. Each item's cause
+ * names what it is about (M10 keys are "<cause>:<subject id>"): a BRAID entry, the project's set status
+ * ("status_set_with_no_reason", "keep_set_status"), or a work item.
+ */
 export async function toldBy(tx: Tx, evaluations: ReadonlyMap<string, Evaluation>, authorId: string): Promise<Told[]> {
   const told: Told[] = [];
   for (const [projectId, e] of evaluations) {
     for (const { ownerId, causeKey } of e.opened) {
       if (ownerId === authorId) continue;
       const subjectId = causeKey.slice(causeKey.indexOf(":") + 1);
-      const [entry] = await tx.select({ id: t.braidEntries.id }).from(t.braidEntries).where(eq(t.braidEntries.id, subjectId));
-      if (entry) told.push({ personId: ownerId, projectId, subjectType: "braid_entry", subjectId });
+      const subjectType = subjectId === projectId ? "project" : (await isEntry(tx, subjectId)) ? "braid_entry" : (await isWork(tx, subjectId)) ? "work_item" : null;
+      if (subjectType) told.push({ personId: ownerId, projectId, subjectType, subjectId });
     }
   }
   return told;
 }
+
+/** The leads a save showed a leave request's impact to ("leave_impact:<leave>@<project>"), besides its author. */
+export function toldOfLeave(opened: Evaluation["opened"], authorId: string, leaveId: string): Told[] {
+  return opened.flatMap(({ ownerId, causeKey }) => {
+    const projectId = causeKey.slice(causeKey.indexOf("@") + 1);
+    return ownerId === authorId ? [] : [{ personId: ownerId, projectId, subjectType: "leave" as const, subjectId: leaveId }];
+  });
+}
+
+const isEntry = async (tx: Tx, id: string) => (await tx.select({ id: t.braidEntries.id }).from(t.braidEntries).where(eq(t.braidEntries.id, id))).length > 0;
+const isWork = async (tx: Tx, id: string) => (await tx.select({ id: t.workItems.id }).from(t.workItems).where(eq(t.workItems.id, id))).length > 0;
 
 export async function writeReceipt(tx: Tx, now: Date, captureId: string, authorId: string, receipt: Receipt): Promise<void> {
   const records = [...receipt.records.values()];
@@ -122,7 +137,7 @@ export async function undoInTx(tx: Tx, now: Date, actorId: string, input: { comm
   await tx.insert(t.undos).values({ id: job.id, captureId: job.captureId, ownerId: actorId, state: "requested", createdAt: now, updatedAt: now });
   await auditJob(tx, now, job, { event: "REQUESTED", from: null, to: "requested" });
 
-  const step = async (event: UndoEvent) => {
+  const step = async (event: UndoEvent, detail: Record<string, unknown> = {}) => {
     const r = applyUndo(job, event);
     const m = moved(r.outcome);
     const rows = await tx
@@ -132,32 +147,42 @@ export async function undoInTx(tx: Tx, now: Date, actorId: string, input: { comm
       .returning({ id: t.undos.id });
     expectOne(rows, `undo ${job.id}`);
     job = r.record;
-    await auditJob(tx, now, job, { event: m.event, from: m.from, to: m.to }, job.refusal ? { refusal: job.refusal } : {});
+    await auditJob(tx, now, job, { event: m.event, from: m.from, to: m.to }, job.refusal ? { refusal: job.refusal } : detail);
   };
 
   await step({ type: "CHECK", refusal: await verdict(tx, receipt, actorId, now) });
   if (job.state === "refused") return { kind: "job", job };
 
-  let refusal: UndoRefusal | null = null;
+  const refusal = await runUndoArrows(tx, now, actorId, receipt, job.id);
+  let told: string[] = [];
+  if (!refusal) {
+    // UN3: the deciders' items close as cause gone, as the rules see it now; then the people the save told hear it
+    await evaluateProjects(tx, projectsOf(receipt), now, { actorId });
+    told = await tellUndone(tx, now, actorId, receipt);
+  }
+  // Kept with the move, so the answer says who was told and never more than happened (rule 2 of the plan)
+  await step({ type: "RUN", refusal }, { told });
+  return { kind: "job", job };
+}
+
+/**
+ * Undoing --> undone or refused: the guard again and every UNDO arrow, in a savepoint (the model's fix:
+ * the versions and the right are checked in the transaction that runs the arrows). A refusal there, or
+ * an arrow that refuses, rolls all of them back. Null when every record went back.
+ */
+export async function runUndoArrows(tx: Tx, now: Date, actorId: string, receipt: StoredReceipt, jobId: string): Promise<UndoRefusal | null> {
   try {
     await tx.transaction(async (sp) => {
-      // The model's fix: the versions and the right again, in the transaction that runs the UNDO arrows
       const again = await verdict(sp, receipt, actorId, now);
       if (again) throw new Recheck(again);
-      await runArrows(sp, now, actorId, receipt, job.id);
+      await runArrows(sp, now, actorId, receipt, jobId);
     });
+    return null;
   } catch (e) {
-    if (e instanceof Recheck) refusal = e.refusal;
-    else if (e instanceof CommandRefused || e instanceof StaleVersion) refusal = { why: "failed", records: [], detail: e.message };
-    else throw e;
+    if (e instanceof Recheck) return e.refusal;
+    if (e instanceof CommandRefused || e instanceof StaleVersion) return { why: "failed", records: [], detail: e.message };
+    throw e;
   }
-  await step({ type: "RUN", refusal });
-  if (job.state !== "undone") return { kind: "job", job };
-
-  // UN3: the deciders' items close as cause gone, as the rules see it now
-  await evaluateProjects(tx, projectsOf(receipt), now, { actorId });
-  await tellUndone(tx, now, actorId, receipt);
-  return { kind: "job", job };
 }
 
 function auditJob(tx: Tx, now: Date, job: UndoRecord, move: { event: string; from: string | null; to: string }, detail: Record<string, unknown> = {}) {
@@ -236,38 +261,29 @@ async function runArrows(tx: Tx, now: Date, actorId: string, receipt: StoredRece
         break;
       }
       case "handover_step": {
-        // A step has no machine of its own: it goes back as the save moved it forward, by its version
+        // Rule 2: back along the step's own UNDO arrow (handoverStepMachine), the right read now
         const [row] = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, r.id));
         if (!actorIn(actorId, r.projectId, world.memberships).role) throw new CommandRefused("only a project member can undo this");
+        const m = moved(applyStep(row.state, { type: "UNDO", to: r.before.state }));
         const rows = await tx
           .update(t.handoverSteps)
-          .set({ state: r.before.state, version: nextVersion(t.handoverSteps.version), updatedAt: now })
+          .set({ state: m.to, version: nextVersion(t.handoverSteps.version), updatedAt: now })
           .where(and(eq(t.handoverSteps.id, r.id), eq(t.handoverSteps.version, r.version)))
           .returning({ id: t.handoverSteps.id });
         expectOne(rows, `handover step ${r.id}`);
-        await undoAudit(r, "handover_step", "handover_step", row.state, r.before.state);
+        await undoAudit(r, "handover_step", "handover_step", m.from, m.to);
         break;
       }
       case "set_status": {
         const [row] = await tx.select().from(t.projects).where(eq(t.projects.id, r.id));
         const u = applySetStatus(setStatusRecordOf(row), null, { type: "UNDO", before: r.before });
         const m = moved(u.outcome);
-        const rows = await tx
-          .update(t.projects)
-          .set({
-            setOverride: u.record.override,
-            setStatus: u.record.setStatus,
-            reasonGivenAt: u.record.reasonGivenAt,
-            setBy: r.before.setBy,
-            setAt: r.before.setAt ? new Date(r.before.setAt) : null,
-            version: nextVersion(t.projects.version),
-            updatedAt: now,
-          })
-          .where(and(eq(t.projects.id, r.id), eq(t.projects.version, r.version)))
-          .returning({ id: t.projects.id });
-        expectOne(rows, `project ${r.id}`);
-        // The reason went stale with this save; it stands again as it was
-        await tx.update(t.statusReasons).set({ staleSince: null }).where(and(eq(t.statusReasons.projectId, r.id), eq(t.statusReasons.staleSince, receipt.savedAt)));
+        // Rule 2: what the machine's UNDO gives back, with who set it and when, as the owner's own set left it
+        await persistSetStatus(tx, r.id, r.version, u.record, now, { by: r.before.setBy, at: r.before.setAt ? new Date(r.before.setAt) : null });
+        // The reason went stale with this save; unless the arrow left it stale, it stands again as it was
+        if (u.record.override !== "reason_stale") {
+          await tx.update(t.statusReasons).set({ staleSince: null }).where(and(eq(t.statusReasons.projectId, r.id), eq(t.statusReasons.staleSince, receipt.savedAt)));
+        }
         await undoAudit(r, "set_status", "project", m.from, m.to);
         break;
       }
@@ -313,17 +329,41 @@ async function runArrows(tx: Tx, now: Date, actorId: string, receipt: StoredRece
   }
 }
 
-/** "Kemar undid this." to each person the save told who can still open the record, never to the asker. */
-async function tellUndone(tx: Tx, now: Date, actorId: string, receipt: StoredReceipt): Promise<void> {
-  if (!receipt.told.length) return;
+/**
+ * "Kemar undid this." to each person the save told who can still open the record, never to the asker: one
+ * more notice for every inbox item or notice the save sent. Returns who was told, for the answer.
+ */
+async function tellUndone(tx: Tx, now: Date, actorId: string, receipt: StoredReceipt): Promise<string[]> {
+  if (!receipt.told.length) return [];
   const world: World = await loadWorld(tx);
   const [me] = await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, actorId));
   const who = me?.name.split(" ")[0] ?? "Someone";
+  const told = new Set<string>();
   for (const x of receipt.told) {
     if (x.personId === actorId) continue;
     if (!isCandidate(x.personId, await orgTagsOf(tx, x.personId), x.projectId, world)) continue;
-    const [entry] = await tx.select({ title: t.braidEntries.title }).from(t.braidEntries).where(eq(t.braidEntries.id, x.subjectId));
-    if (!entry) continue;
-    await notice(tx, now, [x.personId], `${who} undid this: ${entry.title}.`, { type: x.subjectType, id: x.subjectId, projectId: x.projectId, act: "undone" });
+    const what = await toldAbout(tx, x, who);
+    if (!what) continue;
+    await notice(tx, now, [x.personId], `${who} undid this: ${what}.`, { type: x.subjectType, id: x.subjectId, projectId: x.projectId, act: "undone" });
+    told.add(x.personId);
+  }
+  return [...told].sort();
+}
+
+/** What a notice was about, in the words its reader saw: the entry or item, the project's status, the leave. */
+async function toldAbout(tx: Tx, x: Told, who: string): Promise<string | null> {
+  switch (x.subjectType) {
+    case "braid_entry":
+      return (await tx.select({ title: t.braidEntries.title }).from(t.braidEntries).where(eq(t.braidEntries.id, x.subjectId)))[0]?.title ?? null;
+    case "work_item": {
+      const [w] = await tx.select({ number: t.workItems.number, title: t.workItems.title }).from(t.workItems).where(eq(t.workItems.id, x.subjectId));
+      return w ? `${w.number ? `${w.number} ` : ""}${w.title}` : null;
+    }
+    case "project": {
+      const [p] = await tx.select({ name: t.projects.name }).from(t.projects).where(eq(t.projects.id, x.subjectId));
+      return p ? `the update that moved ${p.name}'s plan` : null;
+    }
+    case "leave":
+      return `${who}'s leave request`;
   }
 }
