@@ -32,14 +32,16 @@
 | W6 | Usage numbers for B, F, J, K, L | Those phases are not built |
 | W7 | Thumb icons | Not in Figma; drawn in the existing icon style for now |
 
-## 2. Decisions needed
+## 2. Decisions (settled 27 Oct 2026)
 
-| # | Question | What the code does now |
-|---|---|---|
-| W-D1 | Should a lowercase first name count as a mention (W2)? | Only a capitalised first name counts; a full name always counts |
-| W-D2 | JA8: reword, or plan a transcript fix step (W1)? | Items from a low-confidence transcript are Medium and need the author's OK; the transcript is shown as sent |
-| W-D3 | LF8: may a rate be shown when it would let someone work out a hidden count of fewer than 5 people? | No: the whole row is hidden, which often hides the headline answer rate while DPM is small |
-| W-D4 | Should JA7 (a name counts only in the shape of a reference) also apply to people's names in routing? | Projects only; person names still match in any case when routing |
+| # | Question | Decided | Code to change |
+|---|---|---|---|
+| W-D1 | Should a lowercase first name count as a mention (W2)? | Yes, unless the name is also a common English word (Mark, Will, Grace, Pat, May, Hope): those still need their capital. A full name counts in any case | `namesPerson` (CQ9): a small list of names that are words |
+| W-D2 | JA8: reword, or plan a transcript fix step (W1)? | Reword. The transcript is shown exactly as sent and never edited (A5.6); items from a low-confidence transcript are Medium and need the author's OK; corrections go in the items. Transcription belongs to the Atlas app | None: the plan's JA8 row changes |
+| W-D3 | LF8: who sees counts from fewer than 5 people? | DPM maintainers see every count and rate (never words or names). Executives get the strict view: a whole row is hidden when fewer than 5 people are behind it | `usageNumbers` and `pnpm atlas:usage`: suppression only for the executive view (`--org`) |
+| W-D4 | Should JA7 also apply to people's names in routing? | Yes, the W-D1 rule: a person's first name ties an item to a project when it is capitalised, or in any case when it is not a common word. Full names in any case | Check 14's tied_person basis uses the same matcher as `namesPerson` |
+
+W2 is closed by W-D1 and W1 by W-D2.
 
 ## 3. Corrections for the plan and the machines doc
 
