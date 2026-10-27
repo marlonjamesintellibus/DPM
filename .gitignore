@@ -1,0 +1,22 @@
+# OS and editors
+.DS_Store
+.vscode/
+.idea/
+
+# Node and Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Local data and secrets
+.data/
+.env
+.env.*
+!.env.example
+
+# Test output
+coverage/
+test-results/
+playwright-report/
