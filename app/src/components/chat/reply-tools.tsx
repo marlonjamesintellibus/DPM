@@ -3,7 +3,7 @@
 // conversation (MF9), Accept on a card for an item that needs the asker's OK (MF6, MF7), and the
 // thumbs up or down on the answer (phase S).
 import { useState, useTransition } from "react";
-import { acceptFromChat, rateAnswer, setHelpImproveAtlasAction, type ActionResult } from "@/app/actions";
+import { acceptFromChat, rateAnswer, setHelpImproveAtlasAction, undoUpdate, type ActionResult } from "@/app/actions";
 import { Icon } from "@/components/shell/icon";
 import { ActionNote, Button } from "@/components/ui/controls";
 import { useChatSend } from "./chat-session";
@@ -110,6 +110,25 @@ export function AnswerFeedback({ captureId, given, helpOn }: { captureId: string
       )}
       <ActionNote result={result} />
     </>
+  );
+}
+
+/**
+ * Phase L, M30: Undo on a saved message, while undoMinutes have not passed. The button carries its own
+ * command id, so a second press undoes nothing more (UN5); the command checks everything again as it runs.
+ */
+export function UndoSave({ captureId }: { captureId: string }) {
+  const [commandId] = useState(() => crypto.randomUUID());
+  const [pending, start] = useTransition();
+  const [result, setResult] = useState<ActionResult | null>(null);
+  if (result?.ok) return <span className="type-caption text-fg-2">{result.message}</span>;
+  return (
+    <span className="flex flex-col items-start gap-1">
+      <Button variant="secondary" disabled={pending} onClick={() => start(async () => setResult(await undoUpdate(captureId, commandId)))}>
+        Undo
+      </Button>
+      <ActionNote result={result} />
+    </span>
   );
 }
 

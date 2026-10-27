@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { KEMAR_CONTEXT, KEMAR_PROPOSALS } from "../../domain/atlas-checks/kemar-note.fixture";
 import { EVAL_CASES } from "./cases";
+import type { RawCorrection } from "../../domain/topics/correction";
 import { scoreCase } from "./score";
 
 const story = EVAL_CASES.find((c) => c.id === "kemar-note")!;
@@ -31,6 +32,17 @@ describe("scoreCase", () => {
     const done = { ...KEMAR_PROPOSALS[0], projectId: "insights", targetId: "wi-208", routingReason: { basis: "target" as const, evidence: "#208", label: "#208" }, quote: "Mussi #208 done" };
     expect(scoreCase(c, [done], KEMAR_CONTEXT)).toMatchObject({ pass: true, keys: ["upd:wi-208.state=done"] });
     expect(scoreCase({ ...c, text: "#208 done, mi check it." }, [{ ...done, quote: "#208 done" }], KEMAR_CONTEXT)).toMatchObject({ pass: false, forbidden: ["upd:wi-208.state=done at high"] });
+  });
+
+  it("phase L: a correction case passes on the checked correction, in any case, and fails on another or none", () => {
+    const c = byId("correction-contact");
+    const ctx = { ...KEMAR_CONTEXT, text: c.text };
+    const said = (correction: RawCorrection | null) => ({ asked: c.text, topic: "correction", projectId: "insights", correction });
+    expect(scoreCase(c, [], ctx, said({ kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" }))).toMatchObject({ pass: true, hit: 1, expected: 1 });
+    expect(scoreCase(c, [], ctx, said({ kind: "contact", projectId: "forager", personId: "kyle", notProjectId: "insights" })).pass).toBe(false);
+    expect(scoreCase(c, [], ctx, null).pass).toBe(false);
+    const alias = byId("correction-alias");
+    expect(scoreCase(alias, [], { ...KEMAR_CONTEXT, text: alias.text }, { asked: alias.text, topic: "correction", projectId: "gq", correction: { kind: "alias", projectId: "gq", word: "guild" } }).pass).toBe(true);
   });
 
   it("every case is well formed: unique ids, and no key both expected and forbidden", () => {

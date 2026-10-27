@@ -11,6 +11,7 @@ import { applyKindRequestEvent, kindRequestCauses } from "../domain/machines/kin
 import { liveEntryOf } from "../domain/machines/kind-switch";
 import { evaluateCause, LIVE, type InboxItemRef } from "../domain/machines/inbox-item";
 import { applySetStatus, setStatusCause, type SetStatusRecord } from "../domain/machines/set-status";
+import { vocabularyCauses } from "../domain/machines/vocabulary-change";
 import { calculatePlan } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import { audit, CommandRefused, expectOne, nextVersion, todayOf } from "./core";
@@ -57,6 +58,7 @@ function ownersOf(
     case "confirm_outcome": // Section 20, U3: a member said it ended; those who may end it decide (D7)
     case "follow_up": // D10: a PM or Lead confirms or drops what Atlas drafted
     case "kind_change": // M17: a PM or Lead switches or keeps what a member asked
+    case "vocab_change": // Phase L, M31: a PM or Lead of the project approves or declines a correction
       return leads;
     default:
       throw new Error(`unknown inbox cause ${causeKey}`);
@@ -157,9 +159,13 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
     for (const key of kindRequestCauses(record)) desired.set(key, ownersOf(key, project, entry, members, policy));
   }
 
+  // Phase L, M31: a correction waits on the project's PM and Leads while it is proposed
+  const changes = await tx.select({ id: t.vocabularyChanges.id, state: t.vocabularyChanges.state }).from(t.vocabularyChanges).where(eq(t.vocabularyChanges.projectId, projectId));
+  for (const key of changes.flatMap(vocabularyCauses)) desired.set(key, ownersOf(key, project, undefined, members));
+
   // Every item ever made for this project's causes (the project itself, its BRAID entries, its work)
   const allRequests = await tx.select({ id: t.braidKindRequests.id }).from(t.braidKindRequests).where(eq(t.braidKindRequests.projectId, projectId));
-  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id), ...allRequests.map((r) => r.id)]);
+  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id), ...allRequests.map((r) => r.id), ...changes.map((c) => c.id)]);
   const items = (await tx.select().from(t.inboxItems)).filter((i) => subjects.has(i.causeKey.slice(i.causeKey.indexOf(":") + 1)));
   const { opened, closed } = await syncInbox(tx, now, items, desired, opts);
 

@@ -69,12 +69,38 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-11's words and order; a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-11");
+  it("the topics come from domain/topics in read-wave2-l's words and order; a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-wave2-l");
     expect(SYSTEM_PROMPT).toContain(
-      "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
-    expect(questionSchema.shape.topic.options).toEqual(["needs_me", "my_work", "due", "blocked", "project_status", "updates", "mentions", "small_talk", "other", "unclear"]);
+    expect(questionSchema.shape.topic.options).toEqual([
+      "needs_me",
+      "my_work",
+      "due",
+      "blocked",
+      "project_status",
+      "updates",
+      "mentions",
+      "why_filed",
+      "correction",
+      "undo",
+      "small_talk",
+      "other",
+      "unclear",
+    ]);
+  });
+
+  it("phase L: undo is the whole message, and a correction is only a proposal with listed ids (UN8, M31)", () => {
+    const section = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("Undo and corrections\n"), SYSTEM_PROMPT.indexOf("\nEarlier messages"));
+    expect(section).toContain("with nothing else in the message, is topic undo with items empty");
+    expect(section).toContain("It is only a proposal: a PM or Lead of the project decides.");
+    expect(section).toContain('kind "alias", word the new name exactly as written');
+    expect(section).toContain('kind "contact", personId from the people listed');
+    expect(section).toContain("Use only listed project ids and people.");
+    const correction = { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" };
+    expect(questionSchema.safeParse({ asked: "Kyle is Store Insights, not Forager", topic: "correction", projectId: "insights", correction }).success).toBe(true);
+    expect(questionSchema.safeParse({ asked: "hi", topic: "small_talk", projectId: null }).success).toBe(true);
   });
 
   it("phase R: how the team writes is read as written, and what Atlas writes is standard English (JA1 to JA4, JA7, CD20)", () => {

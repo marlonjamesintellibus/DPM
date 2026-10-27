@@ -112,7 +112,12 @@ export function changeLeave(record: LeaveRecord, to: LeaveRange): LeaveRecord {
 
 // ---- Deciding leave (D6) ----
 
-export type LeaveEvent = { type: "APPROVE" } | { type: "DECLINE" } | { type: "WITHDRAW" };
+export type LeaveEvent =
+  | { type: "APPROVE" }
+  | { type: "DECLINE" }
+  | { type: "WITHDRAW" }
+  // Phase L, M30: the person's own save changed the dates, or asked for a change; it goes back to what it was
+  | { type: "UNDO"; before: LeaveRange & { change: LeaveRange | null } };
 
 /** Who is acting: the person whose leave it is, or an admin of one of their projects. */
 export type LeaveActor = { id: string; isPerson: boolean; isAdmin: boolean };
@@ -136,6 +141,8 @@ export const leaveMachine = defineMachine<LeaveState, LeaveEvent, Ctx>({
       { from: [s], on: "DECLINE" as const, to: s, guard: (c: Ctx) => adminOnly(c) ?? changeWaits(c) },
       { from: [s], on: "WITHDRAW" as const, to: s, guard: (c: Ctx) => personOnly(c) ?? changeWaits(c) },
     ]),
+    // A request's dates moved, or a change was asked on approved leave: the same state, the dates as they were
+    ...(["requested", ...CHANGEABLE] as const).map((s) => ({ from: [s], on: "UNDO" as const, to: s, guard: personOnly })),
   ],
 });
 
@@ -143,6 +150,7 @@ export function applyLeaveEvent(record: LeaveRecord, event: LeaveEvent, actor: L
   const outcome = transition(leaveMachine, record.state, event, { record, actor });
   if (!outcome.ok) return { outcome, record };
   const next: LeaveRecord = { ...record, state: outcome.to };
+  if (event.type === "UNDO") return { outcome, record: { ...next, start: event.before.start, end: event.before.end, change: event.before.change } };
   if (record.state !== "requested" && record.change) {
     if (event.type === "APPROVE") Object.assign(next, record.change);
     next.change = null;

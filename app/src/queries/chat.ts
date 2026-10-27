@@ -10,6 +10,8 @@ import type { CaptureState } from "../domain/machines/capture";
 import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
+import { undoReply } from "./answers/undo";
+import { undoViewOf, type UndoView } from "./undo";
 
 export type ChatSummaryRow = {
   projectId: string;
@@ -45,6 +47,8 @@ export type ChatCapture = {
   answer: Answer | null;
   /** Phase S: their thumbs up or down on that answer, and what was wrong. */
   feedback: { rating: "up" | "down"; wrong: string | null } | null;
+  /** Phase L, M30: on a saved update, whether Undo may still work, or when it was undone. */
+  undo: UndoView | null;
 };
 
 /** D15: what Atlas told the viewer about their reports ("Alicia approved your risk: ..."), newest first. */
@@ -161,7 +165,7 @@ export async function getThread(conn: Conn, viewerId: string, conversationId: st
     .orderBy(t.captures.messageAt, t.captures.receivedAt);
   const turns: ChatCapture[] = [];
   const feedback = await feedbackFor(conn, viewerId, captures);
-  for (const capture of captures) turns.push(await chatCaptureOf(conn, capture, feedback.get(capture.id) ?? null));
+  for (const capture of captures) turns.push(await chatCaptureOf(conn, capture, feedback.get(capture.id) ?? null, now));
   const [newest] = await conn
     .select({ id: t.conversations.id })
     .from(t.conversations)
@@ -192,7 +196,7 @@ async function noticeHome(conn: Conn, viewerId: string, n: ChatNotice): Promise<
 }
 
 /** The viewer's latest update, or the one they picked; only ever their own (M1). */
-export async function getChatSummary(conn: Conn, viewerId: string, captureId?: string): Promise<ChatSummary> {
+export async function getChatSummary(conn: Conn, viewerId: string, captureId?: string, now: Date = new Date()): Promise<ChatSummary> {
   const [capture] = await conn
     .select()
     .from(t.captures)
@@ -202,7 +206,7 @@ export async function getChatSummary(conn: Conn, viewerId: string, captureId?: s
   const notices = await noticesFor(conn, viewerId);
   if (!capture) return { viewerId, latest: null, notices };
   const feedback = await feedbackFor(conn, viewerId, [capture]);
-  return { viewerId, notices, latest: await chatCaptureOf(conn, capture, feedback.get(capture.id) ?? null) };
+  return { viewerId, notices, latest: await chatCaptureOf(conn, capture, feedback.get(capture.id) ?? null, now) };
 }
 
 /** An answer kept before section 17 had lines, not cards; it reads as cards, in DPM's own words. */
@@ -245,8 +249,15 @@ async function summaryOf(conn: Conn, capture: typeof t.captures.$inferSelect, it
   return SHOWS_SET_ASIDE.includes(capture.state) ? withSetAside(counts, await readSetAside(conn, capture, items)) : counts;
 }
 
+/** Phase L: a refused undo says why under the saved message, as "Undo that" would (UN1, UN2), so it outlives the click. */
+async function undoOf(conn: Conn, capture: typeof t.captures.$inferSelect, now: Date): Promise<UndoView> {
+  const view = await undoViewOf(conn, capture.authorId, capture.id, now);
+  if (view.state !== "refused") return view;
+  return { ...view, note: (await undoReply(conn, capture.authorId, view.jobId, now)).text };
+}
+
 /** One message and what Atlas made of it, counted per project as the review counts them, with the author's feedback on its answer. */
-async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect, feedback: ChatCapture["feedback"]): Promise<ChatCapture> {
+async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect, feedback: ChatCapture["feedback"], now: Date): Promise<ChatCapture> {
   const items = (await conn.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id)).orderBy(t.extractions.ordinal)).map(itemOf);
   const counts = countItems(items);
   const ids = [...counts.perProject.keys()];
@@ -281,5 +292,6 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     line: chatLine(capture.state, capture.failedStep, await summaryOf(conn, capture, items, countsLine(counts, "; "))),
     answer: answerOf(capture.answer),
     feedback,
+    undo: capture.state === "saved" ? await undoOf(conn, capture, now) : null,
   };
 }

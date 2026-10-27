@@ -17,8 +17,9 @@
 //        arrow undoing -> refused; a refusal names, and a notice goes to, only what the reader can open
 //   M31  the clash is checked against the projects the person told can open, at the ask and again
 //        at APPROVE
-// Chosen where the plan is silent: an entry the save created is withdrawn (UN3, D11), not put back
-// to none; the same correction said again changes nothing, whatever its proposal's state.
+// An entry the save created goes back to none, as section 14 says (built in phase L: first modelled as
+// withdrawn); D11 withdraws only the save's own sources from an entry others reported. Chosen where the
+// plan is silent: the same correction said again changes nothing, whatever its proposal's state.
 import { clone, product } from '../lib.mjs';
 
 const AUTHOR = 'kemar';
@@ -50,7 +51,7 @@ const UNDO_DRAWN = ['none>requested', 'requested>undoing', 'requested>refused', 
 const RECORD_DRAWN = {
   w151: ['blocked>in_progress'], // M5, and its UNDO arrow
   b1: ['reported>resolved', 'reported>withdrawn'], // M15
-  r1: ['proposed>open', 'proposed>withdrawn'], // M15 APPROVE, and the UNDO arrow (UN3)
+  r1: ['proposed>open', 'proposed>none'], // M15 APPROVE, and the UNDO arrow back to none (UN3)
 };
 const JOB_FINAL = ['undone', 'refused'];
 
@@ -67,7 +68,7 @@ export function Undo({ Recheck = false, Bug = null } = {}) {
     for (const x of xs) {
       const r = t.rec[x];
       if (x === 'w151') r.st = 'in_progress';
-      if (x === 'r1') r.st = 'withdrawn';
+      if (x === 'r1') r.st = 'none';
       if (x === 'b1') {
         // D11, UN6: only Kemar's report is withdrawn; the entry stays for Jodian's
         if (Bug === 'withdrawAll') Object.assign(r, { st: 'withdrawn', src: [] });

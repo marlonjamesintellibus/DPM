@@ -190,6 +190,31 @@ test("8. Each person sees only their part of Kemar's note", async () => {
   await expect(page.getByText("Andre and I agreed to move the refresh to 6am", { exact: true })).toBeVisible();
 });
 
+test("Phase L. Kemar's Undo is refused: Alicia and Andre acted on his save since, and nothing is undone (UN2)", async () => {
+  await viewAs("kemar", "/?view=chat&c=conv-atlas-kemar");
+  // The saved message carries Undo while undoMinutes have not passed
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(page.getByText("Someone changed these since you saved it, so nothing was undone.").first()).toBeVisible();
+  // "Undo that" says the same, naming each record and who changed it; the save was undone at most once (UN5)
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Undo that");
+  await box.press("Enter");
+  await expect(page.getByRole("link", { name: /Trend model may slip to 24 Oct/ })).toContainText("Alicia changed it at");
+  await expect(page.getByRole("link", { name: /Move the daily refresh to 6am/ })).toContainText("Andre changed it at");
+  await expect(page.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  await page.goto("/projects/forager?view=table");
+  await expect(page.locator("details").filter({ hasText: "Trend model may slip to 24 Oct" }).locator("summary")).toContainText("Open");
+});
+
+test("Phase L. Kemar asks why Atlas filed his update: each part, the reason and his words", async () => {
+  await viewAs("kemar", "/?view=chat&c=conv-atlas-kemar");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Why did you file that?");
+  await box.press("Enter");
+  await expect(page.getByText("Here's where each part of your 8:58am update went, and why.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /Issue #151 Store sales feed access/ })).toContainText("Filed in Forager 2.0 because: Kyle is the contact on #151");
+});
+
 test("Section 13. Alicia makes the pipeline risk an issue; the log keeps one row", async () => {
   await viewAs("alicia", "/projects/forager?view=table");
   await page.locator("details").filter({ hasText: "Only Kemar can run the pipeline" }).getByRole("button", { name: "Risk: change kind" }).click();

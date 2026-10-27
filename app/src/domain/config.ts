@@ -45,6 +45,11 @@ export const config = {
   evalCandidateDays: 30,
   // Phase S, LF8 and CD28: a usage number is shown only for a group of at least this many people
   metricMinimumCount: 5,
+
+  // Phase L, M30 (conversational plan, section 23): "Undo that" reverses the author's last save for this long
+  undoMinutes: 15,
+  // Phase L, M31: a vocabulary change nobody approves or declines is reminded (S18), then expires after this many days
+  vocabExpiryDays: 14,
 } as const;
 
 export type Config = typeof config;

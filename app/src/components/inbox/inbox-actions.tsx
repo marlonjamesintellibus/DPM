@@ -8,6 +8,7 @@ import {
   approveEntry,
   askForMore,
   atlasReason,
+  decideCorrection,
   confirmDraft,
   declineEntry,
   decideLeave,
@@ -188,6 +189,24 @@ export function LeaveControls({ leaveId }: { leaveId: string }) {
           Approve leave
         </Button>
         <Button variant="secondary" disabled={pending} onClick={() => run(() => decideLeave(leaveId, false))}>
+          Decline
+        </Button>
+      </div>
+      <ActionNote result={result} />
+    </div>
+  );
+}
+
+/** Phase L, M31: a PM or Lead approves or declines a correction; the right and any name clash are checked when they do. */
+export function VocabularyControls({ changeId }: { changeId: string }) {
+  const { pending, result, run } = useRun();
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex gap-2">
+        <Button disabled={pending} onClick={() => run(() => decideCorrection(changeId, "approve"))}>
+          Approve
+        </Button>
+        <Button variant="secondary" disabled={pending} onClick={() => run(() => decideCorrection(changeId, "decline"))}>
           Decline
         </Button>
       </div>

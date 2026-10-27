@@ -1203,7 +1203,7 @@ then: stutters here forever (no fair action is enabled)
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
 4. LeavesSI(kemar): by = "org"
-5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
+5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
 ```
 
 ### Undo, as written: NamesOnlyReadable fails (action property)
@@ -1213,7 +1213,7 @@ then: stutters here forever (no fair action is enabled)
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
 4. LeavesSI(jodian): by = "org"
-5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
+5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
 ```
 
 ### Undo, as written: UndoSettles fails (liveness, for job 1)
@@ -3629,7 +3629,7 @@ then: stutters here forever (no fair action is enabled)
 ```
 1. Init: role.kemar.GQ = "member", role.kemar.SI = "member", role.alicia.GQ = "pm", role.alicia.SI = "pm", role.jodian.SI = "member", win = true, rec.w151.st = "blocked", rec.w151.v = 1, rec.w151.undone = false, rec.b1.st = "reported", rec.b1.src = ["jodian","kemar"], rec.b1.v = 1, rec.b1.undone = false, rec.r1.st = "proposed", rec.r1.v = 1, rec.r1.undone = false, inbox = "open", jobs = [], said = [], by = null
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
-3. Check(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
+3. Check(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
 ```
 
 ### Undo, bug: versions are not compared (UN2): OnlyDrawnArrows fails (action property)
@@ -3639,7 +3639,7 @@ then: stutters here forever (no fair action is enabled)
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
 4. AliciaActs(r1): rec.r1.st = "open", rec.r1.v = 2, inbox = "closed", by = "alicia"
-5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 3, rec.r1.undone = true, jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
+5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 3, rec.r1.undone = true, jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
 ```
 
 ### Undo, bug: versions are not compared (UN2): NeverUndoOthersWork fails (action property)
@@ -3649,7 +3649,7 @@ then: stutters here forever (no fair action is enabled)
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
 4. AliciaActs(r1): rec.r1.st = "open", rec.r1.v = 2, inbox = "closed", by = "alicia"
-5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 3, rec.r1.undone = true, jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
+5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 3, rec.r1.undone = true, jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
 ```
 
 ### Undo, bug: the records that still match are undone, the rest skipped: AllOrNothing fails (invariant)
@@ -3676,7 +3676,7 @@ then: stutters here forever (no fair action is enabled)
 1. Init: role.kemar.GQ = "member", role.kemar.SI = "member", role.alicia.GQ = "pm", role.alicia.SI = "pm", role.jodian.SI = "member", win = true, rec.w151.st = "blocked", rec.w151.v = 1, rec.w151.undone = false, rec.b1.st = "reported", rec.b1.src = ["jodian","kemar"], rec.b1.v = 1, rec.b1.undone = false, rec.r1.st = "proposed", rec.r1.v = 1, rec.r1.undone = false, inbox = "open", jobs = [], said = [], by = null
 2. AsksUndo(alicia): jobs = [{"st":"requested","owner":"alicia"}], by = "alicia"
 3. Check(0): jobs = [{"st":"undoing","owner":"alicia"}], by = "job"
-4. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"alicia"}], said = ["alicia|undid|GQ","jodian|undid|SI"]
+4. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"alicia"}], said = ["alicia|undid|GQ","jodian|undid|SI"]
 ```
 
 ### Undo, bug: undo withdraws the whole shared blocker (UN6): OthersReportsKept fails (invariant)
@@ -3685,7 +3685,7 @@ then: stutters here forever (no fair action is enabled)
 1. Init: role.kemar.GQ = "member", role.kemar.SI = "member", role.alicia.GQ = "pm", role.alicia.SI = "pm", role.jodian.SI = "member", win = true, rec.w151.st = "blocked", rec.w151.v = 1, rec.w151.undone = false, rec.b1.st = "reported", rec.b1.src = ["jodian","kemar"], rec.b1.v = 1, rec.b1.undone = false, rec.r1.st = "proposed", rec.r1.v = 1, rec.r1.undone = false, inbox = "open", jobs = [], said = [], by = null
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
-4. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.st = "withdrawn", rec.b1.src = [], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"]
+4. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.st = "withdrawn", rec.b1.src = [], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"]
 ```
 
 ### Undo, bug: Alicia's inbox item stays after the risk is withdrawn (UN3): InboxFollowsCause fails (invariant)
@@ -3694,7 +3694,7 @@ then: stutters here forever (no fair action is enabled)
 1. Init: role.kemar.GQ = "member", role.kemar.SI = "member", role.alicia.GQ = "pm", role.alicia.SI = "pm", role.jodian.SI = "member", win = true, rec.w151.st = "blocked", rec.w151.v = 1, rec.w151.undone = false, rec.b1.st = "reported", rec.b1.src = ["jodian","kemar"], rec.b1.v = 1, rec.b1.undone = false, rec.r1.st = "proposed", rec.r1.v = 1, rec.r1.undone = false, inbox = "open", jobs = [], said = [], by = null
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
-4. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"]
+4. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"]
 ```
 
 ### Undo, bug: "Why did you file that?" answers about another person's item (UN7): WhyOnlyToAuthor fails (invariant)
@@ -3728,7 +3728,7 @@ then: stutters here forever (no fair action is enabled)
 2. AsksUndo(kemar): jobs = [{"st":"requested","owner":"kemar"}], by = "kemar"
 3. Check(0): jobs = [{"st":"undoing","owner":"kemar"}], by = "job"
 4. LeavesSI(kemar): by = "org"
-5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "withdrawn", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
+5. Run(0): rec.w151.st = "in_progress", rec.w151.v = 2, rec.w151.undone = true, rec.b1.src = ["jodian"], rec.b1.v = 2, rec.b1.undone = true, rec.r1.st = "none", rec.r1.v = 2, rec.r1.undone = true, inbox = "closed", jobs = [{"st":"undone","owner":"kemar"}], said = ["alicia|undid|GQ","jodian|undid|SI"], by = "job"
 ```
 
 ### VocabularyChange, bug: saying a declined correction again reopens it: OnlyDrawnArrows fails (action property)

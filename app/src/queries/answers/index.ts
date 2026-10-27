@@ -2,6 +2,7 @@
 // answer does not build.
 import type { QuestionTopic } from "../../domain/question";
 import { blocked } from "./blocked";
+import { correction } from "./correction";
 import { due } from "./due";
 import { mentions } from "./mentions";
 import { myWork } from "./my-work";
@@ -11,7 +12,9 @@ import { standing } from "./project-status";
 import type { AnswerBuilder } from "./shared";
 import { smallTalk } from "./small-talk";
 import { unclear } from "./unclear";
+import { undo } from "./undo";
 import { updates } from "./updates";
+import { whyFiled } from "./why-filed";
 
 export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   needs_me: needsMe,
@@ -21,6 +24,9 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   project_status: standing,
   updates,
   mentions,
+  why_filed: whyFiled,
+  correction,
+  undo,
   small_talk: smallTalk,
   other,
   unclear,

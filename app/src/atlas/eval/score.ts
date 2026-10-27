@@ -57,7 +57,14 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   // Section 15: a case without ask must ask nothing; one with ask must ask that, about that project
   const q = checkQuestion(question, { ...ctx, text: c.text });
   const asked = q ? `${q.topic}@${q.projectId ?? "none"}` : null;
-  if (!c.ask && q) forbidden.push(`asks ${asked}`);
+  if (!c.ask && !c.correct && q) forbidden.push(`asks ${asked}`);
+  // Phase L, M31: a correction, as the checks keep it
+  if (c.correct) {
+    const got = q?.topic === "correction" ? q.correction : undefined;
+    const same = (a: string | null | undefined, b: string | null | undefined) => (a ?? null)?.toLowerCase() === (b ?? null)?.toLowerCase();
+    const ok = !!got && got.kind === c.correct.kind && got.projectId === c.correct.projectId && same(got.word, c.correct.word) && same(got.personId, c.correct.personId) && same(got.notProjectId, c.correct.notProjectId);
+    if (!ok) missing.push(`correct ${JSON.stringify(c.correct)}${got ? ` (got ${JSON.stringify(got)})` : ""}`);
+  }
   // Section 16: a correction must name the earlier item it replaces (the checks keep only listed ones)
   if (c.replaces && !items.some((i) => i.replaces === c.replaces)) missing.push(`replaces ${c.replaces}`);
   if (c.ask) {
@@ -67,8 +74,8 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   return {
     id: c.id,
     pass: missing.length === 0 && forbidden.length === 0,
-    expected: c.expect.length + (c.ask ? 1 : 0),
-    hit: c.expect.length + (c.ask ? 1 : 0) - missing.length,
+    expected: c.expect.length + (c.ask ? 1 : 0) + (c.correct ? 1 : 0),
+    hit: c.expect.length + (c.ask ? 1 : 0) + (c.correct ? 1 : 0) - missing.length,
     missing,
     extra,
     forbidden,

@@ -13,9 +13,11 @@
 //   supersede:<entryId>                a new decision that reverses that one (section 20, U4)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
+// correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
 import type { EarlierTurn } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
+import type { Correction } from "../../domain/topics/correction";
 
 export type EvalAuthor = "kemar" | "alicia" | "andre";
 
@@ -41,6 +43,8 @@ export type EvalCase = {
   earlier?: EarlierTurn[];
   /** Section 16: the earlier item a correction must name in replacesItemId. */
   replaces?: string;
+  /** Phase L, M31: the correction it must propose, after the checks (a word is matched in any case). */
+  correct?: Omit<Correction, "word" | "personId" | "notProjectId"> & Partial<Pick<Correction, "word" | "personId" | "notProjectId">>;
   /** BRAID entries this case adds to its author's data only (section 20, U4: an approved decision to reverse). */
   braid?: { projectId: string; id: string; kind: BraidKind; title: string; state: string }[];
 };
@@ -761,5 +765,32 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Mi did eat some sprouts fi lunch, nutten else fi report.",
     expect: [],
     forbid: ["*"],
+  },
+  // Phase L: undo, why did you file that, and corrections that teach Atlas (conversational plan, section 14)
+  { id: "undo-that", about: "M30 'Undo that' is the undo command, nothing proposed", text: "Undo that", expect: [], forbid: ["*"], ask: { topic: "undo", projectId: null } },
+  { id: "why-filed", about: "why Atlas filed the last update", text: "Why did you file that?", expect: [], forbid: ["*"], ask: { topic: "why_filed", projectId: null } },
+  {
+    id: "correction-alias",
+    about: "M31 another name for a project the author is in",
+    text: "GQ also means the Guild.",
+    expect: [],
+    forbid: ["*"],
+    correct: { kind: "alias", projectId: "gq", word: "Guild" },
+  },
+  {
+    id: "correction-contact",
+    about: "M31 a person tied to one project, not another",
+    text: "Kyle is Store Insights, not Forager.",
+    expect: [],
+    forbid: ["*"],
+    correct: { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" },
+  },
+  {
+    id: "correction-patois",
+    about: "M31 the same correction in Patois",
+    text: "Kyle a fi Store Insights, him nuh deh pon Forager.",
+    expect: [],
+    forbid: ["*"],
+    correct: { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" },
   },
 ];

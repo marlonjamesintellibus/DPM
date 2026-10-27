@@ -43,6 +43,9 @@ import { archiveConversation, renameConversation, restoreConversation } from "@/
 import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonWithAtlas, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { undoSave } from "@/commands/undo";
+import { decideVocabularyChange } from "@/commands/vocabulary";
+import { undoReply } from "@/queries/answers/undo";
 import { getDb } from "@/db/client";
 import { now } from "./_lib/clock";
 import { currentViewer, VIEWER_COOKIE, viewerInfo } from "./_lib/viewer";
@@ -210,6 +213,22 @@ export async function decideAndSave(captureId: string, itemId: string, decision:
   return saveUpdate(captureId);
 }
 
+/**
+ * Phase L, M30: the Undo button on a saved message. `commandId` is the button's own, so pressing it twice
+ * undoes once (UN5); the command checks the window, every version and the right as it runs. The reply is
+ * what "Undo that" would say.
+ */
+export async function undoUpdate(captureId: string, commandId: string): Promise<ActionResult> {
+  let reply = "";
+  const r = await run(async (ctx) => {
+    const done = await undoSave(ctx, { commandId, captureId });
+    const body = await undoReply(ctx.db, ctx.actorId, done.kind === "job" ? done.job.id : null, ctx.now);
+    reply = body.text;
+    if (done.kind !== "job" || done.job.state !== "undone") throw new CommandRefused(body.text);
+  });
+  return r.ok ? { ok: true, message: reply } : r;
+}
+
 export async function discardUpdate(captureId: string): Promise<ActionResult> {
   return run((ctx) => discardCapture(ctx, captureId), "Discarded. Nothing was changed.");
 }
@@ -279,6 +298,12 @@ export async function confirmDraft(entryId: string): Promise<ActionResult> {
 
 export async function dropDraft(entryId: string): Promise<ActionResult> {
   return run((ctx) => dropFollowUp(ctx, entryId), "Dropped.");
+}
+
+// ---- Corrections (phase L, M31) ----
+
+export async function decideCorrection(changeId: string, act: "approve" | "decline"): Promise<ActionResult> {
+  return run((ctx) => decideVocabularyChange(ctx, changeId, act), act === "approve" ? "Approved. Atlas reads it this way from now on." : "Declined. Atlas reads it as before.");
 }
 
 // ---- Set status and reason (L6, L6b) ----

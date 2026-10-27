@@ -28,11 +28,35 @@ export type WorkItemEvent =
   | { type: "UPDATE_BLOCKED_NOTE"; note: string; links?: readonly string[] }
   | { type: "UNBLOCK" }
   | { type: "REOPEN" }
-  | { type: "CANCEL" };
+  | { type: "CANCEL" }
+  // Phase L, M30: the author's own save is undone; back to the state, note and links it had before
+  | { type: "UNDO"; to: WorkItemState; note: string | null; links: readonly string[] };
 
 type Ctx = { record: WorkItemRecord; actor: Actor };
 
 const needsNote = (note: string) => (note.trim() ? null : "a blocked item says what it is waiting on");
+
+/**
+ * Phase L, M30: one UNDO arrow back for each move a save can make (START, FINISH, BLOCK, UPDATE_BLOCKED_NOTE,
+ * UNBLOCK, REOPEN), as [from, to]. This is the only way back to To do, and only for the save that left it.
+ */
+export const UNDO_BACK: readonly (readonly [WorkItemState, WorkItemState])[] = [
+  ["in_progress", "to_do"],
+  ["done", "to_do"],
+  ["done", "in_progress"],
+  ["done", "blocked"],
+  ["blocked", "in_progress"],
+  ["blocked", "blocked"],
+  ["in_progress", "blocked"],
+  ["in_progress", "done"],
+];
+
+// Rule 4: the right is held when the arrow runs, not when "Undo that" was asked
+function undoGuard({ actor }: Ctx, e: Extract<WorkItemEvent, { type: "UNDO" }>, to: WorkItemState): string | null {
+  if (!actor.role) return "only a project member can undo this";
+  if (e.to !== to) return `goes back to ${e.to}`;
+  return to === "blocked" ? needsNote(e.note ?? "") : null;
+}
 
 export const workItemMachine = defineMachine<WorkItemState, WorkItemEvent, Ctx>({
   name: "work_item",
@@ -53,6 +77,7 @@ export const workItemMachine = defineMachine<WorkItemState, WorkItemEvent, Ctx>(
           : "only the owner, a PM or a Lead reopens finished work",
     },
     { from: ["to_do", "in_progress", "blocked", "done"], on: "CANCEL", to: "cancelled" },
+    ...UNDO_BACK.map(([from, to]) => ({ from: [from], on: "UNDO" as const, to, guard: (c: Ctx, e: Extract<WorkItemEvent, { type: "UNDO" }>) => undoGuard(c, e, to) })),
   ],
 });
 
@@ -62,6 +87,7 @@ export type WorkItemResult = { outcome: Outcome<WorkItemState>; record: WorkItem
 export function applyWorkItem(record: WorkItemRecord, event: WorkItemEvent, actor: Actor): WorkItemResult {
   const outcome = transition(workItemMachine, record.state, event, { record, actor });
   if (!outcome.ok) return { outcome, record };
+  if (event.type === "UNDO") return { outcome, record: { ...record, state: outcome.to, blockedNote: event.note, blockedLinks: [...event.links] } };
   if (event.type === "BLOCK" || event.type === "UPDATE_BLOCKED_NOTE") {
     const links = event.links ?? (event.type === "BLOCK" ? [] : record.blockedLinks);
     return { outcome, record: { ...record, state: outcome.to, blockedNote: event.note.trim(), blockedLinks: links } };

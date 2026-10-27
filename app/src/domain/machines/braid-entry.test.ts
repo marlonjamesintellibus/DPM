@@ -14,6 +14,7 @@ import {
   KIND_STATES,
   ON_LOG_AS,
   SWITCH_ENDS,
+  UNDO_BACK,
   type BraidActor,
   type BraidCtx,
   type BraidEntryRecord,
@@ -150,6 +151,14 @@ describe("BRAID entry arrows (every drawn arrow)", () => {
   }
   for (const [kind, to] of [["issue", "reported"], ["decision", "proposed"], ["risk", "open"], ["assumption", "holding"]] as const) {
     rows.push({ kind, from: "none", event: { type: "SWITCH_IN", from: { ...at("blocker", "reported"), id: "e0" } }, actor: alicia, to });
+  }
+
+  // Phase L, M30: each UNDO arrow, back to the entry as the reporter's save found it (none when it made it)
+  for (const [from, backs] of UNDO_BACK) {
+    for (const to of backs) {
+      const kind = BRAID_KINDS.find((k) => KIND_STATES[k].includes(from) && (to === "none" || KIND_STATES[k].includes(to)))!;
+      rows.push({ kind, from, event: { type: "UNDO", before: to === "none" ? null : at(kind, to) }, actor: kemar, to });
+    }
   }
 
   it.each(rows.map((r) => [`${r.kind} ${r.from} --${r.event.type}--> ${r.to}`, r] as const))("%s", (_, row) => {

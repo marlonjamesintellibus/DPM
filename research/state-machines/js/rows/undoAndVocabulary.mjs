@@ -22,7 +22,7 @@ export const ROWS = [
 // Planted bugs: each one must make a full check fail
 export const PLANTS = [
   { spec: 'Undo', setting: 'bug: the job goes from requested straight to undone', model: Undo({ Recheck: true, Bug: 'skipCheck' }), expectFail: ['OnlyDrawnArrows'] },
-  // Undoing an approved risk takes it from open to withdrawn, an arrow nobody drew
+  // Undoing an approved risk takes it from open to none, an arrow nobody drew
   { spec: 'Undo', setting: 'bug: versions are not compared (UN2)', model: Undo({ Recheck: true, Bug: 'noVersionCheck' }), expectFail: ['OnlyDrawnArrows', 'NeverUndoOthersWork'] },
   { spec: 'Undo', setting: 'bug: the records that still match are undone, the rest skipped', model: Undo({ Recheck: true, Bug: 'partial' }), expectFail: ['AllOrNothing'] },
   { spec: 'Undo', setting: 'bug: "Undo that" twice makes two jobs (UN5)', model: Undo({ Recheck: true, Bug: 'noDedup' }), expectFail: ['OneJobPerCommand'] },
