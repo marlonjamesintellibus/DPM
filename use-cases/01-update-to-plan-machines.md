@@ -768,6 +768,7 @@ The screens run on the commands and per-viewer queries as they are; View as sets
 | G33 | Move on the review (D13) | Offered only for new BRAID entries and items with no target: a same-as report or a resolution belongs to its entry's log, as an update belongs to its record's project |
 | G34 | Today in the design shows Chat, Inbox, Dashboard and Table | Chat and Inbox are built; a lead starts in the inbox and anyone else in the chat, and either can switch (A8). The status pill in Today's head (an org-level "Off track because…") is left out: it needs the executive's org status, not in this slice |
 | G35 | The demo clock | Starts at 9:10am on 20 Oct 2026 and runs in real time from when the server starts, so the story plays forward; `DPM_CLOCK=real` uses the real time |
+| G36 | Light, dark and icons (was D28) | Icons are masks painted in the text colour, so they follow the theme. The account menu at the foot of the sidebar offers System, Light and Dark; the choice is kept in this browser and applied before the first paint |
 
 ### Needs a decision
 
@@ -776,7 +777,6 @@ The screens run on the commands and per-viewer queries as they are; View as sets
 | D25 | Dashboard and Table views (A8), and the Plan card's "Client view" | Not built; the switch offers only Chat and Inbox |
 | D26 | The mobile chat (L18f) as its own layout, and voice capture from the app | The web chat carries the L18f content; voice notes arrive from Atlas only |
 | D27 | Executive and care team views (L0 lists them) | Not in the seed; View as offers Kemar, Alicia and Andre |
-| D28 | Icons have their colours baked in, so they vanish in dark mode | Light mode matches Figma; dark mode needs icons that follow the text colour |
 | D29 | Kemar's chat lists each update as a conversation; the design's conversations are topics ("NEPA support staffing") | One conversation per update until Atlas has topics |
 | D30 | Inbox actions for causes not in this slice ("Chase Kyle", "Approve cover", "Assign") | Each item opens its own detail with the actions the commands support |
 

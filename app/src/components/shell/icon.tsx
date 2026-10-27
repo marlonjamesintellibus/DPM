@@ -1,70 +1,70 @@
-import Image from "next/image";
-
-// Icons are the SVGs exported from the Figma file (public/icons). Their colours are
-// baked in by the design, so they do not follow dark mode yet.
-const SIZES = {
-  "alert-warn-14": 14,
-  alert: 12,
-  "arrow-up-right": 12,
-  atlas: 12,
-  "check-13": 13,
-  "check-14": 14,
-  "check-20": 20,
-  "check-ok-14": 14,
-  check: 12,
-  "chevron-down-sm": 12,
-  "chevron-down": 14,
-  "chevron-right-12": 12,
-  "chevron-right": 14,
-  "dot-bad": 8,
-  "dot-info": 8,
-  "dot-neutral": 8,
-  "dot-ok": 8,
-  "dot-warn": 8,
-  eye: 14,
-  file: 12,
-  "git-commit": 12,
-  "grid-13-active": 13,
-  "grid-13": 13,
-  "grid-20": 20,
-  grid: 16,
-  link: 11,
-  "message-13-active": 13,
-  "message-13": 13,
-  "message-20": 20,
-  message: 12,
-  "mic-16": 16,
-  "mic-inverse-14": 14,
-  mic: 12,
-  "more-18": 18,
-  more: 16,
-  "plus-14": 14,
-  plus: 16,
-  "sparkles-12": 12,
-  "sparkles-14": 14,
-  "sparkles-inverse": 14,
-  sparkles: 16,
-  sun: 16,
-  "table-13": 13,
-  table: 12,
-  target: 16,
-  users: 12,
-  "x-14": 14,
-  x: 12,
+// Icons are the SVGs exported from the Figma file (public/icons), drawn as a mask in currentColor so
+// they follow the theme. Each one's default tone is the token for the colour Figma gave it (grey
+// is text-fg-3, black text-fg-1, white text-on-inverse, the status colours their own tokens); a
+// caller can pass another tone. Only the shape is read from the file, never its colour.
+const ICONS = {
+  "alert-warn-14": [14, "text-warn"],
+  alert: [12, "text-fg-3"],
+  "arrow-up-right": [12, "text-fg-3"],
+  atlas: [12, "text-fg-3"],
+  "check-13": [13, "text-fg-3"],
+  "check-14": [14, "text-fg-1"],
+  "check-20": [20, "text-fg-3"],
+  "check-ok-14": [14, "text-ok"],
+  check: [12, "text-fg-3"],
+  "chevron-down-sm": [12, "text-fg-3"],
+  "chevron-down": [14, "text-fg-3"],
+  "chevron-right-12": [12, "text-fg-3"],
+  "chevron-right": [14, "text-fg-3"],
+  "dot-bad": [8, "text-bad"],
+  "dot-info": [8, "text-accent"],
+  "dot-neutral": [8, "text-neutral"],
+  "dot-ok": [8, "text-ok"],
+  "dot-warn": [8, "text-warn"],
+  eye: [14, "text-fg-2"],
+  file: [12, "text-fg-3"],
+  "git-commit": [12, "text-fg-3"],
+  "grid-13-active": [13, "text-fg-1"],
+  "grid-13": [13, "text-fg-3"],
+  "grid-20": [20, "text-fg-3"],
+  grid: [16, "text-fg-2"],
+  link: [11, "text-fg-2"],
+  "message-13-active": [13, "text-fg-1"],
+  "message-13": [13, "text-fg-3"],
+  "message-20": [20, "text-fg-1"],
+  message: [12, "text-fg-3"],
+  "mic-16": [16, "text-fg-2"],
+  "mic-inverse-14": [14, "text-on-inverse"],
+  mic: [12, "text-fg-3"],
+  "more-18": [18, "text-fg-2"],
+  more: [16, "text-fg-3"],
+  "plus-14": [14, "text-fg-2"],
+  plus: [16, "text-fg-2"],
+  "sparkles-12": [12, "text-ai"],
+  "sparkles-14": [14, "text-ai"],
+  "sparkles-inverse": [14, "text-on-inverse"],
+  sparkles: [16, "text-ai"],
+  sun: [16, "text-fg-1"],
+  "table-13": [13, "text-fg-3"],
+  table: [12, "text-fg-3"],
+  target: [16, "text-fg-2"],
+  users: [12, "text-fg-3"],
+  "x-14": [14, "text-fg-3"],
+  x: [12, "text-fg-3"],
 } as const;
 
-export type IconName = keyof typeof SIZES;
+export type IconName = keyof typeof ICONS;
 
-export function Icon({ name }: { name: IconName }) {
-  const size = SIZES[name];
+export function Icon({ name, tone, label }: { name: IconName; tone?: string; label?: string }) {
+  const [size, defaultTone] = ICONS[name];
+  const url = `url(/icons/${name}.svg)`;
   return (
-    <Image
-      src={`/icons/${name}.svg`}
-      alt=""
-      width={size}
-      height={size}
-      unoptimized
-      className="block shrink-0"
+    <span
+      role={label ? "img" : undefined}
+      aria-label={label}
+      aria-hidden={label ? undefined : true}
+      className={`inline-block shrink-0 bg-current ${tone ?? defaultTone}`}
+      style={{ width: size, height: size, maskImage: url, WebkitMaskImage: url, maskSize: "100% 100%", WebkitMaskSize: "100% 100%", maskRepeat: "no-repeat", WebkitMaskRepeat: "no-repeat" }}
     />
   );
 }

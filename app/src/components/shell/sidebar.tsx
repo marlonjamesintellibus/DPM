@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AccountMenu } from "./account-menu";
 import { Icon, type IconName } from "./icon";
 
 export type NavItem = {
@@ -105,13 +106,7 @@ export function Sidebar({
             {viewer.title}
           </span>
         </span>
-        <button
-          type="button"
-          aria-label="Account menu"
-          className="rounded-sm hover:bg-hover"
-        >
-          <Icon name="more" />
-        </button>
+        <AccountMenu />
       </div>
     </aside>
   );
@@ -124,7 +119,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
       aria-current={active ? "page" : undefined}
       className={`flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 ${active ? "bg-hover" : "hover:bg-hover"}`}
     >
-      <Icon name={item.icon} />
+      <Icon name={item.icon} tone={active ? "text-fg-1" : "text-fg-2"} />
       <span
         className={`flex-1 type-body-medium ${active ? "text-fg-1" : "text-fg-2"}`}
       >

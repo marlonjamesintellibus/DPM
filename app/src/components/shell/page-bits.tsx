@@ -30,7 +30,7 @@ export function ViewSwitch({ items, active }: { items: ViewItem[]; active: strin
             aria-current={on ? "page" : undefined}
             className={`flex items-center gap-1.5 rounded-sm px-2.5 py-[5px] type-label ${on ? "border border-line bg-panel text-fg-1" : "border border-transparent text-fg-2 hover:text-fg-1"}`}
           >
-            <Icon name={on ? v.activeIcon : v.icon} />
+            <Icon name={on ? v.activeIcon : v.icon} tone={on ? "text-fg-1" : "text-fg-3"} />
             {v.label}
           </Link>
         );

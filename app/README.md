@@ -63,4 +63,5 @@ Evaluation results go to `.data/atlas-eval/`.
 ## Notes for later phases
 
 - **Cache Components is on.** DPM data is per viewer and must be fresh, so pages read it inside `<Suspense>`, not with `use cache`. Route handlers that touch the database call `await connection()` first.
-- **Icons are the SVGs exported from Figma** (`public/icons`). Their colours are baked in, so they do not follow dark mode yet.
+- **Icons are the SVGs exported from Figma** (`public/icons`), drawn as CSS masks in `currentColor` by `Icon`. Each icon's default colour is the token its Figma colour maps to; pass `tone` to change it. New icons need an entry in the `ICONS` map in `src/components/shell/icon.tsx`.
+- **Theme.** The account menu (`account-menu.tsx`) sets `data-theme` on `<html>` and keeps the choice in `localStorage` (`dpm-theme`). A script in the root layout applies it before the first paint. With no choice, the theme follows the computer.
