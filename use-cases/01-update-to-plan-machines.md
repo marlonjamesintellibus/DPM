@@ -1240,6 +1240,8 @@ Found in use (Kemar's "I think Forager might be delayed by two days as I haven't
 - The hint about highlights with two numbers shows only when a highlight has two numbers.
 - Atlas (prompt `read-6`): a slip's title says the cause when the update gives one; a rationale speaks to the author as "you"; a slip that names no milestone or date says so in the rationale, so the PM can ask; when the author says their own work is not finished and a listed work item of theirs matches, Atlas also proposes its state.
 
+- **Changed 27 Oct (footnotes):** the numbers that link your words to their cards no longer carry colour. The words that fed a card get a plain underline with the card numbers as a grey superscript (¹ ², like citations); each card has its number quietly in its margin; "Needs your OK" is a small pill beside the title, the one place status is said. Words that fed nothing keep their dotted underline (section 20, U1). Hovering still lights up both sides.
+
 ### M2 and M3: no new states
 
 One-step Save is the existing events in order, each checked by its machine as before: M3 `ACCEPT` (or `EDIT`) and then M2's save. If the first is refused, nothing is saved. If the save is refused or finds a conflict, the item stays decided, as it would after two clicks, and the card offers Save again.

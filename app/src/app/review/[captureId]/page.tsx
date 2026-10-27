@@ -31,7 +31,8 @@ async function Review({ params }: { params: PageProps<"/review/[captureId]">["pa
   const state = review.capture.state;
   // Phase L, M30: an undone save keeps its items as saved; the page says none of it stands
   return (
-    <ViewerShell breadcrumb={["Today", "Review my update"]} activeHref="/">
+    // "Today" goes back to the chat, in the conversation this message came from
+    <ViewerShell breadcrumb={[{ label: "Today", href: `/?view=chat${review.capture.conversationId ? `&c=${review.capture.conversationId}` : ""}` }, "Review my update"]} activeHref="/">
       <PageHead title="Review my update">
         <span className="px-2.5 py-1 type-body text-fg-2">
           From {from}. {review.footer.split(". ")[0].replace(/\.$/, "")}.{" "}

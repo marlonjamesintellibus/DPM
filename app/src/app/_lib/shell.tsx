@@ -2,6 +2,7 @@
 // View as menu. Reads the viewer cookie, so screens render it inside <Suspense> (Cache Components). A
 // screen that has read the viewer's "Help improve Atlas" already passes it in, so it is read once.
 import { AppShell } from "@/components/shell/app-shell";
+import type { Crumb } from "@/components/shell/header";
 import type { NavItem } from "@/components/shell/sidebar";
 import { getDb } from "@/db/client";
 import * as t from "@/db/schema";
@@ -11,7 +12,7 @@ import { asOfLabel, requestNow } from "./clock";
 import { currentViewer, VIEWERS } from "./viewer";
 import { ViewAsMenu } from "./view-as-menu";
 
-export async function ViewerShell({ breadcrumb, activeHref, helpOn, children }: { breadcrumb: string[]; activeHref: string; helpOn?: boolean; children: React.ReactNode }) {
+export async function ViewerShell({ breadcrumb, activeHref, helpOn, children }: { breadcrumb: Crumb[]; activeHref: string; helpOn?: boolean; children: React.ReactNode }) {
   const viewer = await currentViewer();
   const db = await getDb();
   const reader = await projectReader(db, viewer.id);
