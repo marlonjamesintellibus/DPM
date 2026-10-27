@@ -3,7 +3,7 @@
 **Goes with:** `01-update-to-plan.md` (the story) and `build-plan.md` (how it is built)
 **Vocabulary:** the shapes in `research/state-machines/js/map-data.mjs` (Thing, Job, Ask, Switch, Stage, Status rule) and Part C of the knowledge base
 **Status:** plan. Items marked NEW are not in Part C yet. Items marked DECIDE need an answer before build; each has a default.
-**Model checked 26 Oct 2026:** M9 (set status), M13 to M15 (rights, routing, visibility), M16 (matching, merging) with the S13 blocker rule in `research/state-machines/js`. Two design rules were confirmed by the checker: a decider's right is checked when they approve, not when the item reached their inbox; and routing needs both server check 9 and the membership recheck at save.
+**Model checked 26 Oct 2026 (phase 1a complete):** M2 to M4 (saving a capture: compare and set, all or nothing, reminder and expiry), M10 (inbox items), M9 (set status), M13 to M15 (rights, routing, visibility), M16 (matching, merging) with the S13 blocker rule in `research/state-machines/js`. Two design rules were confirmed by the checker: a decider's right is checked when they approve, not when the item reached their inbox; and routing needs both server check 9 and the membership recheck at save.
 **Changed 26 Oct 2026:** one update now routes to several projects and builds their BRAID logs (`meetings/2026-10-26-silver-slipper-plaza-3.md`). Added M13 to M16, edge cases E70 to E99, server checks 9 to 14, decisions S10 to S18. Existing IDs are unchanged.
 
 ## 1. Rules every machine follows
@@ -384,7 +384,7 @@ Each has an ID used as a test name. "Where" is the machine and state that handle
 | ID | Case | What happens | Where |
 |---|---|---|---|
 | E60 | Rule runs twice for the same cause | One open item (cause key) | M10 |
-| E61 | Cause clears and comes back an hour later | Old item stays closed; new item, new age | M10 |
+| E61 | Cause clears and comes back an hour later | Old item stays closed; new item, new age. If it comes back before the rule has run in between, the original item simply stays open (model checked) | M10 |
 | E62 | Alicia snoozes the item and the cause clears | Item auto-closes while snoozed; never wakes up | M10 |
 | E63 | Project owner changes | Open items move to the new owner with an audit entry (DECIDE, likely next slice) | M10 |
 
@@ -453,7 +453,7 @@ Dropped proposals are logged with the reason, so we can measure the model (Phase
 
 | Layer | What | Covers |
 |---|---|---|
-| Model checks (before code) | Done for set status: `reason_stale` and two new properties in `models/trackedStatus.mjs` (26 Oct). Still to do: add compare and set, conflict, and review expiry to `models/capture.mjs`. New small `models/inboxItem.mjs` for cause keys and episodes. Done 26 Oct for BRAID rights and routing: `models/braidEntry.mjs` (`OnLogOnlyWithRight`, `DecisionNeverApprovedByText`, `NothingDecidesItself`, `ConflictsNeverSilent`, `SomeoneIsAsked`, `NoOrphanItems`) and `models/routing.mjs` (`RoutedOnlyToCandidates`, `OnlyMemberProjects`, `NothingFiledWhileChoosing`, `NoCrossProjectQuote`, `NoCrossOrg`). All pass as designed; each has a planted bug that is caught. Done for matching: `models/match.mjs` (`SourceOnlyAfterConfirm`, `NeverAcrossKinds`, `EveryReportOnce`, `UnmergeRestores`, `ChangedMatchIsAConflict`, `OneAlertPerNewEntry`, `BlockerResolvedByOwnerOrLead`, `NoOrphanItems`); unmerge must go in reverse order. Results in `research/state-machines/tla-plus-and-tlc.md`, section 9a. Run `node run-all.mjs` | M2, M3, M9, M10, M13 to M16 invariants |
+| Model checks (before code) | All done 26 Oct (phase 1a). Set status: `reason_stale` and two new properties in `models/trackedStatus.mjs`. Saving a capture: `models/captureSave.mjs` (`NeverOverwriteUnseen`, `AllOrNothing`, `AppliedAtMostOnce`, `NothingAfterExpiry`, `ExpiryIsFinal`, `ReminderBeforeExpiry`, `ReviewEnds`). Inbox items: `models/inboxItem.mjs` (`OneLiveItemPerCause`, `InboxMatchesCause`, `ClosedNeverReopens`, `InboxCatchesUp`). Done 26 Oct for BRAID rights and routing: `models/braidEntry.mjs` (`OnLogOnlyWithRight`, `DecisionNeverApprovedByText`, `NothingDecidesItself`, `ConflictsNeverSilent`, `SomeoneIsAsked`, `NoOrphanItems`) and `models/routing.mjs` (`RoutedOnlyToCandidates`, `OnlyMemberProjects`, `NothingFiledWhileChoosing`, `NoCrossProjectQuote`, `NoCrossOrg`). All pass as designed; each has a planted bug that is caught. Done for matching: `models/match.mjs` (`SourceOnlyAfterConfirm`, `NeverAcrossKinds`, `EveryReportOnce`, `UnmergeRestores`, `ChangedMatchIsAConflict`, `OneAlertPerNewEntry`, `BlockerResolvedByOwnerOrLead`, `NoOrphanItems`); unmerge must go in reverse order. Results in `research/state-machines/tla-plus-and-tlc.md`, section 9a. Run `node run-all.mjs` | M2 to M4, M9, M10, M13 to M16 invariants |
 | Transition table tests | Every row of every table: allowed arrow moves; every missing arrow is refused | Rule 2 |
 | Property tests (fast-check) | Random event sequences against the real domain code; assert the same invariants as the models (`NoAutoAcceptBelowHigh`, `NothingAppliedWithoutConfirm`, `AppliedAtMostOnce`, `ReasonRule`, `DoneWins`, `NoSilentDisagreement`, one open item per cause key) | Code matches the checked model |
 | Edge case tests | One test per ID in section 3, named after it (`E24 target changed between proposal and save`) | Section 3 |

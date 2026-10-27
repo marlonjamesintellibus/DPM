@@ -18,7 +18,7 @@
 7. Spec 3: Atlas suggestion and action (C5, P5)
 8. Spec 4: Help request and its 60 minute target (C10)
 9. Spec 5: Staged pipeline and refinement (C11, C14.10)
-9a. Specs 6 to 8: BRAID entry, routing and matching (use case 1, JavaScript first)
+9a. Specs 6 to 10: BRAID entry, routing, matching, saving a capture, inbox items (use case 1, JavaScript first)
 10. Running TLC
 11. Expected results
 12. Answering the C14 research questions with TLA+
@@ -859,7 +859,7 @@ CHECK_DEADLOCK FALSE
 
 ---
 
-## 9a. Specs 6 to 8: BRAID entry, routing and matching (use case 1, JavaScript first)
+## 9a. Specs 6 to 10: BRAID entry, routing, matching, saving a capture, inbox items (use case 1, JavaScript first)
 
 Added 26 Oct 2026 for use case 1 (`use-cases/01-update-to-plan-machines.md`, M13 to M16) and the briefing in `meetings/2026-10-26-silver-slipper-plaza-3.md`. These three exist only as JavaScript models (`js/models/braidEntry.mjs`, `js/models/routing.mjs`, `js/models/match.mjs`). The TLA+ text is still to write; it should follow the same conventions as specs 1 to 5, with the JS port as the reference.
 
@@ -919,6 +919,39 @@ A design rule the model needed: **unmerge in reverse order**. If x was merged in
 
 Story on the map: "Three reports, one blocker" (Match; planted bug: every report pings the PM, caught at step 3).
 
+### Spec 9: CaptureSave (machines doc M2 to M4; added for phase 1a, 26 Oct 2026)
+
+Two updates from one capture, each on its own record. Each update saw a value ("a") and wants to write "b". Before Kemar saves, another writer (GitHub, a lead) may set a record to "b" (got there first) or "c" (something else). Kemar can accept, reject, and accept again after a conflict (which means "I have seen the new value"). Timers remind and then expire a review nobody finishes.
+
+| Property | Kind | Says |
+|---|---|---|
+| `NeverOverwriteUnseen` | action | Save writes a record only over the value the update saw |
+| `AllOrNothing` | invariant | No update is applied while the capture is still in review |
+| `AppliedAtMostOnce` | invariant | Each update writes its record at most once |
+| `NothingAfterExpiry` | invariant | An expired capture changed nothing |
+| `ExpiryIsFinal` | action | Nothing about an expired capture changes again |
+| `ReminderBeforeExpiry` | invariant | Kemar is reminded before his review expires |
+| `ReviewEnds` | liveness | A review is saved or expires; it never waits forever (timers are fair) |
+
+`ApplyMode` is decision S3. "Apply what can" fails `AllOrNothing` and `NothingAfterExpiry`: a half-saved capture can expire with some records already changed. All or nothing passes everything.
+
+**Findings from the planted bugs.** "A second Save runs again" breaks three properties, not one. The second save can arrive after GitHub legitimately changed the record, and then writes Kemar's old value over GitHub's newer one. Once per update ID is what prevents that. "Save an expired capture" was not caught at first: the save moved the capture out of expired, so `NothingAfterExpiry` never saw it. `ExpiryIsFinal` was added and now catches it in 3 steps.
+
+### Spec 10: InboxItem (machines doc M10; added for phase 1a, 26 Oct 2026)
+
+One cause (for example "status set with no reason") that appears and clears. A rule (`Evaluate`, fair) keeps the owner's inbox in step. The owner can act (which removes the cause), snooze, or wait; a snooze can wake. Episodes are bounded to 3.
+
+| Property | Kind | Says |
+|---|---|---|
+| `OneLiveItemPerCause` | invariant | At most one open or snoozed item per cause |
+| `InboxMatchesCause` | invariant | Once the rule has run, there is a live item exactly when the cause holds (a snoozed item whose cause is gone closes) |
+| `ClosedNeverReopens` | action | An acted or auto-closed item never changes again; a returning cause gets a new item |
+| `InboxCatchesUp` | liveness | Every change is evaluated |
+
+Finding: if the cause clears and comes back before the rule runs in between, the original item stays open. The rule never saw it clear, so this is correct, and E61 ("comes back later, new item") applies only when the rule ran in the gap.
+
+Stories on the map: "Someone changed it first" (CaptureSave; planted bug: Save writes without checking what the update saw, caught at step 4) and "Alicia's reason item" (InboxItem; planted bug: a closed item is reopened, caught at step 4).
+
 ---
 
 ## 10. Running the checks
@@ -971,7 +1004,7 @@ java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -config TrackedStatus.cfg Tra
 
 ## 11. Expected results
 
-Run with the JavaScript checker on 24 Oct 2026 and again on 26 Oct 2026 after the use case 1 additions (`node run-all.mjs`). All 21 settings matched expectations, and so did 24 planted-bug rows (below the table). Full traces are in `js/results.md`. The TLC column stays empty until TLC is run.
+Run with the JavaScript checker on 24 Oct 2026 and again on 26 Oct 2026 after the use case 1 additions (`node run-all.mjs`). All 24 settings matched expectations, and so did 33 planted-bug rows (below the table). Full traces are in `js/results.md`. The TLC column stays empty until TLC is run.
 
 | Spec | Setting | States | Expected | JavaScript result | TLC |
 |---|---|---|---|---|---|
@@ -996,6 +1029,9 @@ Run with the JavaScript checker on 24 Oct 2026 and again on 26 Oct 2026 after th
 | Routing | as given (membership checked at save) | 955 | All pass | All 6 pass | |
 | Routing | `RecheckAtSave = FALSE` | 832 | `OnlyMemberProjects` fails | Fails in 4 steps: routed to Forager, Kemar leaves, saved anyway | |
 | Match | as given | 20,615 | All pass | All 9 pass | |
+| CaptureSave | as given (all or nothing, compare and set) | 396 | All pass | All 8 pass | |
+| CaptureSave | S3 alternative: apply what can | 416 | `AllOrNothing`, `NothingAfterExpiry` fail | Both fail: a half-saved capture | |
+| InboxItem | as given | 63 | All pass | All 5 pass | |
 
 **Planted bugs.** As on the Atlas machine map, each check must fail on a bug planted for it, so a pass means something:
 
@@ -1025,6 +1061,15 @@ Run with the JavaScript checker on 24 Oct 2026 and again on 26 Oct 2026 after th
 | Match: an entry that changed since review is matched anyway | `ChangedMatchIsAConflict` | Fails in 4 steps: Kemar confirms the open blocker, Alicia resolves it, Kemar's save reopens it unseen |
 | Match: every report pings the PM, not only new entries | `OneAlertPerNewEntry` | Fails, as it must |
 | Match: anyone can resolve a blocker | `BlockerResolvedByOwnerOrLead` | Fails in 1 step: Jodian resolves it |
+| CaptureSave: Save writes without checking what the update saw | `NeverOverwriteUnseen` | Fails in 4 steps: accept both, GitHub changes #145, Save overwrites it |
+| CaptureSave: a second Save runs again (no dedup) | `AllOrNothing`, `AppliedAtMostOnce`, `NothingAfterExpiry` | All fail: the repeat overwrites a later change (section 9a) |
+| CaptureSave: an expired capture can still be saved | `ExpiryIsFinal` | Fails, as it must |
+| CaptureSave: expires without a reminder first | `ReminderBeforeExpiry` | Fails in 1 step |
+| CaptureSave: the expiry timer never fires | `ReviewEnds` | Fails: reminded, then waits forever |
+| InboxItem: evaluate adds an item even when one is live | `OneLiveItemPerCause`, `InboxMatchesCause` | Both fail: the cause flaps before the rule runs |
+| InboxItem: a closed item is reopened when the cause returns | `ClosedNeverReopens` | Fails in 5 steps |
+| InboxItem: items do not close when the cause goes | `InboxMatchesCause` | Fails in 4 steps |
+| InboxItem: the rule never runs after a change | `InboxCatchesUp` | Fails: waits forever |
 
 The 4th row is a finding in itself: checking permission when an action runs (rule 8 on the map) also protects against Atlas skipping approval.
 

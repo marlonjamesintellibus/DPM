@@ -223,7 +223,7 @@ const decisionsSection = `
 const tlaSection = `
 <section id="tla" aria-labelledby="tla-h">
   <h2 id="tla-h">How it is checked</h2>
-  <p class="lede">The specs are written in TLA+ (<code>tla-plus-and-tlc.md</code>), except BraidEntry, Routing and Match, which are JavaScript only so far. Until Java is installed, a JavaScript checker does what TLC would: it visits every reachable state of each model, checks every rule, checks that nothing waits forever, and replays every story. Each check must also catch a bug planted for it.</p>
+  <p class="lede">The specs are written in TLA+ (<code>tla-plus-and-tlc.md</code>), except BraidEntry, Routing, Match, CaptureSave and InboxItem, which are JavaScript only so far. Until Java is installed, a JavaScript checker does what TLC would: it visits every reachable state of each model, checks every rule, checks that nothing waits forever, and replays every story. Each check must also catch a bug planted for it.</p>
   <div class="stat-row small">
     <div><span class="n">${results.filter((r) => !r.plant).length}</span><span class="l">settings</span></div>
     <div><span class="n">${properties}</span><span class="l">properties</span></div>

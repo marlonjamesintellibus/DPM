@@ -124,10 +124,10 @@ export const AREAS = [
 export const MACHINES = [
   // Talking to Atlas
   { area: 'atlas', name: 'Capture', shape: 'thing', states: 'Live, never edited → Gone when retention ends (OPEN)', refs: 'A5.6, C1', checked: null },
-  { area: 'atlas', name: 'Capture processing', shape: 'job', states: 'Received → Being read → (Asking 1 question) → Proposed → Saved / Rejected', refs: 'A3, C1', checked: 'Capture' },
+  { area: 'atlas', name: 'Capture processing', shape: 'job', states: 'Received → Being read → (Asking 1 question) → Proposed → Saved / Rejected; reminder, then Expired', refs: 'A3, C1, use case 1 M2', checked: 'Capture, CaptureSave' },
   { area: 'atlas', name: "Atlas's question", shape: 'ask', states: 'Asking → Answered; at most 1 per capture', refs: 'A3, C1', checked: 'Capture' },
   { area: 'atlas', name: 'Extracted update', shape: 'ask', states: 'Needs your OK → Accepted / Edited / Rejected; High confidence is pre-accepted', refs: 'A9.2, C1', checked: 'Capture' },
-  { area: 'atlas', name: 'Apply update', shape: 'job', states: 'Waiting → Done, once per update ID', refs: 'C1, C14.5', checked: 'Capture' },
+  { area: 'atlas', name: 'Apply update', shape: 'job', states: 'Waiting → Done, once per update ID; all or nothing; writes only over what the update saw, else Conflict', refs: 'C1, C14.5, use case 1 M4', checked: 'Capture, CaptureSave' },
   { area: 'atlas', name: 'Routing an item', shape: 'switch', states: 'Routed to a project / Choose a project / Not filed; checked again at save', refs: 'Use case 1, M14', checked: 'Routing' },
   { area: 'atlas', name: 'Same as an existing entry', shape: 'ask', states: 'New / Same as an entry; the speaker confirms; changed since review → conflict; the PM can merge and unmerge', refs: 'Use case 1, M16', checked: 'Match' },
   { area: 'atlas', name: 'Suggestion', shape: 'ask', states: 'Shown → Approved / Changed / Dismissed', refs: 'A9.1, C5', checked: null },
@@ -174,8 +174,8 @@ export const MACHINES = [
   { area: 'operations', name: 'Integration feed', shape: 'presence', states: 'Here → Quiet ("as of 9:10am") → Gone', refs: 'A10.3, P11', checked: null },
   { area: 'operations', name: 'Staffing approval', shape: 'ask', states: 'See Approval; NEPA seats in B6', refs: 'B6, C5', checked: 'AtlasAction' },
   // Inbox and decisions
-  { area: 'inbox', name: 'Inbox item', shape: 'ask', states: 'Open → Acted / Auto closed (cause cleared)', refs: 'C4, A8.2', checked: 'TrackedStatus' },
-  { area: 'inbox', name: 'Snoozed', shape: 'switch', states: 'Off → On until a time', refs: 'C4', checked: null },
+  { area: 'inbox', name: 'Inbox item', shape: 'ask', states: 'Open → Acted / Auto closed (cause cleared); one live item per cause; closed never reopens', refs: 'C4, A8.2, use case 1 M10', checked: 'TrackedStatus, InboxItem' },
+  { area: 'inbox', name: 'Snoozed', shape: 'switch', states: 'Off → On until a time; closes if the cause goes first', refs: 'C4', checked: 'InboxItem' },
   { area: 'inbox', name: 'Decision', shape: 'ask', states: 'Asking → one of its options', refs: 'A5.6, B6', checked: null },
   // Growth
   { area: 'growth', name: 'Event', shape: 'stage', states: 'Planned → Held / Cancelled (proposed)', refs: 'A5.5', checked: null },
@@ -273,4 +273,10 @@ export const PROMISES = [
   ['Match', 'If the entry changed while the speaker was reviewing, they are asked again; nothing attaches.'],
   ['Match', 'The PM is alerted once per new blocker, never for a repeat report.'],
   ['Match', 'Only the person blocked, or a PM or Lead, resolves a blocker.'],
+  ['CaptureSave', 'Save writes a record only over the value the update saw; anything else is a conflict for the speaker.'],
+  ['CaptureSave', 'A save that cannot apply everything applies nothing.'],
+  ['CaptureSave', 'Each update is written at most once, however often Save is pressed.'],
+  ['CaptureSave', 'A review nobody finishes is reminded, then expires, and changes nothing.'],
+  ['InboxItem', 'One open item per cause, and none once the cause is gone, even if snoozed.'],
+  ['InboxItem', 'A closed item never reopens; a returning cause gets a new item with a new age.'],
 ];

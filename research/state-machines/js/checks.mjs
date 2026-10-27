@@ -7,6 +7,8 @@ import Opportunity from './models/opportunity.mjs';
 import BraidEntry from './models/braidEntry.mjs';
 import Routing from './models/routing.mjs';
 import Match from './models/match.mjs';
+import CaptureSave from './models/captureSave.mjs';
+import InboxItem from './models/inboxItem.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -46,6 +48,10 @@ export const ROWS = [
   { spec: 'Routing', setting: 'RecheckAtSave = FALSE', model: Routing({ RecheckAtSave: false }), expectFail: ['OnlyMemberProjects'] },
   // Match is machines doc M16 plus the S13 blocker rule
   { spec: 'Match', setting: 'as given', model: Match(), expectFail: [] },
+  // CaptureSave is machines doc M2 to M4; InboxItem is M10 (phase 1a, 26 Oct)
+  { spec: 'CaptureSave', setting: 'as given (all or nothing, compare and set)', model: CaptureSave(), expectFail: [] },
+  { spec: 'CaptureSave', setting: 'S3 alternative: apply what can', model: CaptureSave({ ApplyMode: 'what_can' }), expectFail: ['AllOrNothing', 'NothingAfterExpiry'] },
+  { spec: 'InboxItem', setting: 'as given', model: InboxItem(), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -78,4 +84,14 @@ export const PLANTS = [
   { spec: 'Match', setting: 'bug: an entry that changed since review is matched anyway', model: Match({ Bug: 'noConflictCheck' }), expectFail: ['ChangedMatchIsAConflict'] },
   { spec: 'Match', setting: 'bug: every report pings the PM, not only new entries', model: Match({ Bug: 'alertOnSource' }), expectFail: ['OneAlertPerNewEntry'] },
   { spec: 'Match', setting: 'bug: anyone can resolve a blocker', model: Match({ Bug: 'anyoneResolves' }), expectFail: ['BlockerResolvedByOwnerOrLead'] },
+  { spec: 'CaptureSave', setting: 'bug: Save writes without checking what the update saw', model: CaptureSave({ Bug: 'blindWrite' }), expectFail: ['NeverOverwriteUnseen'] },
+  // A second Save that runs again can arrive after another writer changed the record, and overwrite it
+  { spec: 'CaptureSave', setting: 'bug: a second Save runs again (no dedup)', model: CaptureSave({ Bug: 'noDedup' }), expectFail: ['AllOrNothing', 'AppliedAtMostOnce', 'NothingAfterExpiry'] },
+  { spec: 'CaptureSave', setting: 'bug: an expired capture can still be saved', model: CaptureSave({ Bug: 'applyAfterExpiry' }), expectFail: ['ExpiryIsFinal'] },
+  { spec: 'CaptureSave', setting: 'bug: expires without a reminder first', model: CaptureSave({ Bug: 'expireWithoutReminder' }), expectFail: ['ReminderBeforeExpiry'] },
+  { spec: 'CaptureSave', setting: 'bug: the expiry timer never fires', model: CaptureSave({ Bug: 'noExpiry' }), expectFail: ['ReviewEnds'] },
+  { spec: 'InboxItem', setting: 'bug: evaluate adds an item even when one is live', model: InboxItem({ Bug: 'duplicateItems' }), expectFail: ['OneLiveItemPerCause', 'InboxMatchesCause'] },
+  { spec: 'InboxItem', setting: 'bug: a closed item is reopened when the cause returns', model: InboxItem({ Bug: 'reopenClosed' }), expectFail: ['ClosedNeverReopens'] },
+  { spec: 'InboxItem', setting: 'bug: items do not close when the cause goes', model: InboxItem({ Bug: 'noAutoClose' }), expectFail: ['InboxMatchesCause'] },
+  { spec: 'InboxItem', setting: 'bug: the rule never runs after a change', model: InboxItem({ Bug: 'ruleNeverRuns' }), expectFail: ['InboxCatchesUp'] },
 ];

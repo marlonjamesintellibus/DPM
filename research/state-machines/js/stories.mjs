@@ -10,6 +10,8 @@ import AtlasAction from './models/atlasAction.mjs';
 import HelpRequest from './models/helpRequest.mjs';
 import BraidEntry from './models/braidEntry.mjs';
 import Routing from './models/routing.mjs';
+import CaptureSave from './models/captureSave.mjs';
+import InboxItem from './models/inboxItem.mjs';
 import Match from './models/match.mjs';
 
 const CAP = {
@@ -509,6 +511,133 @@ export const STORIES = [
     bug: {
       text: 'Every report pings the PM, not only new entries',
       model: Match({ Bug: 'alertOnSource' }),
+    },
+  },
+  {
+    id: 'changed-before-save',
+    tab: 'Someone changed it first',
+    area: 'atlas',
+    summary:
+      'Use case 1, E24 and E25. Between Atlas reading Kemar\'s note and Kemar pressing Save, GitHub closes #145 and Alicia moves the trend model forecast. Save writes only over what Kemar saw, and saves all or nothing.',
+    refs: ['use case 1, M2 to M4', 'E24', 'E25', 'S3'],
+    people: ['Kemar sees', 'Alicia sees'],
+    model: CaptureSave({ Updates: { u1: 't1', u2: 't2' } }),
+    start: () => true,
+    before: 'Atlas read #145 as In progress and the trend model forecast as 23 Oct. Kemar is reviewing.',
+    rows: {
+      'upd.u1': { label: 'Update: #145 to Done', machine: 'Extracted update', shape: 'ask', values: { proposed: 'Needs your OK', accepted: 'Accepted', conflict: 'Changed since you looked', applied: 'Saved', no_change: 'Already true, nothing to write' } },
+      'upd.u2': { label: 'Update: forecast to 24 Oct', machine: 'Extracted update', shape: 'ask', values: { proposed: 'Needs your OK', accepted: 'Accepted', conflict: 'Changed since you looked', applied: 'Saved', no_change: 'Already true, nothing to write' } },
+      'record.t1': { label: 'Issue #145 in the plan', machine: 'Work item', shape: 'stage', values: { a: 'In progress', b: 'Done', c: 'Cancelled' } },
+      'record.t2': { label: 'Trend model forecast in the plan', machine: 'Milestone', shape: 'stage', values: { a: '23 Oct', b: '24 Oct', c: '25 Oct' } },
+      cap: { label: "Kemar's review", machine: 'Capture processing', shape: 'job', values: { reviewing: 'In review', saved: 'Saved', expired: 'Expired' } },
+    },
+    steps: [
+      {
+        title: 'Kemar accepts both updates',
+        sees: ['2 ready', 'Nothing yet'],
+        moves: [['Accept', 'u1'], ['Accept', 'u2']],
+        expect: { 'upd.u1': 'accepted', 'upd.u2': 'accepted' },
+      },
+      {
+        title: '9:05am. GitHub closes #145',
+        sees: ['Nothing yet', 'Nothing'],
+        moves: [['OtherWriter', 't1', 'b']],
+        expect: { 'record.t1': 'b' },
+      },
+      {
+        title: '9:06am. Alicia moves the forecast to 25 Oct',
+        sees: ['Nothing yet', 'Forecast 25 Oct'],
+        moves: [['OtherWriter', 't2', 'c']],
+        expect: { 'record.t2': 'c' },
+      },
+      {
+        title: 'Kemar presses Save',
+        sees: ['Not saved. The forecast changed since you looked: Alicia set 25 Oct at 9:06. Keep 24 Oct, or drop yours?', 'Nothing changes'],
+        moves: [['Save']],
+        expect: { 'upd.u2': 'conflict' },
+      },
+      {
+        title: 'Kemar keeps 24 Oct (he owns the milestone)',
+        sees: ['Ready to save again', 'Nothing yet'],
+        moves: [['Accept', 'u2']],
+        expect: { 'upd.u2': 'accepted' },
+      },
+      {
+        title: 'Kemar saves',
+        sees: ['Saved. #145 was already Done (GitHub, 9:05), so nothing was written for it', 'Forecast 24 Oct, by Kemar, after your 25 Oct'],
+        moves: [['Save']],
+        expect: { cap: 'saved', 'upd.u1': 'no_change', 'upd.u2': 'applied', 'record.t2': 'b' },
+      },
+    ],
+    note: 'Step 4 is all or nothing (S3): #145 is not saved alone while the forecast is in conflict. The checker also covers what this story does not show: Save pressed twice, a review nobody finishes (reminder, then expiry), and saving after expiry.',
+    bug: {
+      text: 'Save writes without checking what the update saw',
+      model: CaptureSave({ Bug: 'blindWrite' }),
+    },
+  },
+  {
+    id: 'reason-item',
+    tab: "Alicia's reason item",
+    area: 'inbox',
+    summary:
+      'The inbox item "Forager 2.0 is set Off track, but the plan says At risk". One live item per cause; it closes when the cause goes, even while snoozed; when the cause comes back, it is a new item with a new age.',
+    refs: ['use case 1, M10', 'A8.2', 'C4', 'E60 to E62'],
+    people: ['Alicia sees'],
+    model: InboxItem(),
+    start: () => true,
+    before: 'Forager 2.0 has no set status. Alicia\'s inbox has nothing about it.',
+    rows: {
+      cause: { label: 'Cause: status set with no reason', machine: 'Set status', shape: 'switch', values: { true: 'Yes', false: 'No' } },
+      items: {
+        label: "Alicia's inbox items for this cause",
+        machine: 'Inbox item',
+        shape: 'ask',
+        values: {
+          '[]': 'None',
+          '[{"ep":1,"st":"open"}]': 'Item 1 open',
+          '[{"ep":1,"st":"snoozed"}]': 'Item 1 snoozed',
+          '[{"ep":1,"st":"auto_closed"}]': 'Item 1 closed (cause gone)',
+          '[{"ep":1,"st":"auto_closed"},{"ep":2,"st":"open"}]': 'Item 1 closed; item 2 open, new age',
+          '[{"ep":1,"st":"auto_closed"},{"ep":2,"st":"acted"}]': 'Item 1 closed; item 2 done',
+        },
+      },
+    },
+    steps: [
+      {
+        title: '9:02am. Alicia sets Off track with no reason',
+        sees: ['Forager 2.0 is set Off track, but the plan says At risk · 0m'],
+        moves: [['CauseAppears'], ['Evaluate']],
+        expect: { cause: true, items: [{ ep: 1, st: 'open' }] },
+      },
+      {
+        title: 'She snoozes it until after lunch',
+        sees: ['Snoozed until 1pm'],
+        moves: [['Snooze']],
+        expect: { items: [{ ep: 1, st: 'snoozed' }] },
+      },
+      {
+        title: '11am. The plan catches up and agrees: Off track',
+        sees: ['Nothing. The item closed while snoozed, and will not wake at 1pm'],
+        moves: [['CauseClears'], ['Evaluate']],
+        expect: { cause: false, items: [{ ep: 1, st: 'auto_closed' }] },
+      },
+      {
+        title: '3pm. She sets On track; the plan says At risk',
+        sees: ['Forager 2.0 is set On track, but the plan says At risk · 0m (a new item, not the old one reopened)'],
+        moves: [['CauseAppears'], ['Evaluate']],
+        expect: { cause: true, items: [{ ep: 1, st: 'auto_closed' }, { ep: 2, st: 'open' }] },
+      },
+      {
+        title: 'She saves a reason',
+        sees: ['Item done'],
+        moves: [['OwnerActs']],
+        expect: { cause: false, items: [{ ep: 1, st: 'auto_closed' }, { ep: 2, st: 'acted' }] },
+      },
+    ],
+    note: 'If the cause clears and comes back before the rule has run in between, the original item simply stays open: the rule never saw it clear. The checker covers that, a rule that never runs, and items that never close.',
+    bug: {
+      text: 'A closed item is reopened when the cause returns',
+      model: InboxItem({ Bug: 'reopenClosed' }),
     },
   },
   {
