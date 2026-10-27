@@ -1,13 +1,14 @@
 "use client";
 // Review my update (Figma L16b): what you said, with each quoted span numbered; what Atlas will
 // change, grouped by project; and the selected item's detail with who sees what after Save.
-// Hover a highlight to light up its cards and the other way round. Every decision is a Server
+// The words that fed a card are underlined with its number as a footnote; hover them to light up
+// their cards and the other way round. Every decision is a Server
 // Action that runs the capture commands as the author; nothing is applied until Save (S3). An update
 // with one item is decided and saved on its card in one step (section 19).
 import { useMemo, useState, useTransition } from "react";
 import { decideAndSave, decideItem, discardUpdate, moveItem, rematchItem, saveUpdate, type ActionResult } from "@/app/actions";
 import { Card, FieldRow } from "@/components/ui/card";
-import { ActionNote, Button, KindChip, NumberBadge } from "@/components/ui/controls";
+import { ActionNote, Button, KindChip } from "@/components/ui/controls";
 import { Icon } from "@/components/shell/icon";
 import type { Review, ReviewItem } from "@/queries/review";
 
@@ -27,7 +28,7 @@ export function ReviewScreen({ review }: Props) {
   return (
     <div className="flex items-start gap-4">
       <div className="flex w-[340px] shrink-0 flex-col gap-4">
-        <MessageCard review={review} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} byOrdinal={byOrdinal} />
+        <MessageCard review={review} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} />
         <SetAsideCard review={review} />
       </div>
       <ChangesCard review={review} open={open} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} />
@@ -62,14 +63,12 @@ function MessageCard({
   selected,
   onHover,
   onSelect,
-  byOrdinal,
 }: {
   review: Review;
   hover: number[];
   selected: number | null;
   onHover: (o: number[]) => void;
   onSelect: (o: number) => void;
-  byOrdinal: Map<number, ReviewItem>;
 }) {
   const { capture } = review;
   const spans = mergeSpans(review.highlights);
@@ -94,21 +93,30 @@ function MessageCard({
     if (s.start > at) plain(at, s.start);
     const lit = s.ordinals.some((o) => hover.includes(o) || o === selected);
     parts.push(
-      <button
+      // Footnotes: a plain underline and the card numbers as a superscript, so the message reads as
+      // written; whether a card needs an OK is said on the card. Words that fed nothing stay dotted (U1).
+      // A span, not a button: a button never flows as text, so a phrase could not wrap mid-line.
+      <span
         key={`s${s.start}`}
-        type="button"
+        role="button"
+        tabIndex={0}
+        aria-label={`${capture.text.slice(s.start, s.end)}, update ${s.ordinals.join(" and ")}`}
         onMouseEnter={() => onHover(s.ordinals)}
         onMouseLeave={() => onHover([])}
         onFocus={() => onHover(s.ordinals)}
         onBlur={() => onHover([])}
         onClick={() => onSelect(s.ordinals[0])}
-        className={`mx-px inline-flex items-center gap-1 rounded-[4px] px-[5px] py-px text-left align-baseline box-decoration-clone bg-accent-soft ${lit ? "outline-[1.5px] outline-line-strong outline-solid" : ""}`}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect(s.ordinals[0]);
+          }
+        }}
+        className={`cursor-pointer rounded-[2px] underline decoration-line-strong underline-offset-4 box-decoration-clone focus-visible:outline-[1.5px] focus-visible:outline-line-strong ${lit ? "bg-accent-soft decoration-fg-2" : ""}`}
       >
         <span>{capture.text.slice(s.start, s.end)}</span>
-        {s.ordinals.map((o) => (
-          <NumberBadge key={o} n={o} tone={byOrdinal.get(o) && needsOk(byOrdinal.get(o)!) ? "warn" : "accent"} />
-        ))}
-      </button>,
+        <sup className="ml-px text-[11px] text-fg-3">{s.ordinals.join(",")}</sup>
+      </span>,
     );
     at = s.end;
   }
@@ -128,7 +136,7 @@ function MessageCard({
       )}
       {review.items.length > 1 && (
         <p className="type-caption text-fg-3">
-          Hover a highlight to see what it changed.{spans.some((s) => s.ordinals.length > 1) ? " One sentence can feed several updates, so some highlights have two numbers." : ""}
+          Hover the underlined words to see what they changed.{spans.some((s) => s.ordinals.length > 1) ? " Some words feed two updates, so they carry two numbers." : ""}
         </p>
       )}
       {projectGroups.length > 0 && (
@@ -304,14 +312,18 @@ function ItemCard({
       className={`flex cursor-pointer flex-col gap-2 rounded-md border px-3 py-2.5 ${lit ? "border-line-strong bg-panel-2" : "border-line"}`}
     >
       <div className="flex items-start gap-2.5">
-        <NumberBadge n={item.ordinal} tone={warn ? "warn" : "accent"} size="md" />
+        {/* The footnote number, quiet: it only says which words this card came from */}
+        <span className="w-3 shrink-0 pt-0.5 text-right type-micro text-fg-3">{item.ordinal}</span>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           {item.braidKind && <KindChip>{item.kindLabel}</KindChip>}
-          <span className="type-body-medium text-fg-1">{item.title}</span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span className="type-body-medium text-fg-1">{item.title}</span>
+            {warn && <span className="rounded-sm bg-warn-soft px-1.5 type-micro text-warn">Needs your OK</span>}
+          </span>
           <span className="flex flex-wrap items-center gap-x-2 type-body text-fg-2">
             <span>{item.change}</span>
             {item.confidence !== "high" && <span className={`type-micro ${confidenceTone}`}>{CONFIDENCE_LABEL[item.confidence]} confidence</span>}
-            {/* "Needs your OK" is said by the buttons; every other mark is said here */}
+            {/* "Needs your OK" is said beside the title; every other mark is said here */}
             {!warn && <span className={`type-micro ${markTone}`}>{item.markLabel}</span>}
           </span>
           {item.conflict?.reason && <span className="type-caption text-bad">{item.conflict.reason}</span>}
