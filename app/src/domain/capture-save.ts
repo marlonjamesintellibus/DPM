@@ -43,6 +43,8 @@ export type BraidIntent = {
   expectedOn?: string | null;
   /** Section 20, U3: how a risk, assumption or dependency ended (RESOLVE). */
   outcome?: ResolveOutcome;
+  /** Section 20, U4: the decision a new one reverses; linked as conflicting, so approving it supersedes that one. */
+  supersedes?: string;
 };
 
 export type SaveConflict = { itemId: string; key: string; saw: string | null; current: string | null };
@@ -125,6 +127,7 @@ export function planSave(
         matchEntryId: kind === "braid_same" || kind === "braid_resolve" ? entry.matchEntryId : null,
         ...(kind === "braid_new" && entry.expectedOn ? { expectedOn: entry.expectedOn } : {}),
         ...(kind === "braid_resolve" && entry.outcome ? { outcome: entry.outcome } : {}),
+        ...(kind === "braid_new" && entry.supersedes ? { supersedes: entry.supersedes } : {}),
       });
     } else {
       throw new Error(`item ${item.id}: nothing to apply`);

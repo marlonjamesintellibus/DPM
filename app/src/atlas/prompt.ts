@@ -12,11 +12,11 @@ import { CONFIDENCES } from "../domain/shared";
 
 // Main's line: read-7, someone else's agreed work is a dependency with its date (section 20, U2), and the
 // rationale speaks to the author as "you"; read-8, a message may say how a risk, assumption or dependency
-// ended (section 20, U3). The conversational plan's phase R, built alongside: Jamaican English and Patois
-// are read as written, quotes kept exactly, and what Atlas writes is standard English (CD20); a hedge in
-// Patois is a hedge ("mi tink"), and a project name that is also a word ("di academy") is not the project
-// (JA7). read-10: all of them together.
-export const PROMPT_VERSION = "read-10";
+// ended (U3); read-9, a decision that reverses a listed one supersedes it (U4). The conversational plan's
+// phase R, built alongside: Jamaican English and Patois are read as written, quotes kept exactly, and what
+// Atlas writes is standard English (CD20); a hedge in Patois is a hedge ("mi tink"), and a project name
+// that is also a word ("di academy") is not the project (JA7). read-11: all of them together.
+export const PROMPT_VERSION = "read-11";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -46,6 +46,7 @@ What you may propose (kind)
   - Work someone else has agreed to do, that the project waits on, is a dependency: "I've spoken with Kyle to update the harvest docs, he'll do it tomorrow". The title says who, what and by when, as a date worked out from when the update was sent: "Kyle to update the harvest docs by 21 Oct", never "by tomorrow". Quote the words with the date, so DPM can read it. It is never a promise for the author.
   - If it is the author's own promise ("I'll send Kyle the request"), propose nothing for it. Something agreed is a decision, and it is only proposed: a decision is never approved by the update.
   - If it relates to an open entry of another kind, put that entry's id in matchEntryId.
+  - A decision that reverses or replaces a listed decision ("we're going back to 5am" after "move the refresh to 6am"): a new decision, with that decision's id in supersedes. Never braid_same: it says something different. It is proposed like any other decision.
 - "braid_same": the update reports the same thing as an open BRAID entry already listed. Put that entry's id in matchEntryId and its kind in braidKind.
 - "braid_resolve": the update says a listed blocker or issue is cleared ("Kyle sent the feed"). Put that entry's id in matchEntryId. If the work it held is moving again, also propose the work item's state change. DPM decides whether the author may resolve it or only tells those who may.
   - Also when a listed risk, assumption or dependency has ended. Put its id in matchEntryId and say how in outcome: a risk is "closed" (gone, no longer a worry) or "realised" (it happened); an assumption is "confirmed" or "broken"; a dependency is "met" (delivered) or "late". DPM sends it to the PM or Lead, who decide. Leave outcome null for a blocker or issue.
@@ -157,6 +158,7 @@ export const proposalSchema = z.object({
   braidTitle: nullableString,
   matchEntryId: nullableString,
   outcome: z.enum(["closed", "realised", "confirmed", "broken", "met", "late"]).nullable().optional(),
+  supersedes: nullableString,
   note: nullableString,
   options: z.array(z.string()).nullable().optional(),
   replacesItemId: nullableString,

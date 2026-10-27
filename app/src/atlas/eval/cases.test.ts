@@ -2,20 +2,20 @@
 import { describe, expect, it } from "vitest";
 import { seededDb } from "../../test/seeded-db";
 import { EVAL_CASES } from "./cases";
-import { evalContexts } from "./contexts";
+import { caseContext, evalContexts } from "./contexts";
 
 describe("evaluation cases", () => {
   it("every id an expected item names is in its author's candidate data", async () => {
     const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
     for (const c of EVAL_CASES) {
-      const ctx = contexts[c.author ?? "kemar"];
+      const ctx = caseContext(c, contexts);
       const records = new Set(ctx.projects.flatMap((p) => p.records.map((r) => r.id)).concat(ctx.leave.targetId));
       const entries = new Set(ctx.projects.flatMap((p) => p.braid.map((e) => e.id)));
       const projects = new Set(ctx.projects.map((p) => p.id).concat("none"));
       for (const key of c.expect.flat()) {
         const [type, rest] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
         if (type === "upd") expect(records, `${c.id}: ${key}`).toContain(rest.slice(0, rest.indexOf(".")));
-        if (type === "same" || type === "resolve") expect(entries, `${c.id}: ${key}`).toContain(rest);
+        if (type === "same" || type === "resolve" || type === "supersede") expect(entries, `${c.id}: ${key}`).toContain(rest);
         if (type === "outcome") expect(entries, `${c.id}: ${key}`).toContain(rest.split("=")[0]);
         if (type === "new") expect(projects, `${c.id}: ${key}`).toContain(rest.split(":")[1].split("@")[0]);
       }

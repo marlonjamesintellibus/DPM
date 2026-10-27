@@ -1414,11 +1414,21 @@ inbox cause confirm_outcome:<entry> for the PM and Leads while outcomesProposed 
 
 | # | Case | Expected |
 |---|---|---|
-| SD1 | The old decision is still proposed | Linked `related`; the decider sees "a newer proposal says otherwise" |
-| SD2 | The old decision is already superseded | Linked to the decision that replaced it, if approved; else `related` |
+| SD1 | The old decision is still proposed | Linked as conflicting (changed while building: E88 already says what a pending conflicting decision does). The decider sees "It replaces …"; approving the new one leaves the pending one for a person |
+| SD2 | The old decision is already superseded | Not linked; the new decision stands alone (changed while building: Atlas is not shown which decision replaced it) |
 | SD3 | The new decision is declined | The old one stays approved |
-| SD4 | Atlas matched it "same as" the old one | The author's "Not the same" makes it new (M16); the supersede link is offered on the card |
+| SD4 | Atlas matched it "same as" the old one | The author's "Not the same" makes it new (M16). (Not built: offering the supersede link on the card; the prompt now says a reversal is never "same as") |
 | SD5 | It reverses a decision in another project | Check 10: refused, set aside |
+
+### U4 built (27 Oct 2026)
+
+- **Model first:** `braidEntry.mjs` gains SupersededHasApprovedSuccessor and a planted bug where a reported reversal supersedes before it is approved; the model passes all eight properties (104,980 states) and the bug fails as expected. Nothing new in the app's machines: the conflict link and "approving a decision supersedes the approved one it conflicts with" (E87) were already there, and a save never filled the link (`conflictsWith: []`).
+- **Atlas:** prompt `read-9`. A decision that reverses a listed one is a new decision with `supersedes` set, never "same as".
+- **Checks:** `supersedes` must name a decision in the same project (SD5 refused, set aside); one approved or still waiting is kept; one already replaced, declined or withdrawn is not linked (SD2).
+- **Save:** the new decision is linked as conflicting with the one it names. Nothing else changes until a decider approves it.
+- **Screens:** the review card says "Replaces: Move the daily refresh to 6am"; the decider's approval says "It replaces "Move the daily refresh to 6am" (approved). Approving it supersedes that one …".
+- **Evaluation:** a case may add BRAID entries to its author's data only (`braid`, `caseContext`); `decision-reversed` adds the approved 6am decision and passes three runs in a row with GPT-6.1 Sol. The whole set passes 61 of 62; the miss is `andre-decision` (D23), as before.
+- **Tests:** SD2 and SD5 in the checks; supersede on approval, SD1 and SD3 against PGlite (`commands/decision-reversal.test.ts`). No migration. 873 unit tests and the 11-step browser story pass.
 
 ### U5. An Ask to the owner (S5, built). M37. NEW
 

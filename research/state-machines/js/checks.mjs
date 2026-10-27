@@ -123,6 +123,7 @@ export const PLANTS = [
   { spec: 'BraidEntry', setting: 'bug: "Andre and I agreed" counts as the approval', model: BraidEntry({ Bug: 'approveByText' }), expectFail: ['DecisionNeverApprovedByText', 'OnLogOnlyWithRight'] },
   { spec: 'BraidEntry', setting: 'bug: a proposal approves itself after the reminders', model: BraidEntry({ Bug: 'autoApprove' }), expectFail: ['NothingDecidesItself', 'OnLogOnlyWithRight'] },
   { spec: 'BraidEntry', setting: 'bug: approving a decision does not supersede the one it conflicts with', model: BraidEntry({ Bug: 'noSupersede' }), expectFail: ['ConflictsNeverSilent'] },
+  { spec: 'BraidEntry', setting: 'bug: a reported reversal supersedes before it is approved (section 20, U4)', model: BraidEntry({ Bug: 'supersedeOnReport' }), expectFail: ['SupersededHasApprovedSuccessor'] },
   { spec: 'BraidEntry', setting: 'bug: nobody is told when no one can approve', model: BraidEntry({ Bug: 'noDeciderItem' }), expectFail: ['SomeoneIsAsked'] },
   // With the save recheck on, this bug cannot file anything wrongly: the recheck withdraws the item.
   // The routing check still fails, because Kemar would be shown a project he is not in.

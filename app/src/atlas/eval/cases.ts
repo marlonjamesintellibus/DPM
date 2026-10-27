@@ -10,9 +10,11 @@
 //   same:<entryId>                     another report of an open entry
 //   resolve:<entryId>                  says a blocker or issue is cleared (D7)
 //   outcome:<entryId>=<outcome>        says a risk, assumption or dependency ended, and how (section 20, U3)
+//   supersede:<entryId>                a new decision that reverses that one (section 20, U4)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
 import type { EarlierTurn } from "../../domain/atlas-checks/types";
+import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
 
 export type EvalAuthor = "kemar" | "alicia" | "andre";
@@ -39,6 +41,8 @@ export type EvalCase = {
   earlier?: EarlierTurn[];
   /** Section 16: the earlier item a correction must name in replacesItemId. */
   replaces?: string;
+  /** BRAID entries this case adds to its author's data only (section 20, U4: an approved decision to reverse). */
+  braid?: { projectId: string; id: string; kind: BraidKind; title: string; state: string }[];
 };
 
 export const EVAL_CASES: EvalCase[] = [
@@ -208,6 +212,15 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Turns out the buyers aren't available the week of the 26th.",
     expect: ["outcome:br-buyers-assumption=broken"],
     allow: ["new:issue:forager", "new:risk:forager"],
+  },
+  // Section 20, U4: a reversed decision names the one it replaces, and is never "same as" it
+  {
+    id: "decision-reversed",
+    about: "a decision reversed",
+    text: "Andre and I agreed to go back to the 5am refresh on Store Insights.",
+    braid: [{ projectId: "insights", id: "br-refresh-6am", kind: "decision", title: "Move the daily refresh to 6am", state: "approved" }],
+    expect: ["supersede:br-refresh-6am"],
+    forbid: ["same:br-refresh-6am"],
   },
   {
     id: "own-promise",

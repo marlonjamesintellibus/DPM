@@ -1075,7 +1075,9 @@ async function applyBraid(s: SaveScope, projectId: string, intents: readonly Bra
       if (go.to === "new_raised_again") [state, raisedAgainFrom, entryId, seen] = ["new", go.fromId, null, null];
     }
     // The author confirmed this match when they accepted the item (or left it ready and saved)
-    const match: MatchRecord = { itemId: item.id, projectId, kind, speakerId: s.authorId, state, entryId, confirmed: true, seen, conflictsWith: [], savedTo: null };
+    // Section 20, U4: a reversal is linked as conflicting with the decision it names; approving it supersedes that one (E87), never saving it
+    const conflictsWith = b.supersedes && log[b.supersedes] ? [b.supersedes] : [];
+    const match: MatchRecord = { itemId: item.id, projectId, kind, speakerId: s.authorId, state, entryId, confirmed: true, seen, conflictsWith, savedTo: null };
     const r = saveMatch(match, log, { newEntryId: `br-${item.id}`, title: b.title, ownerId: null, source, expectedOn: b.expectedOn ?? null }, { actor, today });
     if (!r.ok) throw new CommandRefused(r.outcome === "conflict" ? `"${braid.title}" changed since you saw it (now ${r.now})` : `"${braid.title}": ${r.reason}`);
     const from = r.outcome === "created" ? "none" : log[r.entryId].state;
