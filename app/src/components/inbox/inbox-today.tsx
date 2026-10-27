@@ -10,9 +10,11 @@ import { draftReason } from "@/commands/status";
 import { getDb } from "@/db/client";
 import { loadBraidLog } from "@/db/records";
 import * as t from "@/db/schema";
+import { withArticle } from "@/domain/shared";
 import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
+import { KindRequestControls } from "@/components/project/kind-request-controls";
 import { AcknowledgeControl, ClearControls, DecideControls, FollowUpControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
 
 const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
@@ -28,13 +30,15 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   review_waiting: "Your update",
   leave_impact: "Leave",
   done_no_change: "Delivery check",
+  kind_change: "Kind change",
+  blocked_without_blocker: "Delivery check",
 };
 
 // The small mark before an item's source line: a rule's check, someone's words, work, people
 function sourceIcon(item: InboxEntry): IconName {
   if (item.cause === "leave_impact") return "users";
   if (item.cause === "done_no_change") return "git-commit";
-  if (item.cause === "blocker_new" || item.cause === "confirm_clear") return "alert";
+  if (item.cause === "blocker_new" || item.cause === "confirm_clear" || item.cause === "blocked_without_blocker") return "alert";
   if (item.source === "Delivery check") return "check";
   return "message";
 }
@@ -176,7 +180,19 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
       return <EntryDetail item={item} label={label} entryId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
     case "leave":
       return <LeaveDetail item={item} label={label} leaveId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} />;
+    case "kind_request":
+      return <KindRequestDetail item={item} label={label} entryId={item.subject.entryId} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
     case "work_item":
+      if (item.cause === "blocked_without_blocker") {
+        return (
+          <DetailCard label={label} title={item.title}>
+            <Explain>Why it is here: {item.why}. Tell Atlas when it moves, or link the blocker that holds it now.</Explain>
+            <Link href={`/projects/${item.subject.projectId}?view=table`} className="self-start rounded-control border border-line-strong bg-panel px-2.5 py-1 type-label text-fg-1 hover:bg-hover">
+              Open the BRAID log
+            </Link>
+          </DetailCard>
+        );
+      }
       return (
         <DetailCard label={label} title={item.title}>
           <Explain>Why it is here: {item.why}. Paste the PR or document that finished it, and the check closes.</Explain>
@@ -193,6 +209,35 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
         </DetailCard>
       );
   }
+}
+
+/** M17: a member asked to change an entry's kind; a PM or Lead switches it or keeps it with a reason. */
+async function KindRequestDetail({ item, label, entryId, projectId, viewerId, at }: { item: InboxEntry; label: string; entryId: string; projectId: string; viewerId: string; at: Date }) {
+  const db = await getDb();
+  const view = await getProject(db, viewerId, projectId, at);
+  if (!view.found) return null;
+  const entry = view.braid.entries.find((e) => e.id === entryId);
+  if (!entry?.request) return null;
+  const r = entry.request;
+  const asker = r.askedBy?.name.split(" ")[0] ?? "Someone";
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Pair>
+        <Box head={`${entry.kindLabel} on the ${view.project.name} log`}>
+          <span className="type-caption text-fg-2">
+            {entry.title}: {entry.stateLabel.toLowerCase()}, {entry.reportCount} {entry.reportCount === 1 ? "report" : "reports"}
+          </span>
+        </Box>
+        <Box head={`What ${asker} asked`}>
+          <span className="type-caption text-fg-2">
+            Make it {withArticle(KIND_LABEL[r.toKind].toLowerCase())}: &ldquo;{r.why}&rdquo;
+          </span>
+        </Box>
+      </Pair>
+      <Explain>Switching closes the {entry.kindLabel.toLowerCase()} and puts {withArticle(KIND_LABEL[r.toKind].toLowerCase())} on the log with every report. {asker} is told either way.</Explain>
+      {entry.kindControl === "switch" && <KindRequestControls requestId={r.id} version={r.version} toLabel={KIND_LABEL[r.toKind]} mode="answer" />}
+    </DetailCard>
+  );
 }
 
 async function StatusDetail({ item, label, projectId, viewerId, at }: { item: InboxEntry; label: string; projectId: string; viewerId: string; at: Date }) {

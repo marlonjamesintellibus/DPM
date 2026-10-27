@@ -17,6 +17,7 @@ import {
   type BraidLog,
   type BraidSource,
 } from "./braid-entry";
+import { liveEntryOf } from "./kind-switch";
 
 export const MATCH_STATES = ["new", "same_as", "related_to"] as const satisfies readonly MatchState[];
 
@@ -251,6 +252,12 @@ export type Redirect = { to: "same"; entryId: string } | { to: "entry"; entryId:
 export function redirectReport(log: BraidLog, entryId: string): Redirect {
   const entry = log[entryId];
   if (!entry) return { to: "same", entryId };
+  // Section 13: an entry whose kind changed sends the report along the chain to where it lives now
+  const live = liveEntryOf(log, entryId);
+  if (live !== entryId) {
+    const onward = redirectReport(log, live);
+    return onward.to === "same" ? { to: "entry", entryId: live } : onward;
+  }
   const pointingAt = (relation: BraidLinkRelation) =>
     Object.values(log).find((e) => e.id !== entryId && !GONE.includes(e.state) && e.links.some((l) => l.relation === relation && l.entryId === entryId));
   if (entry.kind === "risk" && entry.state === "closed") return { to: "new_raised_again", fromId: entryId };

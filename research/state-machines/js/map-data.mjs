@@ -160,6 +160,7 @@ export const MACHINES = [
   { area: 'delivery', name: 'Assumption', shape: 'ask', states: 'Holding → Confirmed / Broken; needs a check-by date', refs: 'C8', checked: null },
   { area: 'delivery', name: 'Dependency', shape: 'ask', states: 'Waiting → Met / Late (deadline; raises a Risk)', refs: 'C8', checked: null },
   { area: 'delivery', name: 'Issue', shape: 'switch', states: 'Open → Resolved (one way)', refs: 'C8', checked: null },
+  { area: 'delivery', name: 'BRAID kind change', shape: 'ask', states: 'A PM or Lead switches the kind: the old entry ends Realised, Broken, Late or Changed and links to the new one, which keeps the reports. A member asks: Asked → Switched / Kept / Withdrawn / Lapsed', refs: 'Use case 1 M15, M17 (27 Oct)', checked: 'BraidKindSwitch' },
   { area: 'delivery', name: 'Role on a project', shape: 'membership', states: 'Invited → Member → Left; PM, Lead or Member decides who may approve', refs: 'A5.1, A7.1, use case 1 M13', checked: 'AtlasAction, BraidEntry, Routing' },
   // Customers and contracts
   { area: 'customers', name: 'Opportunity', shape: 'stage', states: 'Pitch → Proposal → Pricing → With legal → Signed / Lost', refs: 'C11', checked: 'Opportunity' },

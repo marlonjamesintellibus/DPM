@@ -54,3 +54,8 @@ export type ExtractedItemDraft = {
   /** Leave items (D6): it matches live leave, changes it, or is a new request. */
   leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
 };
+
+/** "a risk", "an issue". */
+export function withArticle(kind: string): string {
+  return /^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`;
+}

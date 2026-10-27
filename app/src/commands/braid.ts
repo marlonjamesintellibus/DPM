@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
-import { loadBraidLog, membersOf, persistBraidLog, type Versions } from "../db/records";
+import { kindRequestOf, loadBraidLog, membersOf, persistBraidLog, persistKindRequest, type Versions } from "../db/records";
 import * as t from "../db/schema";
 import type { Moved } from "../domain/machine";
 import {
@@ -14,6 +14,7 @@ import {
   braidReminderDue,
   draftEntry,
   decidersFor,
+  isOnLog,
   type BraidActor,
   type BraidCtx,
   type BraidEntryRecord,
@@ -24,11 +25,13 @@ import {
   type ProjectMember,
   type ResolveOutcome,
 } from "../domain/machines/braid-entry";
+import { applyKindRequestEvent, draftKindRequest, type KindRequestRecord } from "../domain/machines/kind-request";
+import { liveEntryOf, switchKind } from "../domain/machines/kind-switch";
 import { linkConflict, mergeEntries, unmergeEntry, type LogResult, type MergeChoice } from "../domain/machines/match";
 import { mayResolve, type BraidKind } from "../domain/rights";
-import { audit, CommandRefused, moved, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
+import { audit, CommandRefused, moved, nextVersion, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProject, policyOf, type Evaluation } from "./evaluate";
-import { noticeReporters } from "./notices";
+import { notice, noticeReporters, withArticle } from "./notices";
 
 export type BraidCommandResult = { outcome: Moved<BraidEntryState>; entry: BraidEntryRecord; evaluation: Evaluation };
 
@@ -99,6 +102,8 @@ async function commit(
   next: BraidLog,
   outcome: Moved<BraidEntryState>,
   detail: Record<string, unknown> = {},
+  /** Other entries the person moved as part of the act (a switch makes or reopens one), by the action to audit. */
+  alsoMoved: ReadonlyMap<string, string> = new Map(),
 ): Promise<BraidCommandResult> {
   const id = loaded.entry.id;
   const changed = await persistBraidLog(tx, loaded.log, next, loaded.versions, ctx.now);
@@ -116,11 +121,12 @@ async function commit(
   for (const other of changed.filter((c) => c !== id)) {
     const from = loaded.log[other]?.state ?? null;
     const to = next[other].state;
-    // A state change on another entry is the rule's doing (SUPERSEDE); anything else is part of the person's act
+    // A state change on another entry is the rule's doing (SUPERSEDE), unless the person's act made it; anything else is part of the act
+    const byPerson = alsoMoved.has(other) || from === to;
     await audit(tx, ctx.now, {
-      actorType: from !== to ? "rule" : "person",
-      actorId: from !== to ? null : ctx.actorId,
-      action: from !== to && to === "superseded" ? "SUPERSEDE" : outcome.event,
+      actorType: byPerson ? "person" : "rule",
+      actorId: byPerson ? ctx.actorId : null,
+      action: alsoMoved.get(other) ?? (from !== to && to === "superseded" ? "SUPERSEDE" : outcome.event),
       machine: "braid_entry",
       subjectType: "braid_entry",
       subjectId: other,
@@ -392,5 +398,156 @@ export function runBraidReminders(ctx: { db: Db; now: Date }): Promise<Reminder[
       await evaluateProject(tx, projectId, ctx.now);
     }
     return reminders;
+  });
+}
+
+// ---- Changing an entry's kind (machines doc, section 13) ----
+
+export type SwitchKindResult = BraidCommandResult & { targetId: string };
+
+/**
+ * The switch itself, once the person's right to make it is settled: the old entry ends, the entry it
+ * becomes takes the reports, and what pointed at the old one follows: blocked work while the chain
+ * ends on a blocker (D32), saved reasons (BK11), and a request asking for exactly this kind.
+ */
+async function switchOnLog(tx: Tx, ctx: CommandCtx, loaded: Loaded, to: BraidKind, why: string, detail: Record<string, unknown> = {}): Promise<SwitchKindResult> {
+  const entryId = loaded.entry.id;
+  const newId = `br-${randomUUID().slice(0, 8)}`;
+  const r = switchKind(loaded.log, entryId, to, why, braidCtx(ctx, loaded.actor, loaded.policy), newId);
+  const outcome = moved(r.outcome);
+  const targetId = r.targetId!;
+
+  // A request asking for this very kind is met by the switch; any other one lapses when evaluate runs
+  const waiting = await tx.select().from(t.braidKindRequests).where(and(eq(t.braidKindRequests.entryId, entryId), eq(t.braidKindRequests.state, "asked")));
+  for (const row of waiting.filter((q) => q.toKind === to)) {
+    const met = applyKindRequestEvent(kindRequestOf(row), { type: "SWITCH" }, { entry: loaded.entry, actor: loaded.actor, today: todayOf(ctx.now) });
+    if (!met.outcome.ok) continue;
+    await persistKindRequest(tx, met.record, row.version, ctx.now);
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: "SWITCH", machine: "kind_request", subjectType: "kind_request", subjectId: row.id, fromState: "asked", toState: "switched", detail: { entryId, targetId } });
+    if (row.askedBy && row.askedBy !== ctx.actorId) {
+      await notice(tx, ctx.now, [row.askedBy], `${await firstNameOf(tx, ctx.actorId)} made "${loaded.entry.title}" ${withArticle(to)}, as you asked.`, { type: "kind_request", id: row.id, projectId: loaded.projectId, act: "switched" });
+    }
+  }
+
+  const committed = await commit(tx, ctx, loaded, r.log, outcome, { to, why: why.trim(), targetId, ...detail }, new Map([[targetId, targetId === newId ? "SWITCH_IN" : "RESTORE"]]));
+
+  // D32: work blocked by this entry follows the chain only while it ends on a blocker; otherwise it keeps its link and evaluate asks its owner
+  const work = await tx.select().from(t.workItems).where(eq(t.workItems.projectId, loaded.projectId));
+  for (const w of work) {
+    const links = w.blockedLinks.map((id) => {
+      const live = liveEntryOf(r.log, id);
+      return live !== id && r.log[live]?.kind === "blocker" && isOnLog(r.log[live]) ? live : id;
+    });
+    if (links.join() === w.blockedLinks.join()) continue;
+    await tx.update(t.workItems).set({ blockedLinks: [...new Set(links)], version: nextVersion(t.workItems.version), updatedAt: ctx.now }).where(eq(t.workItems.id, w.id));
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: "BLOCKED_LINK_MOVED", machine: "work_item", subjectType: "work_item", subjectId: w.id, detail: { from: entryId, to: targetId } });
+  }
+
+  // BK11: a saved reason keeps pointing at a live entry
+  const reasonLinks = await tx.select().from(t.statusReasonLinks).where(eq(t.statusReasonLinks.braidEntryId, entryId));
+  for (const link of reasonLinks) {
+    await tx.delete(t.statusReasonLinks).where(and(eq(t.statusReasonLinks.reasonId, link.reasonId), eq(t.statusReasonLinks.braidEntryId, entryId)));
+    await tx.insert(t.statusReasonLinks).values({ reasonId: link.reasonId, braidEntryId: targetId }).onConflictDoNothing();
+  }
+
+  await noticeReporters(tx, ctx.now, r.log[targetId], ctx.actorId, { act: "switched", from: loaded.entry.kind, why: why.trim() });
+  // The work's owner hears now, not on the next run: evaluate already ran inside commit, before the links were settled
+  const evaluation = await evaluateProject(tx, loaded.projectId, ctx.now, { actorId: ctx.actorId });
+  return { ...committed, evaluation, entry: r.log[entryId], targetId };
+}
+
+async function firstNameOf(tx: Tx, personId: string): Promise<string> {
+  const [p] = await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, personId));
+  return p?.name.split(" ")[0] ?? "Someone";
+}
+
+/**
+ * A PM or Lead changes an entry's kind and says why (section 13, SWITCH_KIND). Rights are read when it
+ * runs (rule 7, BK5); a newer version than the one seen is StaleVersion (BK6).
+ */
+export function switchEntryKind(ctx: CommandCtx, entryId: string, to: BraidKind, why: string, opts: BraidCommandOpts = {}): Promise<SwitchKindResult> {
+  return runCommand(ctx, async (tx) => switchOnLog(tx, ctx, await loadEntry(tx, ctx, entryId, opts), to, why));
+}
+
+export type KindRequestCommandResult = { request: KindRequestRecord; evaluation: Evaluation; targetId?: string };
+
+/** M17: a member asks a PM or Lead to change an entry's kind (D31: any member). One request waits per entry (BK16). */
+export function askKindChange(ctx: CommandCtx, entryId: string, to: BraidKind, why: string): Promise<KindRequestCommandResult> {
+  return runCommand(ctx, async (tx) => {
+    const loaded = await loadEntry(tx, ctx, entryId);
+    const [open] = await tx.select().from(t.braidKindRequests).where(and(eq(t.braidKindRequests.entryId, entryId), eq(t.braidKindRequests.state, "asked")));
+    const draft = draftKindRequest({ id: `kr-${randomUUID().slice(0, 8)}`, projectId: loaded.projectId, entryId, toKind: to });
+    const r = applyKindRequestEvent(draft, { type: "ASK", why }, { entry: loaded.entry, actor: loaded.actor, openRequest: !!open, today: todayOf(ctx.now) });
+    if (!r.outcome.ok && open && r.outcome.reason === "a change is already asked for this entry") {
+      throw new CommandRefused(`${open.askedBy ? await firstNameOf(tx, open.askedBy) : "Someone"} already asked to make this ${withArticle(open.toKind)}`);
+    }
+    moved(r.outcome);
+    await persistKindRequest(tx, r.record, null, ctx.now);
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: "ASK", machine: "kind_request", subjectType: "kind_request", subjectId: r.record.id, fromState: "none", toState: "asked", detail: { projectId: loaded.projectId, entryId, to, why: r.record.why } });
+    const evaluation = await evaluateProject(tx, loaded.projectId, ctx.now, { actorId: ctx.actorId });
+    return { request: r.record, evaluation };
+  });
+}
+
+export type KindAnswer = { type: "switch" } | { type: "keep"; reason: string };
+
+/** M17: a PM or Lead switches the entry to the asked kind, or keeps it with a reason. The asker is told either way. */
+export function answerKindChange(ctx: CommandCtx, requestId: string, answer: KindAnswer, opts: { seenVersion?: number } = {}): Promise<KindRequestCommandResult> {
+  return runCommand(ctx, async (tx) => {
+    const [row] = await tx.select().from(t.braidKindRequests).where(eq(t.braidKindRequests.id, requestId));
+    if (!row) throw new CommandRefused(`no kind change request ${requestId}`, "not_found");
+    if (opts.seenVersion !== undefined && opts.seenVersion !== row.version) throw new StaleVersion(`kind change request ${requestId}`);
+    const loaded = await loadEntry(tx, ctx, row.entryId);
+    const event = answer.type === "switch" ? ({ type: "SWITCH" } as const) : ({ type: "KEEP", reason: answer.reason } as const);
+    const r = applyKindRequestEvent(kindRequestOf(row), event, { entry: loaded.entry, actor: loaded.actor, today: todayOf(ctx.now) });
+    moved(r.outcome);
+    await persistKindRequest(tx, r.record, row.version, ctx.now);
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: event.type, machine: "kind_request", subjectType: "kind_request", subjectId: row.id, fromState: "asked", toState: r.record.state, detail: { projectId: loaded.projectId, entryId: row.entryId, ...(answer.type === "keep" ? { reason: r.record.keepReason } : {}) } });
+    const who = await firstNameOf(tx, ctx.actorId);
+    const tell = (text: string, act: string) => (row.askedBy ? notice(tx, ctx.now, [row.askedBy], text, { type: "kind_request", id: row.id, projectId: loaded.projectId, act }) : Promise.resolve());
+    if (answer.type === "keep") {
+      await tell(`${who} kept "${loaded.entry.title}" as ${withArticle(loaded.entry.kind)}. Reason: ${r.record.keepReason}`, "kept");
+      const evaluation = await evaluateProject(tx, loaded.projectId, ctx.now, { actorId: ctx.actorId });
+      return { request: r.record, evaluation };
+    }
+    const switched = await switchOnLog(tx, ctx, loaded, row.toKind, row.why, { request: row.id, askedBy: row.askedBy });
+    await tell(`${who} made "${loaded.entry.title}" ${withArticle(row.toKind)}, as you asked.`, "switched");
+    return { request: r.record, evaluation: switched.evaluation, targetId: switched.targetId };
+  });
+}
+
+/** M17: the person who asked takes it back. */
+export function withdrawKindChange(ctx: CommandCtx, requestId: string): Promise<KindRequestCommandResult> {
+  return runCommand(ctx, async (tx) => {
+    const [row] = await tx.select().from(t.braidKindRequests).where(eq(t.braidKindRequests.id, requestId));
+    if (!row) throw new CommandRefused(`no kind change request ${requestId}`, "not_found");
+    const loaded = await loadEntry(tx, ctx, row.entryId);
+    const r = applyKindRequestEvent(kindRequestOf(row), { type: "WITHDRAW" }, { entry: loaded.entry, actor: loaded.actor, today: todayOf(ctx.now) });
+    moved(r.outcome);
+    await persistKindRequest(tx, r.record, row.version, ctx.now);
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: "WITHDRAW", machine: "kind_request", subjectType: "kind_request", subjectId: row.id, fromState: "asked", toState: "withdrawn", detail: { projectId: loaded.projectId, entryId: row.entryId } });
+    const evaluation = await evaluateProject(tx, loaded.projectId, ctx.now, { actorId: ctx.actorId });
+    return { request: r.record, evaluation };
+  });
+}
+
+/** S18 for kind change requests: a REMIND for each waiting request that is due. It never decides. */
+export function runKindRequestReminders(ctx: { db: Db; now: Date }): Promise<{ requestId: string; projectId: string }[]> {
+  const today = todayOf(ctx.now);
+  return ctx.db.transaction(async (tx) => {
+    const rows = await tx.select().from(t.braidKindRequests).where(eq(t.braidKindRequests.state, "asked"));
+    const sent: { requestId: string; projectId: string }[] = [];
+    const logs = new Map<string, BraidLog>();
+    for (const row of rows.sort((a, b) => a.id.localeCompare(b.id))) {
+      if (!logs.has(row.projectId)) logs.set(row.projectId, (await loadBraidLog(tx, row.projectId)).log);
+      const entry = logs.get(row.projectId)![row.entryId];
+      if (!entry) continue;
+      const r = applyKindRequestEvent(kindRequestOf(row), { type: "REMIND" }, { entry, actor: null, today });
+      if (!r.outcome.ok) continue;
+      await persistKindRequest(tx, r.record, row.version, ctx.now);
+      await audit(tx, ctx.now, { actorType: "rule", action: "REMIND", machine: "kind_request", subjectType: "kind_request", subjectId: row.id, fromState: "asked", toState: "asked", detail: { projectId: row.projectId, remindersSent: r.record.remindersSent } });
+      sent.push({ requestId: row.id, projectId: row.projectId });
+    }
+    return sent;
   });
 }

@@ -5,10 +5,29 @@ import { inArray } from "drizzle-orm";
 import type { Tx } from "../db/conn";
 import * as t from "../db/schema";
 import type { BraidEntryRecord } from "../domain/machines/braid-entry";
+import type { BraidKind } from "../domain/rights";
+import { withArticle } from "../domain/shared";
+
+export { withArticle };
 
 const KIND: Record<string, string> = { blocker: "blocker", issue: "issue", risk: "risk", assumption: "assumption", dependency: "dependency", decision: "decision" };
 
-export type NoticeAct = { act: "approved"; note?: string } | { act: "declined"; reason: string } | { act: "resolved" };
+export type NoticeAct = { act: "approved"; note?: string } | { act: "declined"; reason: string } | { act: "resolved" } | { act: "switched"; from: BraidKind; why: string };
+
+/** A notice to named people about one subject (section 13: answers to kind change requests). */
+export async function notice(
+  tx: Tx,
+  now: Date,
+  to: readonly string[],
+  text: string,
+  subject: { type: string; id: string; projectId: string; act: string },
+): Promise<void> {
+  const people = [...new Set(to)].sort();
+  if (!people.length) return;
+  await tx.insert(t.notices).values(
+    people.map((personId) => ({ id: `ntc-${subject.id}-${subject.act}-${personId}-${now.getTime()}`, personId, at: now, text, subjectType: subject.type, subjectId: subject.id, projectId: subject.projectId })),
+  );
+}
 
 /** Everyone who reported the entry, except the person who acted. */
 export async function noticeReporters(tx: Tx, now: Date, entry: BraidEntryRecord, actorId: string, what: NoticeAct): Promise<string[]> {
@@ -22,7 +41,9 @@ export async function noticeReporters(tx: Tx, now: Date, entry: BraidEntryRecord
       ? `${who} approved your ${kind}: ${entry.title}.${what.note?.trim() ? ` Note: ${what.note.trim()}` : ""}`
       : what.act === "declined"
         ? `${who} declined your ${kind}: ${entry.title}. Reason: ${what.reason}`
-        : `${who} resolved the ${kind} you reported: ${entry.title}.`;
+        : what.act === "switched"
+          ? `${who} now logs the ${KIND[what.from]} you reported as ${withArticle(kind)}: ${entry.title}. Why: ${what.why}`
+          : `${who} resolved the ${kind} you reported: ${entry.title}.`;
   await tx.insert(t.notices).values(
     to.map((personId) => ({
       id: `ntc-${entry.id}-${what.act}-${personId}-${now.getTime()}`,

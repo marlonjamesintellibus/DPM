@@ -7,7 +7,9 @@ import type { Conn } from "../db/conn";
 import { loadBraidLog, loadCapture, loadItems, setStatusRecordOf } from "../db/records";
 import { saveBlockers } from "../domain/machines/capture";
 import * as t from "../db/schema";
-import type { BraidEntryRecord } from "../domain/machines/braid-entry";
+import { switchedTo, type BraidEntryRecord } from "../domain/machines/braid-entry";
+import { liveEntryOf } from "../domain/machines/kind-switch";
+import { withArticle } from "../domain/shared";
 import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
@@ -31,7 +33,11 @@ export type InboxCause =
   /** D10: Atlas drafted what follows a realised risk, a broken assumption or a late dependency. */
   | "follow_up"
   /** M5, A10.1 (D18): work went Done with no PR or document linked. */
-  | "done_no_change";
+  | "done_no_change"
+  /** M17: a member asked to change an entry's kind; a PM or Lead switches or keeps it. */
+  | "kind_change"
+  /** D32: work still Blocked whose blocker changed kind; its owner unblocks it or links another blocker. */
+  | "blocked_without_blocker";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -42,7 +48,8 @@ export type InboxSubject =
   | { type: "braid_entry"; id: string; projectId: string }
   | { type: "capture"; id: string }
   | { type: "leave"; id: string; projectId: string }
-  | { type: "work_item"; id: string; projectId: string };
+  | { type: "work_item"; id: string; projectId: string }
+  | { type: "kind_request"; id: string; entryId: string; projectId: string };
 
 export type InboxEntry = {
   id: string;
@@ -75,7 +82,8 @@ export type Inbox = {
 };
 
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, "review_waiting", "leave_impact", "done_no_change"];
+const WORK_CAUSES: readonly string[] = ["done_no_change", "blocked_without_blocker"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -126,14 +134,18 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
   const entryProjects = entryIds.length
     ? await conn.select({ id: t.braidEntries.id, projectId: t.braidEntries.projectId }).from(t.braidEntries).where(inArray(t.braidEntries.id, entryIds))
     : [];
-  const workIds = parsed.filter((p) => p.cause === "done_no_change").map((p) => p.subjectId);
+  const workIds = parsed.filter((p) => WORK_CAUSES.includes(p.cause)).map((p) => p.subjectId);
   const doneWork = workIds.length ? await conn.select().from(t.workItems).where(inArray(t.workItems.id, workIds)) : [];
+  const requestIds = parsed.filter((p) => p.cause === "kind_change").map((p) => p.subjectId);
+  const requests = requestIds.length ? await conn.select().from(t.braidKindRequests).where(inArray(t.braidKindRequests.id, requestIds)) : [];
   const projectOf = (p: (typeof parsed)[number]) =>
     STATUS_CAUSES.includes(p.cause)
       ? p.subjectId
-      : p.cause === "done_no_change"
+      : WORK_CAUSES.includes(p.cause)
         ? doneWork.find((w) => w.id === p.subjectId)?.projectId
-        : entryProjects.find((e) => e.id === p.subjectId)?.projectId;
+        : p.cause === "kind_change"
+          ? requests.find((r) => r.id === p.subjectId)?.projectId
+          : entryProjects.find((e) => e.id === p.subjectId)?.projectId;
   const projectIds = [...new Set(parsed.map(projectOf).filter((id): id is string => !!id && reader.mayRead(id)))];
   const today = todayIn(now);
   const projects = new Map<string, { row: typeof t.projects.$inferSelect; calculated: ReturnType<typeof calculatePlan>["project"]; log: Record<string, BraidEntryRecord> }>();
@@ -150,7 +162,7 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
 
   const people = await peopleById(
     conn,
-    [...projects.values()].flatMap((p) => Object.values(p.log).flatMap((e) => [e.reportedBy, e.resolveProposedBy, ...e.answers.map((a) => a.by)])),
+    [...[...projects.values()].flatMap((p) => Object.values(p.log).flatMap((e) => [e.reportedBy, e.resolveProposedBy, ...e.answers.map((a) => a.by)])), ...requests.map((r) => r.askedBy)],
   );
   const nameOf = (id: string | null) => (id ? firstName(people.get(id)?.name ?? id) : "Someone");
 
@@ -268,6 +280,39 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
         action: "Add link",
         group: "today",
         subject: { type: "work_item", id: w.id, projectId: project.row.id },
+      });
+      continue;
+    }
+
+    if (p.cause === "blocked_without_blocker") {
+      const w = doneWork.find((x) => x.id === p.subjectId)!;
+      const blocker = w.blockedLinks.map((id) => project.log[id]).find((e) => e && switchedTo(e));
+      const now_ = blocker ? project.log[liveEntryOf(project.log, blocker.id)] : undefined;
+      make({
+        title: `${w.number ?? w.title} is still Blocked, but its blocker is now ${now_ ? withArticle(KIND_LABEL[now_.kind].toLowerCase()) : "gone"}`,
+        why: `${blocker ? `"${blocker.title}" changed kind, so nothing on the log stops ${w.title} now` : "nothing on the log stops it now"}; unblock it, or link another blocker`,
+        source: "Delivery check",
+        fromWords: false,
+        action: "Unblock",
+        group: "today",
+        subject: { type: "work_item", id: w.id, projectId: project.row.id },
+      });
+      continue;
+    }
+
+    if (p.cause === "kind_change") {
+      const r = requests.find((x) => x.id === p.subjectId)!;
+      const asked = project.log[r.entryId];
+      if (!asked) continue;
+      const asker = nameOf(r.askedBy);
+      make({
+        title: `${asker} asked to make this ${withArticle(KIND_LABEL[r.toKind].toLowerCase())}: ${asked.title}`,
+        why: `"${r.why}" Only a PM or Lead changes an entry's kind`,
+        source: `${asker}'s request`,
+        fromWords: true,
+        action: "Decide",
+        group: r.remindersSent > 0 ? "do_now" : "today",
+        subject: { type: "kind_request", id: r.id, entryId: r.entryId, projectId: project.row.id },
       });
       continue;
     }

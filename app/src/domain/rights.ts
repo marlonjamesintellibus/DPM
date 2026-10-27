@@ -51,6 +51,13 @@ export function mayResolve(who: { role: ProjectRole; isOwner: boolean }, kind: B
   return r.roles.includes(who.role) || (r.owner && who.isOwner);
 }
 
+/** Switching an entry's kind (machines doc, section 13): a PM or Lead, for every kind. A member asks instead (M17). */
+export const SWITCH_ROLES: readonly ProjectRole[] = ["pm", "lead"];
+
+export function maySwitch(role: ProjectRole): boolean {
+  return SWITCH_ROLES.includes(role);
+}
+
 /** Merging and unmerging duplicate entries (M16): the PM only. */
 export const MERGE_ROLES: readonly ProjectRole[] = ["pm"];
 

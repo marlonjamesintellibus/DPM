@@ -12,6 +12,7 @@ import InboxItem from './models/inboxItem.mjs';
 import CaptureJob from './models/captureJob.mjs';
 import Leave from './models/leave.mjs';
 import BraidFollowUps from './models/braidFollowUps.mjs';
+import BraidKindSwitch from './models/braidKindSwitch.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -59,6 +60,8 @@ export const ROWS = [
   { spec: 'CaptureJob', setting: 'as given (retries, 5 minute timer, save retry)', model: CaptureJob(), expectFail: [] },
   { spec: 'Leave', setting: 'as given (match any live leave, impact per lead)', model: Leave(), expectFail: [] },
   { spec: 'BraidFollowUps', setting: 'as given', model: BraidFollowUps(), expectFail: [] },
+  // BraidKindSwitch is the plan of 27 Oct: M15 SWITCH_KIND and M17 kind change request (machines doc, section 13)
+  { spec: 'BraidKindSwitch', setting: 'as given', model: BraidKindSwitch(), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -118,4 +121,12 @@ export const PLANTS = [
   { spec: 'BraidFollowUps', setting: 'bug: reports pile on a realised risk', model: BraidFollowUps({ Bug: 'sourceOnRealised' }), expectFail: ['ReportsGoToLiveEntry'] },
   { spec: 'BraidFollowUps', setting: 'bug: merging into a resolved blocker asks nothing', model: BraidFollowUps({ Bug: 'mergeSilently' }), expectFail: ['MergeChoiceRecorded'] },
   { spec: 'BraidFollowUps', setting: "bug: withdrawing removes others' reports", model: BraidFollowUps({ Bug: 'withdrawAll' }), expectFail: ['WithdrawKeepsOthers'] },
+  { spec: 'BraidKindSwitch', setting: "bug: a switch copies the reports instead of moving them", model: BraidKindSwitch({ Bug: 'copy' }), expectFail: ['EveryReportOnce', 'SwitchedHoldsNoReports'] },
+  { spec: 'BraidKindSwitch', setting: "bug: a member switches the kind themselves", model: BraidKindSwitch({ Bug: 'memberSwitches' }), expectFail: ['OnlyLeadsSwitch'] },
+  { spec: 'BraidKindSwitch', setting: "bug: a later report goes to the switched entry", model: BraidKindSwitch({ Bug: 'noRedirect' }), expectFail: ['SwitchedHoldsNoReports', 'EveryReportOnce'] },
+  { spec: 'BraidKindSwitch', setting: "bug: switching back leaves the original pointing at the new entry", model: BraidKindSwitch({ Bug: 'keepLink' }), expectFail: ['SwitchedHoldsNoReports', 'RedirectEnds', 'OnlyLeadsSwitch'] },
+  { spec: 'BraidKindSwitch', setting: "bug: a request outlives the entry it asks about", model: BraidKindSwitch({ Bug: 'noLapse' }), expectFail: ['RequestOnlyOnSwitchable'] },
+  { spec: 'BraidKindSwitch', setting: "bug: unmerge allowed after the target was switched", model: BraidKindSwitch({ Bug: 'unmergeAfterSwitch' }), expectFail: ['EveryReportOnce'] },
+  { spec: 'BraidKindSwitch', setting: "bug: a blocker becomes an issue and nobody asks the work's owner", model: BraidKindSwitch({ Bug: 'dropAsk' }), expectFail: ['BlockedWorkCovered'] },
+  { spec: 'BraidKindSwitch', setting: "bug: switching a blocker away unblocks its work", model: BraidKindSwitch({ Bug: 'unblock' }), expectFail: ['WorkStaysBlocked'] },
 ];

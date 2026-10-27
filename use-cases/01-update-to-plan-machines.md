@@ -774,9 +774,140 @@ The screens run on the commands and per-viewer queries as they are; View as sets
 
 | # | Question | Default in the code |
 |---|---|---|
-| D25 | Dashboard and Table views (A8), and the Plan card's "Client view" | Not built; the switch offers only Chat and Inbox |
+| D25 | Dashboard and Table views (A8), and the Plan card's "Client view" | A project has Dashboard and Table (section 13). Today offers only Chat and Inbox, and the Client view is not built |
 | D26 | The mobile chat (L18f) as its own layout, and voice capture from the app | The web chat carries the L18f content; voice notes arrive from Atlas only |
 | D27 | Executive and care team views (L0 lists them) | Not in the seed; View as offers Kemar, Alicia and Andre |
 | D29 | Kemar's chat lists each update as a conversation; the design's conversations are topics ("NEPA support staffing") | One conversation per update until Atlas has topics |
 | D30 | Inbox actions for causes not in this slice ("Chase Kyle", "Approve cover", "Assign") | Each item opens its own detail with the actions the commands support |
 
+
+## 13. Plan: switching an entry's kind, the BRAID table and the summary (27 Oct 2026)
+
+Designs: L14c (the BRAID log as a table, in the project's Table view) and L14d (the BRAID summary on the project Dashboard), on the Variation L page. Not built yet; this is the plan to agree before building.
+
+### What people can do
+
+- A **PM or Lead** changes an entry's kind from the Kind cell and says why. The old entry closes and links to a new entry of the new kind; the reports move with it, so one row stays on the log.
+- A **member** asks for the change and says why. The entry stays as it is until a PM or Lead switches it or keeps it.
+- Nobody switches a finished entry, and an approved decision is never switched: a new decision replaces it (as now, E87).
+- This is how PMs already work: a risk that happens becomes an issue, an assumption that fails becomes an issue or a risk, a dependency that slips becomes a blocker. Logging an item as the wrong kind and fixing it is the other common case.
+
+### M15 changes: the SWITCH_KIND event and the `switched` state
+
+The old entry gets one new event, SWITCH_KIND(to, why), from a PM or Lead. Where it ends depends on the move, so the log keeps the history PMs expect:
+
+| From | To | The old entry ends as |
+|---|---|---|
+| Risk | Issue or Blocker | `realised` (the risk happened) |
+| Assumption | Issue or Blocker | `broken` (it turned out false) |
+| Dependency | Blocker or Issue | `late` (the other team did not deliver) |
+| Any other move (Issue to Blocker, Blocker to Issue, Assumption to Risk, Dependency to Risk, anything to or from a pending decision) | | `switched`, a new end state for every kind, shown as "Changed to an issue" |
+
+```
+live or pending entry --SWITCH_KIND(to, why) [PM or Lead now; to != kind; not an approved decision]--> realised | broken | late | switched
+   new entry: kind = to, same title and owner, the reports moved onto it, links switched_from -> old
+   old entry: link switched_to -> new; switched_by, switched_on, switch_reason, state_before_switch kept
+   new entry lands where a report by the switcher lands (landsAs): on the log for a PM or Lead,
+   except a decision, which is proposed and waits for its approvers (a switch never approves)
+```
+
+- **From states:** `reported`, `open`, `mitigating`, `holding`, `waiting` (on the log) and `proposed`, `more_info` (a PM or Lead can fix the kind instead of approving). Not from `none`, `resolved`, `closed`, `realised`, `confirmed`, `broken`, `met`, `late`, `declined`, `withdrawn`, `merged`, `approved`, `superseded` or `switched`.
+- **Rights:** read from the role held when it runs (rule 7). The rights table gains a `switch` row: PM and Lead for every kind.
+- **No follow-up draft.** A switch that ends a risk as realised does not also draft the D10 follow-up; the new entry is the follow-up.
+- **Switching back.** Switching an entry back to the kind it came from reopens the original in `state_before_switch` and moves every report back, including any added since; the entry it became ends as `switched`. The model found no reason to limit this to entries nothing happened to, so the rule is simpler than first planned.
+
+### M17. Kind change request (Ask). NEW
+
+```
+none --ASK(to, why) [member of the project; entry may be switched; to != kind; why given; no open request on the entry]--> asked
+asked --SWITCH [PM or Lead now]--> switched          (runs SWITCH_KIND on the entry, credited to the asker in the note)
+asked --KEEP(reason) [PM or Lead now; reason given]--> kept
+asked --WITHDRAW [the asker]--> withdrawn
+asked --LAPSE [rule: the entry left the switchable states, or was switched by someone else]--> lapsed
+```
+
+- One open request per entry. A second person who agrees adds nothing; a different kind waits until the first is answered.
+- If a PM or Lead switches the entry straight to the asked kind, the request ends as `switched`; to another kind, it lapses and the asker is told.
+- Inbox: `kind_change:<request>` for the project's PMs and Leads (owners as for `approve:`); it closes when the request leaves `asked`. Reminders follow S18 (2 working days, then weekly).
+- Notices (D15): the asker hears the answer with the reason; the people who reported the entry hear that it is now logged as another kind, with the why.
+
+### What else a switch changes, in the same transaction
+
+| Area | What happens |
+|---|---|
+| Reports (sources) | Move to the new entry (M16: sources move, never copy); `origin_entry_id` stays, so switching back and unmerge can return them |
+| Links | `related` links move to the new entry; `conflicts_with` and `supersedes` stay with the old one (they only mean something between decisions) |
+| Blocked work | A blocker that stays a blocker keeps its work: the work items' `blocked_links` point at the new entry. A blocker that becomes anything else leaves the work Blocked (a rule never unblocks work, E93) and asks each owner: `blocked_without_blocker:<work item>`, "#151 is still Blocked, but its blocker is now an issue: unblock it or link another blocker" |
+| Status reasons | Reason links to the old entry move to the new one, so a saved reason never points at a closed entry |
+| Later reports | `redirectReport` follows `switched_to` from any end state, so a repeat of the old words joins the live entry; a chain (A to B to C) is followed to its end |
+| Inbox | Evaluate runs: the old entry's items close (approve, more info, new blocker, cleared); the new entry raises its own. A switched-in blocker raises "New blocker" only when the switcher is not the PM |
+| Merging | A `switched` entry can be neither merged nor merged into. An entry merged into one that was later switched cannot be unmerged; the PM is told why |
+| Audit | SWITCH_KIND on the old entry (from and to state, why), SWITCHED_IN on the new one, and the moved sources |
+
+### The two screens
+
+- **Project view switch (part of D25):** Dashboard and Table on the project page, as A8 draws them. Chat and Inbox stay on Today.
+- **Table view, BRAID log tab (L14c):** columns Kind, Title, Owner, Reports, State, Updated; a left panel filtering by kind, Waiting for approval and Kind change asked. The Kind cell is a menu for a PM or Lead, "Ask to change" for a member, and plain text for a finished entry or an approved decision. A switched entry shows a "Was a risk" chip and "Alicia switched this from Risk to Issue, 21 Oct: …" under the title. A row with an open request shows the asker's words and Switch and Keep. The Work items tab (L15) comes later; until then the tab is not shown.
+- **Dashboard, BRAID summary (L14d):** six tiles, one per kind: the live count, one entry and its state, and a line on what changed. The entry shown is the one that needs someone first (an open request, then waiting for approval), else the latest change. Each tile opens the table filtered to that kind. An empty kind says "None on the log". The table icon opens the full log.
+- Queries are read as the viewer (rule 9): quotes only where routed to the project, and nothing for someone outside it.
+
+### Edge cases (BK1 to BK20)
+
+| # | Case | Expected |
+|---|---|---|
+| BK1 | Switch to the same kind | Refused: "it is already a risk" |
+| BK2 | Switch a finished entry (resolved, closed, met, declined and so on) | Refused; the Kind cell is plain text |
+| BK3 | Switch an approved decision | Refused: "add a new decision that replaces this one" |
+| BK4 | A member uses SWITCH_KIND directly (a crafted request) | Refused by the command (rule 7); the screen only offers Ask |
+| BK5 | The switcher lost the PM role since the page loaded | Refused at run time (rule 7) |
+| BK6 | Two PMs switch the same entry at once | The second gets StaleVersion: "this changed, refresh" |
+| BK7 | Switch a pending proposal | Allowed for a PM or Lead; the proposal closes as `switched`, its approve item closes, the new entry lands by their right |
+| BK8 | Switch into a decision | The new decision is proposed and waits for the approvers (D16); a switch never approves |
+| BK9 | A blocker becomes an issue while #151 is Blocked | #151 stays Blocked; Kemar gets `blocked_without_blocker:#151` |
+| BK10 | A dependency becomes a blocker | No work is linked by the switch; blocked work is linked from the work item, as today |
+| BK11 | The entry is linked from Alicia's saved reason | The link moves to the new entry; the reason stays explained |
+| BK12 | Kemar repeats the old risk's words after it became an issue | Matching offers the risk, `redirectReport` sends it to the issue; it never reopens the risk |
+| BK13 | Switch back to the kind it came from | The original reopens as it was; reports move back; one live entry |
+| BK14 | Switch back after new reports on the new entry | The original reopens with all the reports, the new ones included; nothing is lost or counted twice |
+| BK15 | Unmerge an entry whose target was switched | Refused, with the reason |
+| BK16 | A member asks while a request is already open | Refused: "Kemar already asked to make this a blocker" |
+| BK17 | The entry is resolved while a request waits | The request lapses; the asker is told |
+| BK18 | The asker leaves the project before the answer | The request stays for the PM or Lead to answer; the notice goes to the asker's own chat as other notices do |
+| BK19 | The entry's only report is withdrawn while a request waits | The entry is withdrawn (D11); the request lapses |
+| BK20 | Words in an update say "the risk happened" | Not in this slice: Atlas does not propose switches yet; it can later, as a `braid_switch` item the author confirms |
+
+### Model first, then build
+
+1. **Model:** `research/state-machines/js/models/braidKindSwitch.mjs`, with the request machine, merge and unmerge, withdraw and resolve. Invariants: no report is lost or counted twice; one live entry per chain; every `switched_to` points at an entry that exists; redirects end; an unmerge never takes reports from the wrong entry; a request is never left `asked` on an entry that cannot be switched. Planted bugs: copying instead of moving reports, a member switching, a report landing on the switched entry, switching back that leaves a loop, a request that outlives its entry, unmerge after a switch, a blocker switch that asks nobody, a blocker switch that unblocks the work. **Done 27 Oct:** as given, all 6 invariants and 2 step properties hold over 25,136 states; each of the 8 plants is caught (`research/state-machines/js/models/braidKindSwitch.mjs`, rows in `checks.mjs`, map rebuilt).
+2. **Domain:** M15 arrows and effects, the `switch` rights row, M17, `redirectReport`, merge and unmerge guards. Unit tests for every arrow and refusal, BK1 to BK19 by ID, and property tests holding the model's invariants.
+3. **Data:** migration `0004`: `braid_entries` gains `switched_by`, `switched_on`, `switch_reason`, `state_before_switch`; a `braid_kind_requests` table (entry, asked by, to kind, why, state, answered by and on, keep reason, version). States and link relations are text, so they need no change.
+4. **Commands:** `switchKind`, `askKindChange`, `answerKindChange` (switch or keep), `withdrawKindChange`; evaluate gains `kind_change:` and `blocked_without_blocker:`; notices. One transaction each, audited.
+5. **Queries:** the table rows (with the "Was a" chip and the switch note), the summary tiles, the kind counts.
+6. **Screens:** the project view switch, the BRAID table with the kind menu, the request row, the summary tiles; Server Actions for each command. Checked in the browser as Alicia (switch, answer a request) and Kemar (ask), in light and dark.
+7. **Story:** `story.test.ts` gains the trend model risk becoming an issue, and Kemar asking for the feed dependency to become a blocker.
+
+### Decided (27 Oct 2026)
+
+Left to the best default. Each was checked against the other ways it could go:
+
+| # | Question | Decision | Why this over the other options |
+|---|---|---|---|
+| D31 | Who may ask for a kind change | Any member of the project. A PM or Lead switches directly, so the Ask control is a member's | Anyone may report any kind (rights table), so limiting asks to the reporter or owner would push people to report a duplicate instead, which the log then has to merge |
+| D32 | When a blocker becomes something else, what happens to the work it blocked | The work stays Blocked and each owner is asked (`blocked_without_blocker:<work item>`); a blocker that stays a blocker keeps its work | Unblocking by rule would move someone's work without them (E93 says a rule never does); dropping the link silently would leave work Blocked with nothing behind it |
+| D33 | An assumption that becomes a risk | Ends as `switched` ("Changed to a risk"); so does a dependency that becomes a risk | `broken` and `late` say the thing already failed; moving to a risk says it might. Keeping them apart keeps the log honest about what happened |
+| D34 | The Work items tab in the Table view (L15) | Not shown until the work item table is built; the Table view opens on the BRAID log | A tab that leads nowhere, or to a half table, is worse than no tab; the view switch already says where the log is |
+
+### Built (27 Oct 2026)
+
+Phase 5b in the build plan. The domain is `braid-entry.ts` (SWITCH_KIND, SWITCH_IN, RESTORE, the `switched` state), `kind-switch.ts` (the switch on the log) and `kind-request.ts` (M17); the commands are `switchEntryKind`, `askKindChange`, `answerKindChange`, `withdrawKindChange` and `runKindRequestReminders`; migration `0004_kind_switch` adds the switch columns and `braid_kind_requests`. The project page has Dashboard and Table views (the project half of D25).
+
+### Found while building it
+
+| # | Point | What the code does |
+|---|---|---|
+| G37 | A risk still waiting for approval was never on the log, so "realised" would say it happened | An entry that is proposed or asked for more ends as `switched` whatever the move (`switchEnd` takes the state) |
+| G38 | Drawing SWITCH_KIND from every switchable state to every end made arrows no entry can take (a holding risk is not a thing) | Each end is drawn only from the states it can come from: realised from open and mitigating, broken from holding, late from open and waiting, switched from all; switching back reopens to the same states |
+| G39 | The seed links the feed blocker to the dependency one way only | Related links are followed both ways: links on other entries that point at the switched one move to the entry it became |
+| G40 | A blocker's work would lose its link if the switch dropped it | The work keeps its link to the old blocker; evaluate sees the blocker changed kind and asks the owner (`blocked_without_blocker`). Switching back to a blocker, or on to one along the chain, settles it and the link follows |
+| G41 | A tile whose only entry changed kind said "None on the log" | It says where the entries went ("1 became an issue this week") |
+| G42 | The kind menu sits in a scrolling table and was cut off | It is placed against the window under its button and closes when the table scrolls |

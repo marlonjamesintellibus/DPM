@@ -6,7 +6,7 @@
 import { config } from "../config";
 import { daysBetween, workingDaysBetween, type IsoDate } from "../dates";
 import { defineMachine, transition, type Arrow, type Outcome, type Refused } from "../machine";
-import { landsAs, mayDecide, mayMerge, mayReport, mayResolve, type BraidKind, type ProjectRole } from "../rights";
+import { landsAs, mayDecide, mayMerge, mayReport, mayResolve, maySwitch, type BraidKind, type ProjectRole } from "../rights";
 import type { SourceSpan } from "../shared";
 import type { CauseKey } from "./inbox-item";
 
@@ -31,10 +31,11 @@ export const BRAID_STATES = [
   "superseded", // decision
   "withdrawn",
   "merged", // every kind
+  "switched", // every kind: its kind was changed, and the entry it became holds the reports (section 13)
 ] as const;
 export type BraidEntryState = (typeof BRAID_STATES)[number];
 
-const COMMON = ["none", "withdrawn", "merged"] as const;
+const COMMON = ["none", "withdrawn", "merged", "switched"] as const;
 const ASKED = ["proposed", "more_info", "declined"] as const;
 
 /** The states each kind can be in (machines doc M15). */
@@ -57,6 +58,38 @@ export const ON_LOG_AS: Record<BraidKind, BraidEntryState> = {
   decision: "approved",
 };
 
+/** Section 13: the states an entry's kind can be changed from. Finished entries and approved decisions keep their kind. */
+export const SWITCHABLE_STATES: readonly BraidEntryState[] = ["reported", "open", "mitigating", "holding", "waiting", "proposed", "more_info"];
+
+/**
+ * Where the old entry ends when its kind changes: the move PMs already name (a risk that happened is
+ * realised), else switched. An entry still waiting for approval was never on the log, so it is switched.
+ */
+export function switchEnd(from: BraidKind, to: BraidKind, state: BraidEntryState = "open"): BraidEntryState {
+  if (state === "proposed" || state === "more_info") return "switched";
+  if (from === "risk" && (to === "issue" || to === "blocker")) return "realised";
+  if (from === "assumption" && (to === "issue" || to === "blocker")) return "broken";
+  if (from === "dependency" && (to === "blocker" || to === "issue")) return "late";
+  return "switched";
+}
+
+/** Each end a switch can leave, with the states it can be reached from (and reopened to, on switching back). */
+export const SWITCH_ENDS: readonly (readonly [BraidEntryState, readonly BraidEntryState[]])[] = [
+  ["realised", ["open", "mitigating"]],
+  ["broken", ["holding"]],
+  ["late", ["open", "waiting"]],
+  ["switched", SWITCHABLE_STATES],
+];
+
+/** The entry this one became, when its kind was changed. */
+export function switchedTo(entry: BraidEntryRecord): string | null {
+  return entry.links.find((l) => l.relation === "switched_to")?.entryId ?? null;
+}
+
+export function isSwitchable(entry: BraidEntryRecord): boolean {
+  return SWITCHABLE_STATES.includes(entry.state) && switchedTo(entry) === null;
+}
+
 /** Live on the log: a reason (M9) may link only these, never proposed, declined or withdrawn ones. */
 export const ON_LOG_STATES: readonly BraidEntryState[] = ["reported", "open", "mitigating", "holding", "waiting", "approved"];
 
@@ -75,7 +108,7 @@ export type BraidSource = {
   at: string;
 };
 
-export type BraidLinkRelation = "related" | "supersedes" | "conflicts_with" | "raised_from";
+export type BraidLinkRelation = "related" | "supersedes" | "conflicts_with" | "raised_from" | "switched_to" | "switched_from";
 export type BraidLink = { relation: BraidLinkRelation; entryId: string };
 
 /** A decider's answer, or the reporter's reply. Kept for good, so a re-proposal shows what was said before (E85, E90). */
@@ -120,6 +153,11 @@ export type BraidEntryRecord = {
   mergedSources: BraidSource[];
   /** D9: a PM merged an open duplicate into this resolved entry and chose to keep it resolved. */
   keptOnMerge: boolean;
+  /** Section 13: who changed this entry's kind, when and why, and the state it was in, for switching back. */
+  switchedBy: string | null;
+  switchedOn: IsoDate | null;
+  switchReason: string | null;
+  stateBeforeSwitch: BraidEntryState | null;
 };
 
 export function draftEntry(fields: { id: string; projectId: string; kind: BraidKind; title: string; ownerId?: string | null }): BraidEntryRecord {
@@ -146,6 +184,10 @@ export function draftEntry(fields: { id: string; projectId: string; kind: BraidK
     stateBeforeMerge: null,
     mergedSources: [],
     keptOnMerge: false,
+    switchedBy: null,
+    switchedOn: null,
+    switchReason: null,
+    stateBeforeSwitch: null,
   };
 }
 
@@ -177,7 +219,13 @@ export type BraidEvent =
   | { type: "MERGE"; into: BraidEntryRecord }
   | { type: "UNMERGE"; target: BraidEntryRecord }
   /** Fired by applyToLog when a conflicting decision is approved; never by a person. */
-  | { type: "SUPERSEDE"; by: BraidEntryRecord };
+  | { type: "SUPERSEDE"; by: BraidEntryRecord }
+  /** Section 13: a PM or Lead changes the kind. Use switchKind in kind-switch.ts, which makes the new entry and moves the reports. */
+  | { type: "SWITCH_KIND"; to: BraidKind; why: string }
+  /** The new entry a switch makes, with the old entry's reports and owner. */
+  | { type: "SWITCH_IN"; from: BraidEntryRecord }
+  /** Switching back: the original reopens as it was, with the reports of the entry it became. */
+  | { type: "RESTORE"; from: BraidEntryRecord };
 
 type EventOf<K extends BraidEvent["type"]> = Extract<BraidEvent, { type: K }>;
 
@@ -289,6 +337,7 @@ function addSourceGuard(c: Ctx, e: EventOf<"ADD_SOURCE">): string | null {
   if (e.projectId !== c.record.projectId) return "the entry is in another project";
   if (e.kind !== c.record.kind) return `kinds never merge: a ${e.kind} report cannot join a ${c.record.kind}`;
   if (c.record.sources.some((s) => s.id === e.source.id)) return "this report is already a source";
+  if (switchedTo(c.record)) return "its kind was changed; reports go to the entry it became";
   return null;
 }
 
@@ -298,6 +347,7 @@ function mergeGuard(c: Ctx, { into }: EventOf<"MERGE">): string | null {
   if (into.projectId !== c.record.projectId) return "entries in different projects never merge";
   if (into.kind !== c.record.kind) return `kinds never merge: a ${c.record.kind} into a ${into.kind}`;
   if ((COMMON as readonly string[]).includes(into.state)) return `cannot merge into a ${into.state} entry`;
+  if (switchedTo(into)) return "its kind was changed; merge into the entry it became";
   return null;
 }
 
@@ -307,7 +357,35 @@ function unmergeGuard(c: Ctx, { target }: EventOf<"UNMERGE">): string | null {
   if (!c.actor?.role || !mayMerge(c.actor.role)) return "only a PM unmerges entries";
   if (target.id !== c.record.mergedInto) return "not the entry it was merged into";
   if (target.mergedInto !== null) return "unmerge the entry it was merged into first (reverse order)";
+  // BK15: the reports moved on with the switch, so taking them back would take them from the wrong entry
+  if (switchedTo(target)) return "the entry it was merged into has changed kind since; it can no longer be unmerged";
   return null;
+}
+
+function switchGuard(c: Ctx, e: EventOf<"SWITCH_KIND">, end: BraidEntryState): string | null {
+  const role = c.actor?.role;
+  if (!role) return NOT_MEMBER;
+  if (!maySwitch(role)) return "only a PM or Lead changes an entry's kind; ask them instead";
+  if (e.to === c.record.kind) return `it is already a ${c.record.kind}`;
+  if (!e.why.trim()) return "say why the kind changes";
+  if (switchedTo(c.record)) return "its kind was changed already";
+  const ends = switchEnd(c.record.kind, e.to, c.record.state);
+  return ends === end ? null : `a ${c.record.kind} that becomes a ${e.to} ends as ${ends}`;
+}
+
+function switchInGuard(c: Ctx, lands: ReturnType<typeof landsAs>): string | null {
+  const role = c.actor?.role;
+  if (!role) return NOT_MEMBER;
+  if (!maySwitch(role)) return "only a PM or Lead changes an entry's kind";
+  return landsAs(c.record.kind, role) === lands ? null : `lands as ${landsAs(c.record.kind, role)}`;
+}
+
+function restoreGuard(c: Ctx, e: EventOf<"RESTORE">, to: BraidEntryState): string | null {
+  const role = c.actor?.role;
+  if (!role) return NOT_MEMBER;
+  if (!maySwitch(role)) return "only a PM or Lead changes an entry's kind";
+  if (switchedTo(c.record) !== e.from.id) return "not the entry this one became";
+  return c.record.stateBeforeSwitch === to ? null : `was ${c.record.stateBeforeSwitch} before the switch`;
 }
 
 function supersedeGuard(c: Ctx, { by }: EventOf<"SUPERSEDE">): string | null {
@@ -417,6 +495,15 @@ export const braidEntryMachine = defineMachine<BraidEntryState, BraidEvent, Ctx>
       }),
     ),
     { from: ["approved"], on: "SUPERSEDE", to: "superseded", guard: supersedeGuard },
+
+    // Section 13: an approved decision is never switched (a new decision replaces it), nor is a finished entry
+    ...SWITCH_ENDS.map(([end, from]): BraidArrow => ({ from, on: "SWITCH_KIND", to: end, guard: (c, e) => switchGuard(c, e, end) })),
+    // The new entry lands where a report by the switcher lands; a switch never approves a decision
+    { from: ["none"], on: "SWITCH_IN", to: "reported", guard: (c) => switchInGuard(c, "reported") },
+    { from: ["none"], on: "SWITCH_IN", to: "proposed", guard: (c) => switchInGuard(c, "proposed") },
+    { from: ["none"], on: "SWITCH_IN", to: "open", guard: (c) => switchInGuard(c, "on_log") ?? onlyKinds(c, ["risk", "dependency"]) },
+    { from: ["none"], on: "SWITCH_IN", to: "holding", guard: (c) => switchInGuard(c, "on_log") ?? onlyKinds(c, ["assumption"]) },
+    ...SWITCH_ENDS.flatMap(([end, back]) => back.map((s): BraidArrow => ({ from: [end], on: "RESTORE", to: s, guard: (c, e) => restoreGuard(c, e, s) }))),
   ],
 });
 
@@ -426,7 +513,7 @@ function newRound(r: BraidEntryRecord, today: IsoDate): Partial<BraidEntryRecord
   return { round: r.round + 1, proposedOn: today, remindersSent: 0, lastRemindedOn: null, decidedBy: null, decidedOn: null, selfApproved: false };
 }
 
-function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: string, today: IsoDate): BraidEntryRecord {
+function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: string, today: IsoDate, role: ProjectRole | null): BraidEntryRecord {
   const answer = (act: BraidAnswer["act"], note: string | null) => [...r.answers, { by, act, note, round: r.round, on: today }];
   switch (e.type) {
     case "REPORT": {
@@ -478,6 +565,26 @@ function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: st
       return { ...r, mergedInto: e.into.id, stateBeforeMerge: r.state, mergedSources: r.sources, sources: [], newAlert: false, resolveProposedBy: null };
     case "UNMERGE":
       return { ...r, mergedInto: null, stateBeforeMerge: null, sources: r.mergedSources, mergedSources: [] };
+    case "SWITCH_KIND":
+      // The reports leave with the switch; kind-switch.ts puts them on the new entry
+      return { ...r, sources: [], newAlert: false, resolveProposedBy: null, switchedBy: by, switchedOn: today, switchReason: e.why.trim(), stateBeforeSwitch: r.state };
+    case "SWITCH_IN": {
+      // The PM switching in a blocker has seen it; anyone else's switch tells the PM
+      const moved = { ...r, ownerId: e.from.ownerId, reportedBy: e.from.reportedBy, sources: e.from.sources, newAlert: r.kind === "blocker" && role !== "pm" };
+      if (to === "proposed") return { ...moved, ...newRound(r, today) };
+      if (to === "reported") return moved;
+      return { ...moved, decidedBy: by, decidedOn: today, selfApproved: false };
+    }
+    case "RESTORE":
+      return {
+        ...r,
+        sources: e.from.sources,
+        links: r.links.filter((l) => !(l.relation === "switched_to" && l.entryId === e.from.id)),
+        switchedBy: null,
+        switchedOn: null,
+        switchReason: null,
+        stateBeforeSwitch: null,
+      };
     case "PROGRESS":
     case "SUPERSEDE":
       return r;
@@ -491,7 +598,7 @@ export function applyBraidEvent(record: BraidEntryRecord, event: BraidEvent, ctx
   if (!outcome.ok) return { outcome, record };
   // Timer and log events have no person; "rule" is what the audit entry records for them
   const by = ctx.actor?.id ?? "rule";
-  return { outcome, record: { ...effects(record, event, outcome.to, by, ctx.today), state: outcome.to } };
+  return { outcome, record: { ...effects(record, event, outcome.to, by, ctx.today, ctx.actor?.role ?? null), state: outcome.to } };
 }
 
 /** One project's BRAID log, by entry id. */
@@ -513,6 +620,9 @@ export function applyToLog(log: BraidLog, entryId: string, event: BraidEvent, ct
     return { outcome: refused(event.type, entry.state, "merging moves sources between entries; use mergeEntries or unmergeEntry"), log };
   }
   if (event.type === "SUPERSEDE") return { outcome: refused(event.type, entry.state, "only approving a conflicting decision supersedes one"), log };
+  if (event.type === "SWITCH_KIND" || event.type === "SWITCH_IN" || event.type === "RESTORE") {
+    return { outcome: refused(event.type, entry.state, "a switch makes or reopens another entry; use switchKind"), log };
+  }
   const r = applyBraidEvent(entry, event, ctx);
   if (!r.outcome.ok) return { outcome: r.outcome, log };
   let next: Record<string, BraidEntryRecord> = { ...log, [entryId]: r.record };

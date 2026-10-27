@@ -13,6 +13,7 @@ import {
   draftEntry,
   KIND_STATES,
   ON_LOG_AS,
+  SWITCH_ENDS,
   type BraidActor,
   type BraidCtx,
   type BraidEntryRecord,
@@ -111,6 +112,33 @@ describe("BRAID entry arrows (every drawn arrow)", () => {
     const kind = kindFor(s);
     rows.push({ kind, from: s, event: { type: "MERGE", into: { ...at(kind, s), id: "e2" } }, actor: alicia, to: "merged" });
     rows.push({ kind, from: "merged", event: { type: "UNMERGE", target: { ...at(kind, s), id: "e2" } }, actor: alicia, to: s, patch: { mergedInto: "e2", stateBeforeMerge: s } });
+  }
+
+  // Section 13: a switch from every state it is drawn from, the entry it makes, and switching back
+  const SWITCH_TO: Record<string, [BraidKind, BraidKind]> = {
+    "realised open": ["risk", "issue"],
+    "realised mitigating": ["risk", "blocker"],
+    "broken holding": ["assumption", "issue"],
+    "late open": ["dependency", "blocker"],
+    "late waiting": ["dependency", "issue"],
+    "switched reported": ["blocker", "issue"],
+    "switched open": ["risk", "decision"],
+    "switched mitigating": ["risk", "decision"],
+    "switched holding": ["assumption", "risk"],
+    "switched waiting": ["dependency", "risk"],
+    "switched proposed": ["risk", "issue"],
+    "switched more_info": ["decision", "issue"],
+  };
+  for (const [end, froms] of SWITCH_ENDS) {
+    for (const from of froms) {
+      const [kind, to] = SWITCH_TO[`${end} ${from}`];
+      rows.push({ kind, from, event: { type: "SWITCH_KIND", to, why: "it happened" }, actor: alicia, to: end });
+      const was = { ...at(to, "reported"), id: "e2" };
+      rows.push({ kind, from: end, event: { type: "RESTORE", from: was }, actor: andre, to: from, patch: { stateBeforeSwitch: from, links: [{ relation: "switched_to", entryId: "e2" }] } });
+    }
+  }
+  for (const [kind, to] of [["issue", "reported"], ["decision", "proposed"], ["risk", "open"], ["assumption", "holding"]] as const) {
+    rows.push({ kind, from: "none", event: { type: "SWITCH_IN", from: { ...at("blocker", "reported"), id: "e0" } }, actor: alicia, to });
   }
 
   it.each(rows.map((r) => [`${r.kind} ${r.from} --${r.event.type}--> ${r.to}`, r] as const))("%s", (_, row) => {

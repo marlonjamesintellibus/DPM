@@ -10,6 +10,7 @@ import type { SetStatusRecord } from "../domain/machines/set-status";
 import type { PlanRows } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import type { Conn, Tx } from "./conn";
+import type { KindRequestRecord } from "../domain/machines/kind-request";
 import type { LeaveRecord } from "../domain/machines/leave";
 import * as t from "./schema";
 
@@ -239,8 +240,13 @@ export async function loadBraidLog(conn: Conn, projectId: string): Promise<{ log
       newAlert: e.newAlert,
       mergedInto: e.mergedInto,
       stateBeforeMerge: e.stateBeforeMerge,
-      mergedSources: sources.filter((s) => s.originEntryId === e.id && s.entryId !== e.id).map(toSource),
+      // Only a merged entry is owed its reports back; a switched one handed them on for good
+      mergedSources: e.state === "merged" ? sources.filter((s) => s.originEntryId === e.id && s.entryId !== e.id).map(toSource) : [],
       keptOnMerge: e.keptOnMerge,
+      switchedBy: e.switchedBy,
+      switchedOn: e.switchedOn,
+      switchReason: e.switchReason,
+      stateBeforeSwitch: e.stateBeforeSwitch,
     };
   }
   return { log, versions: new Map(entries.map((e) => [e.id, e.version])) };
@@ -268,6 +274,10 @@ function entryColumns(e: BraidEntryRecord) {
     mergedInto: e.mergedInto,
     stateBeforeMerge: e.stateBeforeMerge,
     keptOnMerge: e.keptOnMerge,
+    switchedBy: e.switchedBy,
+    switchedOn: e.switchedOn,
+    switchReason: e.switchReason,
+    stateBeforeSwitch: e.stateBeforeSwitch,
   };
 }
 
@@ -334,4 +344,45 @@ export async function persistBraidLog(
     if (fresh.length) await tx.insert(t.braidAnswers).values(fresh.map((a) => ({ entryId: id, by: a.by, act: a.act, note: a.note, round: a.round, on: a.on })));
   }
   return changed;
+}
+
+// ---- Kind change requests (M17, section 13) ----
+
+export type KindRequestRow = typeof t.braidKindRequests.$inferSelect;
+
+export function kindRequestOf(row: KindRequestRow): KindRequestRecord {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    entryId: row.entryId,
+    state: row.state,
+    askedBy: row.askedBy,
+    toKind: row.toKind,
+    why: row.why,
+    askedOn: row.askedOn,
+    answeredBy: row.answeredBy,
+    answeredOn: row.answeredOn,
+    keepReason: row.keepReason,
+    remindersSent: row.remindersSent,
+    lastRemindedOn: row.lastRemindedOn,
+  };
+}
+
+function kindRequestColumns(r: KindRequestRecord) {
+  const { id: _id, ...rest } = r;
+  return rest;
+}
+
+/** Writes a request: a new one is inserted, a known one is updated only at the version it was read. */
+export async function persistKindRequest(tx: Tx, record: KindRequestRecord, version: number | null, now: Date): Promise<void> {
+  if (version === null) {
+    await tx.insert(t.braidKindRequests).values({ id: record.id, ...kindRequestColumns(record) });
+    return;
+  }
+  const rows = await tx
+    .update(t.braidKindRequests)
+    .set({ ...kindRequestColumns(record), version: nextVersion(t.braidKindRequests.version), updatedAt: now })
+    .where(and(eq(t.braidKindRequests.id, record.id), eq(t.braidKindRequests.version, version)))
+    .returning({ id: t.braidKindRequests.id });
+  expectOne(rows, `kind change request ${record.id}`);
 }

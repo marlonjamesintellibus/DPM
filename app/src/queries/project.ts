@@ -7,11 +7,11 @@ import type { Conn } from "../db/conn";
 import { loadBraidLog, loadProject, loadWorld, orgTagsOf, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
 import { config } from "../domain/config";
-import { dateInZone, daysBetween, type IsoDate } from "../domain/dates";
-import { isOnLog, type BraidEntryState, type BraidLinkRelation } from "../domain/machines/braid-entry";
+import { addDays, dateInZone, daysBetween, weekday, WEEKDAYS, type IsoDate } from "../domain/dates";
+import { isOnLog, isSwitchable, switchedTo, type BraidEntryRecord, type BraidEntryState, type BraidLinkRelation } from "../domain/machines/braid-entry";
 import { isCandidate, type World } from "../domain/machines/membership";
 import { displayedStatus, type OverrideState } from "../domain/machines/set-status";
-import { BRAID_KINDS, type BraidKind, type ProjectRole } from "../domain/rights";
+import { BRAID_KINDS, maySwitch, type BraidKind, type ProjectRole } from "../domain/rights";
 import { maySeeQuote, projectSpans, type SavedItem } from "../domain/routing";
 import type { SourceSpan } from "../domain/shared";
 import { calculatePlan, milestoneStatus, workItemStatus, type MilestoneState, type WorkItemState } from "../domain/status/rules";
@@ -69,6 +69,7 @@ export const ENTRY_STATE_LABEL: Record<BraidEntryState, string> = {
   superseded: "Superseded",
   withdrawn: "Withdrawn",
   merged: "Merged",
+  switched: "Changed",
 };
 
 export const WORK_STATE_LABEL: Record<WorkItemState, string> = {
@@ -244,6 +245,36 @@ export type ProjectBraidEntry = {
   resolvedOn: IsoDate | null;
   sources: EntrySource[];
   links: { relation: BraidLinkRelation; entryId: string; title: string; kind: BraidKind; stateLabel: string }[];
+  /** The version the viewer saw, so a switch on a newer one is refused (BK6). */
+  version: number;
+  /**
+   * Section 13, for this viewer: a PM or Lead switches; a member asks, or sees that someone asked;
+   * a finished entry or an approved decision keeps its kind.
+   */
+  kindControl: "switch" | "ask" | "asked" | "fixed";
+  /** Why the kind stays, where someone might try: an approved decision is replaced, never switched. */
+  fixedNote: string | null;
+  /** The kind it was before its latest switch ("Was a risk"). */
+  was: BraidKind | null;
+  switchNote: KindSwitchNote | null;
+  /** A member's request to change the kind, while it waits (M17). */
+  request: KindRequestView | null;
+  /** The latest thing that happened to it: a report, a decision, a resolution or a switch. */
+  updatedOn: IsoDate;
+};
+
+export type KindSwitchNote = { by: PersonRef | null; on: IsoDate; from: BraidKind; to: BraidKind; why: string; askedBy: PersonRef | null };
+export type KindRequestView = { id: string; version: number; askedBy: PersonRef | null; toKind: BraidKind; why: string; mine: boolean };
+
+/** One kind on the Dashboard's BRAID summary (L14d). */
+export type BraidSummaryTile = {
+  kind: BraidKind;
+  label: string;
+  /** Live on the log. */
+  live: number;
+  /** The one that needs someone first: an open request, then a proposal, else the latest change. */
+  entry: { id: string; title: string; stateLabel: string; waiting: boolean } | null;
+  note: string;
 };
 
 export type ProjectView = {
@@ -284,11 +315,21 @@ export type ProjectView = {
     entries: ProjectBraidEntry[];
     counts: Record<BraidKind, number>;
     waitingForApproval: number;
+    kindChangesAsked: number;
+    /** Entries whose kind changed since Monday. */
+    switchedThisWeek: number;
+    summary: BraidSummaryTile[];
   };
 };
 
+export const KIND_PLURAL: Record<BraidKind, string> = { blocker: "Blockers", risk: "Risks", assumption: "Assumptions", issue: "Issues", dependency: "Dependencies", decision: "Decisions" };
+/** L14d reads in pairs: blockers and risks, issues and assumptions, dependencies and decisions. */
+const SUMMARY_ORDER: readonly BraidKind[] = ["blocker", "risk", "issue", "assumption", "dependency", "decision"];
+const article = (kind: BraidKind) => (/^[aeiou]/.test(kind) ? `an ${kind}` : `a ${kind}`);
+
 // Hidden from the log: never reported, merged into another entry, or taken back by the reporter
-const OFF_THE_LOG_VIEW: readonly BraidEntryState[] = ["none", "merged", "withdrawn"];
+// Section 13: an entry whose kind changed lives on as the entry it became, so only that one is shown
+const OFF_THE_LOG_VIEW: readonly BraidEntryState[] = ["none", "merged", "withdrawn", "switched"];
 
 export async function getProject(conn: Conn, viewerId: string, projectId: string, now: Date): Promise<ProjectView | NotYours> {
   const reader = await projectReader(conn, viewerId);
@@ -297,7 +338,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
   if (!project) return NOT_YOURS;
   const today = todayIn(now);
 
-  const [threads, milestones, workItems, { log }, sourceRows, reasons] = await Promise.all([
+  const [threads, milestones, workItems, { log, versions }, sourceRows, reasons] = await Promise.all([
     conn.select().from(t.threads).where(eq(t.threads.projectId, projectId)).orderBy(t.threads.position),
     conn.select().from(t.milestones).where(eq(t.milestones.projectId, projectId)).orderBy(t.milestones.targetDate),
     conn.select().from(t.workItems).where(eq(t.workItems.projectId, projectId)).orderBy(t.workItems.number),
@@ -314,7 +355,13 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
   const record = setStatusRecordOf(project);
   const displayed = displayedStatus(record, plan.project);
 
-  const entries = Object.values(log).filter((e) => !OFF_THE_LOG_VIEW.includes(e.state));
+  const requestRows = await conn.select().from(t.braidKindRequests).where(eq(t.braidKindRequests.projectId, projectId));
+  const entries = Object.values(log).filter((e) => !OFF_THE_LOG_VIEW.includes(e.state) && !switchedTo(e));
+  // The entry each one came from by its latest switch (a new entry's origin, or the entry switched back from)
+  const predecessor = (e: BraidEntryRecord) =>
+    Object.values(log)
+      .filter((p) => switchedTo(p) === e.id && p.switchedOn)
+      .sort((a, b) => b.switchedOn!.localeCompare(a.switchedOn!))[0];
   const extractionOf = new Map(sourceRows.map((s) => [s.id, s.extractionId]));
   const allSources = entries.flatMap((e) => e.sources);
   const quotes = await visibleQuotes(
@@ -337,6 +384,8 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
     ...milestones.map((m) => m.ownerId),
     ...workItems.map((w) => w.ownerId),
     ...entries.flatMap((e) => [e.ownerId, e.reportedBy, e.decidedBy, e.resolvedBy, ...e.sources.map((s) => s.personId)]),
+    ...Object.values(log).map((e) => e.switchedBy),
+    ...requestRows.map((r) => r.askedBy),
   ]);
   const person = (id: string | null) => (id ? (people.get(id) ?? null) : null);
 
@@ -373,6 +422,27 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
     };
   };
 
+  const viewerRole_ = reader.world.memberships.find((m) => m.projectId === projectId && m.personId === viewerId && m.state === "member")?.role ?? null;
+  const kindView = (e: BraidEntryRecord) => {
+    const p = predecessor(e);
+    const open = requestRows.find((r) => r.entryId === e.id && r.state === "asked");
+    const switchable = isSwitchable(e);
+    const kindControl: ProjectBraidEntry["kindControl"] = !switchable ? "fixed" : viewerRole_ && maySwitch(viewerRole_) ? "switch" : open ? "asked" : "ask";
+    const asked = p ? requestRows.find((r) => r.entryId === p.id && r.state === "switched") : undefined;
+    const dates = [e.decidedOn, e.resolvedOn, p?.switchedOn ?? null, ...e.sources.map((s) => dateInZone(new Date(s.at), config.timeZone))].filter((d): d is IsoDate => !!d);
+    return {
+      version: versions.get(e.id) ?? 0,
+      kindControl,
+      fixedNote: e.state === "approved" ? "To change it, add a new decision that replaces this one" : null,
+      was: p?.kind ?? null,
+      switchNote: p
+        ? { by: person(p.switchedBy), on: p.switchedOn!, from: p.kind, to: e.kind, why: p.switchReason ?? "", askedBy: asked ? person(asked.askedBy) : null }
+        : null,
+      request: open ? { id: open.id, version: open.version, askedBy: person(open.askedBy), toKind: open.toKind, why: open.why, mine: open.askedBy === viewerId } : null,
+      updatedOn: dates.sort().at(-1) ?? today,
+    };
+  };
+
   const byKind = (a: ProjectBraidEntry, b: ProjectBraidEntry) =>
     BRAID_KINDS.indexOf(a.kind) - BRAID_KINDS.indexOf(b.kind) || Number(b.waitingForApproval) - Number(a.waitingForApproval) || Number(b.onLog) - Number(a.onLog) || a.title.localeCompare(b.title);
   const braidEntries: ProjectBraidEntry[] = entries
@@ -404,11 +474,13 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
           quote: quotes.get(s.id) ?? null,
         })),
       links: e.links
-        .filter((l) => log[l.entryId])
+        .filter((l) => log[l.entryId] && l.relation !== "switched_from" && l.relation !== "switched_to")
         .map((l) => ({ relation: l.relation, entryId: l.entryId, title: log[l.entryId].title, kind: log[l.entryId].kind, stateLabel: ENTRY_STATE_LABEL[log[l.entryId].state] })),
+      ...kindView(e),
     }))
     .sort(byKind);
 
+  const monday = addDays(today, -((WEEKDAYS.indexOf(weekday(today)) + 6) % 7));
   const counts = Object.fromEntries(BRAID_KINDS.map((k) => [k, braidEntries.filter((e) => e.kind === k).length])) as Record<BraidKind, number>;
   const viewerRole = reader.world.memberships.find((m) => m.projectId === projectId && m.personId === viewerId && m.state === "member")!.role;
 
@@ -467,7 +539,39 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       milestones: milestones.filter((m) => m.threadId === null).map(milestone),
       workItems: workItems.filter((w) => w.threadId === null).map(workItem),
     },
-    braid: { entries: braidEntries, counts, waitingForApproval: braidEntries.filter((e) => e.waitingForApproval).length },
+    braid: {
+      entries: braidEntries,
+      counts,
+      waitingForApproval: braidEntries.filter((e) => e.waitingForApproval).length,
+      kindChangesAsked: braidEntries.filter((e) => e.request).length,
+      switchedThisWeek: Object.values(log).filter((e) => e.switchedOn && e.switchedOn >= monday).length,
+      summary: SUMMARY_ORDER.map((kind) => summaryTile(kind, braidEntries, Object.values(log), monday)),
+    },
+  };
+}
+
+function summaryTile(kind: BraidKind, entries: readonly ProjectBraidEntry[], log: readonly BraidEntryRecord[], monday: IsoDate): BraidSummaryTile {
+  const mine = entries.filter((e) => e.kind === kind);
+  const live = mine.filter((e) => e.onLog);
+  const pick =
+    mine.find((e) => e.request) ?? mine.find((e) => e.waitingForApproval) ?? [...live].sort((a, b) => b.updatedOn.localeCompare(a.updatedOn) || a.title.localeCompare(b.title))[0];
+  const leftThisWeek = log.filter((e) => e.kind === kind && e.switchedOn && e.switchedOn >= monday && e.state !== "switched");
+  const became = new Set(leftThisWeek.map((e) => log.find((x) => x.id === switchedTo(e))?.kind).filter(Boolean));
+  const left = leftThisWeek.length ? (became.size === 1 ? `${leftThisWeek.length} became ${article([...became][0]!)} this week` : `${leftThisWeek.length} changed kind this week`) : null;
+  let note: string;
+  // An empty tile still says where its entries went
+  if (!pick) note = left ?? "None on the log";
+  else if (pick.request) note = `${pick.request.askedBy?.name.split(" ")[0] ?? "Someone"} asked to make it ${article(pick.request.toKind)}`;
+  else if (pick.waitingForApproval) note = "Waiting for a PM or Lead";
+  else if (left) note = left;
+  else if (pick.was) note = `Was ${article(pick.was)} · switched ${shortDate(pick.switchNote!.on)}`;
+  else note = live.length > 1 ? `${live.length - 1} more on the log` : `Since ${shortDate(pick.updatedOn)}`;
+  return {
+    kind,
+    label: KIND_PLURAL[kind],
+    live: live.length,
+    entry: pick ? { id: pick.id, title: pick.title, stateLabel: pick.waitingForApproval ? "Waiting for PM or Lead" : pick.request ? "Kind change asked" : pick.stateLabel, waiting: pick.waitingForApproval || !!pick.request } : null,
+    note,
   };
 }
 

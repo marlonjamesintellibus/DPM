@@ -4,14 +4,17 @@
 // calculated status (P6).
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Tx } from "../db/conn";
-import { loadBraidLog, loadPlanRows, loadProject, membersOf, persistSetStatus, setStatusRecordOf } from "../db/records";
+import { kindRequestOf, loadBraidLog, loadPlanRows, loadProject, membersOf, persistKindRequest, persistSetStatus, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
-import { braidEntryCauses, decidersFor, type BraidEntryRecord, type DecisionPolicy, type ProjectMember } from "../domain/machines/braid-entry";
+import { braidEntryCauses, decidersFor, isOnLog, switchedTo, type BraidEntryRecord, type DecisionPolicy, type ProjectMember } from "../domain/machines/braid-entry";
+import { applyKindRequestEvent, kindRequestCauses } from "../domain/machines/kind-request";
+import { liveEntryOf } from "../domain/machines/kind-switch";
 import { evaluateCause, LIVE, type InboxItemRef } from "../domain/machines/inbox-item";
 import { applySetStatus, setStatusCause, type SetStatusRecord } from "../domain/machines/set-status";
 import { calculatePlan } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import { audit, CommandRefused, expectOne, nextVersion, todayOf } from "./core";
+import { notice, withArticle } from "./notices";
 
 export type Evaluation = {
   calculated: Status | null;
@@ -51,6 +54,7 @@ function ownersOf(
     case "clear": // S13: the owner of the blocked work, or a PM or Lead, confirms
       return [...new Set([...(entry?.ownerId ? [entry.ownerId] : []), ...leads])].filter((id) => id !== entry?.resolveProposedBy);
     case "follow_up": // D10: a PM or Lead confirms or drops what Atlas drafted
+    case "kind_change": // M17: a PM or Lead switches or keeps what a member asked
       return leads;
     default:
       throw new Error(`unknown inbox cause ${causeKey}`);
@@ -117,8 +121,43 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
   // M5, A10.1 (D18): work marked Done with no PR or document linked; its owner links one
   for (const w of work) if (w.state === "done" && !w.linkedChange) desired.set(`done_no_change:${w.id}`, [w.ownerId]);
 
+  // D32: work still Blocked whose blocker changed kind and is no blocker now; its owner unblocks it or links another
+  for (const w of work) {
+    if (w.state !== "blocked" || !w.blockedLinks.length) continue;
+    const lost = w.blockedLinks.every((id) => {
+      const e = log[id];
+      if (!e || !switchedTo(e)) return false;
+      const now_ = log[liveEntryOf(log, id)];
+      return !(now_?.kind === "blocker" && isOnLog(now_));
+    });
+    if (lost) desired.set(`blocked_without_blocker:${w.id}`, [w.ownerId]);
+  }
+
+  // M17: a request waits on a PM or Lead while its entry can still change kind; otherwise it lapses and the asker is told
+  const requests = await tx.select().from(t.braidKindRequests).where(and(eq(t.braidKindRequests.projectId, projectId), eq(t.braidKindRequests.state, "asked")));
+  for (const row of requests) {
+    const record = kindRequestOf(row);
+    const entry = log[row.entryId];
+    const lapse = entry ? applyKindRequestEvent(record, { type: "LAPSE" }, { entry, actor: null, today: todayOf(now) }) : null;
+    if (lapse?.outcome.ok) {
+      await persistKindRequest(tx, lapse.record, row.version, now);
+      await audit(tx, now, { actorType: "rule", action: "LAPSE", machine: "kind_request", subjectType: "kind_request", subjectId: row.id, fromState: "asked", toState: "lapsed", detail: { projectId, entryId: row.entryId } });
+      if (row.askedBy) {
+        await notice(tx, now, [row.askedBy], `"${entry!.title}" can no longer change kind, so your request to make it ${withArticle(row.toKind)} is closed.`, {
+          type: "kind_request",
+          id: row.id,
+          projectId,
+          act: "lapsed",
+        });
+      }
+      continue;
+    }
+    for (const key of kindRequestCauses(record)) desired.set(key, ownersOf(key, project, entry, members, policy));
+  }
+
   // Every item ever made for this project's causes (the project itself, its BRAID entries, its work)
-  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id)]);
+  const allRequests = await tx.select({ id: t.braidKindRequests.id }).from(t.braidKindRequests).where(eq(t.braidKindRequests.projectId, projectId));
+  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id), ...allRequests.map((r) => r.id)]);
   const items = (await tx.select().from(t.inboxItems)).filter((i) => subjects.has(i.causeKey.slice(i.causeKey.indexOf(":") + 1)));
   const { opened, closed } = await syncInbox(tx, now, items, desired, opts);
 

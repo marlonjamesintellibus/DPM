@@ -9,7 +9,21 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { atlasFromEnv } from "@/atlas";
 import { readCapture } from "@/commands/atlas";
-import { acknowledgeBlocker, confirmFollowUp, decideBraidEntry, dropFollowUp, keepOpen, reportBraidEntry, resolveBraidEntry } from "@/commands/braid";
+import {
+  acknowledgeBlocker,
+  answerKindChange,
+  askKindChange,
+  confirmFollowUp,
+  decideBraidEntry,
+  dropFollowUp,
+  keepOpen,
+  reportBraidEntry,
+  resolveBraidEntry,
+  switchEntryKind,
+  withdrawKindChange,
+  type KindAnswer,
+} from "@/commands/braid";
+import { withArticle } from "@/domain/shared";
 import type { BraidKind } from "@/domain/rights";
 import {
   createCapture,
@@ -130,6 +144,26 @@ export async function declineEntry(entryId: string, reason: string): Promise<Act
 
 export async function askForMore(entryId: string, question: string): Promise<ActionResult> {
   return run((ctx) => decideBraidEntry(ctx, entryId, { type: "request_info", question }), "Asked.");
+}
+
+// ---- An entry's kind (machines doc, section 13) ----
+
+/** A PM or Lead changes the kind; `version` is the entry as they saw it (BK6). */
+export async function switchKindAction(entryId: string, version: number, to: BraidKind, why: string): Promise<ActionResult> {
+  return run((ctx) => switchEntryKind(ctx, entryId, to, why, { seenVersion: version }), `Now ${withArticle(to)}.`);
+}
+
+/** A member asks a PM or Lead to change it (M17). */
+export async function askKindAction(entryId: string, to: BraidKind, why: string): Promise<ActionResult> {
+  return run((ctx) => askKindChange(ctx, entryId, to, why), "Asked. A PM or Lead decides.");
+}
+
+export async function answerKindAction(requestId: string, version: number, answer: KindAnswer): Promise<ActionResult> {
+  return run((ctx) => answerKindChange(ctx, requestId, answer, { seenVersion: version }), answer.type === "switch" ? "Switched." : "Kept as it is.");
+}
+
+export async function withdrawKindAction(requestId: string): Promise<ActionResult> {
+  return run((ctx) => withdrawKindChange(ctx, requestId), "Withdrawn.");
 }
 
 export async function resolveEntry(entryId: string): Promise<ActionResult> {

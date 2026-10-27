@@ -24,6 +24,7 @@ import type { CaptureState } from "../domain/machines/capture";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
+import type { KindRequestState } from "../domain/machines/kind-request";
 import type { LeaveState } from "../domain/machines/leave";
 import type { MembershipState } from "../domain/machines/membership";
 import type { OverrideState } from "../domain/machines/set-status";
@@ -257,6 +258,11 @@ export const braidEntries = pgTable(
     stateBeforeMerge: text("state_before_merge").$type<BraidEntryState>(),
     /** D9: a PM merged an open duplicate in and chose to keep this entry resolved. */
     keptOnMerge: boolean("kept_on_merge").notNull().default(false),
+    /** Section 13: who changed the kind, when and why, and the state before, for switching back. */
+    switchedBy: text("switched_by").references(() => people.id),
+    switchedOn: day("switched_on"),
+    switchReason: text("switch_reason"),
+    stateBeforeSwitch: text("state_before_switch").$type<BraidEntryState>(),
     version: version(),
     createdAt: created(),
     updatedAt: updated(),
@@ -306,6 +312,30 @@ export const braidAnswers = pgTable("braid_answers", {
   round: integer("round").notNull(),
   on: day("on").notNull(),
 });
+
+/** M17. A member asks a PM or Lead to change an entry's kind (section 13). One waits per entry at a time. */
+export const braidKindRequests = pgTable(
+  "braid_kind_requests",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    entryId: text("entry_id").notNull().references(() => braidEntries.id),
+    state: text("state").$type<KindRequestState>().notNull(),
+    askedBy: text("asked_by").references(() => people.id),
+    toKind: text("to_kind").$type<BraidKind>().notNull(),
+    why: text("why").notNull(),
+    askedOn: day("asked_on"),
+    answeredBy: text("answered_by").references(() => people.id),
+    answeredOn: day("answered_on"),
+    keepReason: text("keep_reason"),
+    remindersSent: integer("reminders_sent").notNull().default(0),
+    lastRemindedOn: day("last_reminded_on"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("braid_kind_requests_entry").on(t.entryId, t.state)],
+);
 
 // ---- Status reasons (M9) ----
 

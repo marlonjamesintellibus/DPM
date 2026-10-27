@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./commands/capture";
 import type { CommandCtx } from "./commands/core";
-import { decideBraidEntry } from "./commands/braid";
+import { answerKindChange, askKindChange, decideBraidEntry, switchEntryKind } from "./commands/braid";
 import { draftReason, keepSetStatus, linkChange, saveReason, setStatus } from "./commands/status";
 import type { Db } from "./db/client";
 import * as t from "./db/schema";
@@ -22,6 +22,7 @@ import { seededDb } from "./test/seeded-db";
 // Jamaica is UTC-5 all year
 const jamaica = (hhmm: string, day = "2026-10-20") => new Date(`${day}T${String(Number(hhmm.slice(0, 2)) + 5).padStart(2, "0")}:${hhmm.slice(3)}:00Z`);
 const THURSDAY = "2026-10-22";
+const FRIDAY = "2026-10-23";
 const as = (actorId: string, hhmm: string, day?: string): CommandCtx => ({ db, now: jamaica(hhmm, day), actorId });
 
 let db: Db;
@@ -171,11 +172,29 @@ describe("use case 1: a daily update reaches the right projects", () => {
     expect(await titles("alicia", "09:10", THURSDAY)).toEqual([]);
   });
 
+  it("Friday. The pipeline risk happened: Alicia makes it an issue; Kemar asks for the feed dependency to be a blocker and Alicia keeps it (section 13)", async () => {
+    const before = await project("alicia", "forager", "09:00", FRIDAY);
+    const risk = before.braid.entries.find((e) => e.title === "Only Kemar can run the pipeline")!;
+    expect(risk).toMatchObject({ kind: "risk", kindControl: "switch" });
+    const { targetId } = await switchEntryKind(as("alicia", "09:00", FRIDAY), risk.id, "issue", "Kemar is on leave next week and nobody else has run it", { seenVersion: risk.version });
+    const after = await project("alicia", "forager", "09:01", FRIDAY);
+    expect(after.braid.entries.filter((e) => e.title === "Only Kemar can run the pipeline")).toEqual([expect.objectContaining({ id: targetId, kind: "issue", was: "risk" })]);
+    expect(after.braid.summary.find((tile) => tile.kind === "risk")?.note).toBe("1 became an issue this week");
+
+    const dependency = after.braid.entries.find((e) => e.kind === "dependency")!;
+    expect((await project("kemar", "forager", "09:05", FRIDAY)).braid.entries.find((e) => e.id === dependency.id)?.kindControl).toBe("ask");
+    const { request } = await askKindChange(as("kemar", "09:05", FRIDAY), dependency.id, "blocker", "Kyle has not sent the sales history yet");
+    expect(await titles("alicia", "09:05", FRIDAY)).toEqual([`Kemar asked to make this a blocker: ${dependency.title}`]);
+    await answerKindChange(as("alicia", "09:10", FRIDAY), request.id, { type: "keep", reason: "The feed is open; the history is its own work item" });
+    expect(await titles("alicia", "09:10", FRIDAY)).toEqual([]);
+    expect((await getChatSummary(db, "kemar")).notices.map((n) => n.text)).toContain(`Alicia kept "${dependency.title}" as a dependency. Reason: The feed is open; the history is its own work item`);
+  });
+
   it("every step left an audit trail, visible to the right people (A11)", async () => {
     const trail = await getAuditTrail(db, "alicia", { type: "project", id: "forager" });
     if (!trail.found) throw new Error("Alicia cannot read Forager's trail");
     const actions = trail.entries.map((e) => e.action);
-    for (const a of ["OWNER_SETS", "GIVE_REASON", "APPROVE", "CALCULATED_CHANGED", "KEEP"]) expect(actions).toContain(a);
+    for (const a of ["OWNER_SETS", "GIVE_REASON", "APPROVE", "CALCULATED_CHANGED", "KEEP", "SWITCH_KIND"]) expect(actions).toContain(a);
     const kemars = await getAuditTrail(db, "kemar", { type: "capture", id: captureId });
     expect(kemars.found && kemars.entries.some((e) => e.extractionId && e.actor.id === "kemar")).toBe(true);
     expect((await getAuditTrail(db, "andre", { type: "capture", id: captureId })).found).toBe(false);
