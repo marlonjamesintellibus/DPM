@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { addDays, daysBetween, isIsoDate, weekday } from "./dates";
 import { defineMachine, eventsFrom, transition } from "./machine";
 import { BRAID_KINDS, landsAs, mayDecide, mayReport, mayResolve, needsApproval } from "./rights";
-import { milestoneStatus, projectCalculatedStatus, threadStatus, workItemStatus } from "./status/rules";
+import { calculatePlan, milestoneStatus, projectCalculatedStatus, threadStatus, workItemStatus } from "./status/rules";
 import { worst } from "./status/status";
 
 describe("transition engine", () => {
@@ -67,6 +67,19 @@ describe("calculated status rules (M12)", () => {
     expect(milestoneStatus({ ...m, forecastDate: "2026-10-27" }, 3)).toBe("off_track");
     expect(milestoneStatus({ ...m, forecastDate: "2026-10-21" })).toBe("on_track"); // E53
     expect(milestoneStatus({ ...m, state: "missed", forecastDate: null })).toBe("off_track");
+  });
+
+  it("calculates a whole plan: threads from their rows, the project from its threads", () => {
+    const rows = {
+      threads: [{ id: "a" }, { id: "b" }, { id: "empty" }],
+      milestones: [{ threadId: "a", state: "in_progress" as const, targetDate: "2026-10-23", forecastDate: "2026-10-24" }],
+      workItems: [
+        { threadId: "a", state: "done" as const, dueDate: "2026-10-19" },
+        { threadId: "b", state: "in_progress" as const, dueDate: "2026-10-22" },
+        { threadId: null, state: "to_do" as const, dueDate: "2026-10-27" },
+      ],
+    };
+    expect(calculatePlan(rows, today)).toEqual({ threads: { a: "at_risk", b: "on_track", empty: null }, project: "at_risk" });
   });
 
   it("roll-up is worst child, ignoring children with no target (E51)", () => {

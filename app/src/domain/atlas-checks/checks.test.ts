@@ -357,7 +357,7 @@ describe("check 13: no health, no judgements of a named person", () => {
   it("E95: a judgement of a named person is left out, and Atlas says so", () => {
     const ctx = ctxWith("Jodian keeps missing standups.");
     const r = one(braid({ braidKind: "issue", quote: "Jodian keeps missing standups" }), ctx);
-    expect(r.dropped).toMatchObject({ check: 13, reason: "Atlas left out what you said about Jodian Reid" });
+    expect(r.dropped).toMatchObject({ check: 13, reason: "Atlas left out what you said about Jodian Taylor" });
   });
 
   it("E17: leave dates are kept without the health words", () => {

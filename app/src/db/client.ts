@@ -10,7 +10,7 @@ import * as schema from "./schema";
 
 // Both drivers share PgDatabase, so queries are written once against this type.
 export type Db = PgDatabase<PgQueryResultHKT, typeof schema>;
-type Opened = { db: Db; migrate: () => Promise<void> };
+type Opened = { db: Db; migrate: () => Promise<void>; close: () => Promise<void> };
 
 const MIGRATIONS = path.join(process.cwd(), "drizzle");
 
@@ -20,12 +20,12 @@ export function openPglite(dataDir?: string): Opened {
   if (dataDir) mkdirSync(path.dirname(dataDir), { recursive: true });
   const client = new PGlite(dataDir);
   const db = drizzlePglite({ client, schema });
-  return { db, migrate: () => migratePglite(db, { migrationsFolder: MIGRATIONS }) };
+  return { db, migrate: () => migratePglite(db, { migrationsFolder: MIGRATIONS }), close: () => client.close() };
 }
 
 export function openPostgres(url: string): Opened {
   const db = drizzlePg({ connection: url, schema });
-  return { db, migrate: () => migratePg(db, { migrationsFolder: MIGRATIONS }) };
+  return { db, migrate: () => migratePg(db, { migrationsFolder: MIGRATIONS }), close: () => db.$client.end() };
 }
 
 // One database per server process: Postgres when DATABASE_URL is set,

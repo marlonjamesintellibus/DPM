@@ -21,7 +21,7 @@ describe("what the server checks hand to the capture machine", () => {
     const same = kemar().items.filter((i) => i.kind === "braid_same");
     expect(same.map((i) => [i.braid?.matchEntryId, i.braid?.seenState])).toEqual([
       ["br-feed-blocker", "reported"],
-      ["br-pipeline-risk", "open"],
+      ["br-pipeline-risk", "mitigating"],
     ]);
   });
 

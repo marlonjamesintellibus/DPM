@@ -27,19 +27,20 @@ export const KEMAR_CONTEXT: CheckContext = {
         { type: "work_item", id: "wi-151", number: "#151", title: "Store sales feed access", ownerId: "kemar", values: { state: "in_progress", blocked_note: null } },
         { type: "work_item", id: "wi-160", number: "#160", title: "Feature store backfill", ownerId: "jodian", values: { state: "in_progress", blocked_note: null } },
         { type: "milestone", id: "ms-trend", title: "Trend model", ownerId: "kemar", values: { forecast: "2026-10-23", target: "2026-10-23" } },
-        { type: "milestone", id: "ms-release-1", title: "Release 1", ownerId: "alicia", values: { forecast: "2026-10-30", target: "2026-10-30" } },
+        { type: "milestone", id: "ms-release-1", title: "Buyer pilot · Release 1", ownerId: "alicia", values: { forecast: "2026-10-30", target: "2026-10-30" } },
+        // A step of Kemar's handover to Jodian (2 of 4 steps done)
         { type: "handover", id: "ho-runbook", title: "Runbook", ownerId: "kemar", values: { state: "not_done" } },
       ],
       people: [
         { personId: "alicia", name: "Alicia Campbell", role: "pm", tie: "PM" },
         { personId: "kemar", name: "Kemar Brown", role: "member", tie: "data engineer" },
-        { personId: "jodian", name: "Jodian Reid", role: "member", tie: "takes Kemar's handover" },
+        { personId: "jodian", name: "Jodian Taylor", role: "member", tie: "takes Kemar's handover" },
         { personId: "kyle", name: "Kyle", role: null, tie: "contact on #151 (Sprouts IT)" },
       ],
       braid: [
         { id: "br-feed-blocker", kind: "blocker", title: "Store sales feed access", state: "reported" },
         { id: "br-feed-dependency", kind: "dependency", title: "Store sales feed access from Sprouts IT", state: "open" },
-        { id: "br-pipeline-risk", kind: "risk", title: "Only Kemar can run the pipeline", state: "open" },
+        { id: "br-pipeline-risk", kind: "risk", title: "Only Kemar can run the pipeline", state: "mitigating" },
       ],
     },
     {

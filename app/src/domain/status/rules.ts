@@ -39,3 +39,23 @@ export function threadStatus(children: readonly (Status | null)[]): Status | nul
 export function projectCalculatedStatus(threads: readonly (Status | null)[]): Status | null {
   return worst(threads);
 }
+
+export type PlanRows = {
+  threads: readonly { id: string }[];
+  milestones: readonly { threadId: string | null; state: MilestoneState; targetDate: IsoDate; forecastDate: IsoDate | null }[];
+  workItems: readonly { threadId: string | null; state: WorkItemState; dueDate: IsoDate | null }[];
+};
+
+/**
+ * The whole roll-up for one project from its rows (A4.2): each thread is the worst of its milestones
+ * and work items, and the project is the worst thread. Items in no thread count at project level.
+ */
+export function calculatePlan(rows: PlanRows, today: IsoDate): { threads: Record<string, Status | null>; project: Status | null } {
+  const statusOf = (threadId: string | null) =>
+    threadStatus([
+      ...rows.milestones.filter((m) => m.threadId === threadId).map((m) => milestoneStatus(m)),
+      ...rows.workItems.filter((w) => w.threadId === threadId).map((w) => workItemStatus(w, today)),
+    ]);
+  const threads = Object.fromEntries(rows.threads.map((t) => [t.id, statusOf(t.id)]));
+  return { threads, project: projectCalculatedStatus([...Object.values(threads), statusOf(null)]) };
+}
