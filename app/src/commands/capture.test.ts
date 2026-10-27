@@ -116,7 +116,7 @@ describe("the story's save (step 4 and 5)", () => {
     expect((await workItem("wi-145")).state).toBe("done");
     expect((await workItem("wi-208")).state).toBe("done");
     const [trend] = await db.select().from(t.milestones).where(eq(t.milestones.id, "ms-trend"));
-    expect(trend.forecastDate).toBe("2026-10-24");
+    expect(trend.forecastDate).toBe("2026-10-26");
     const steps = await db.select().from(t.handoverSteps).where(eq(t.handoverSteps.handoverId, "ho-kemar-jodian"));
     expect(steps.find((s) => s.id === "ho-runbook")!.state).toBe("handed_over");
     expect(`${steps.filter((s) => s.state === "handed_over").length} of ${steps.length}`).toBe("3 of 4");
@@ -127,7 +127,7 @@ describe("the story's save (step 4 and 5)", () => {
     const forager = (await loadBraidLog(db, "forager")).log;
     expect(forager["br-feed-blocker"].sources.map((s) => s.personId)).toEqual(["alicia", "kemar"]);
     expect(forager["br-feed-blocker"].state).toBe("reported");
-    expect(forager[`br-${item(8)}`]).toMatchObject({ kind: "risk", title: "Trend model may slip to 24 Oct", state: "proposed", reportedBy: "kemar" });
+    expect(forager[`br-${item(8)}`]).toMatchObject({ kind: "risk", title: "Trend model may slip to 26 Oct", state: "proposed", reportedBy: "kemar" });
     expect(forager["br-pipeline-risk"].sources.map((s) => s.id)).toEqual(["src-pipeline-alicia", `src-${item(9)}`]);
     expect(forager["br-pipeline-risk"].state).toBe("mitigating");
     const insights = (await loadBraidLog(db, "insights")).log;

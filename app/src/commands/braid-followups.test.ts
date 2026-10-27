@@ -231,13 +231,13 @@ describe("D15, D16: reporters hear back; approvers per project", () => {
 
   it("D15 Kemar is told in his chat when Alicia approves his risk, and when Andre declines his decision", async () => {
     await kemarSaves();
-    const risk = Object.values((await loadBraidLog(db, "forager")).log).find((e) => e.title === "Trend model may slip to 24 Oct")!;
+    const risk = Object.values((await loadBraidLog(db, "forager")).log).find((e) => e.title === "Trend model may slip to 26 Oct")!;
     await decideBraidEntry(as("alicia", 2), risk.id, { type: "approve" });
     const decision = Object.values((await loadBraidLog(db, "insights")).log).find((e) => e.kind === "decision")!;
     await decideBraidEntry(as("andre", 3), decision.id, { type: "decline", reason: "The 6am window clashes with the store backups" });
     expect((await getChatSummary(db, "kemar")).notices.map((x) => x.text)).toEqual([
       "Andre declined your decision: Move the daily refresh to 6am. Reason: The 6am window clashes with the store backups",
-      "Alicia approved your risk: Trend model may slip to 24 Oct.",
+      "Alicia approved your risk: Trend model may slip to 26 Oct.",
     ]);
     expect((await getChatSummary(db, "alicia")).notices).toEqual([]);
   });

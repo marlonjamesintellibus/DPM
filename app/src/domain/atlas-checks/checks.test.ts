@@ -63,11 +63,11 @@ describe("use case 1 story, step 2: Kemar's note becomes the 11 items in the tab
       [1, "forager", "update", "wi-142 state: done -> done", "#142", "high", "no_change"],
       [2, "forager", "update", "wi-145 state: in_progress -> done", "#145", "high", "pre_accepted"],
       [3, "forager", "update", "wi-151 state: in_progress -> blocked", "Kyle is the contact on #151", "high", "pre_accepted"],
-      [4, "forager", "update", "ms-trend forecast: 2026-10-23 -> 2026-10-24", "Kemar owns it", "medium", "needs_ok"],
+      [4, "forager", "update", "ms-trend forecast: 2026-10-23 -> 2026-10-26", "Kemar owns it", "medium", "needs_ok"],
       [5, "You", "update", "leave-kemar dates: 2026-10-26/2026-10-30 -> 2026-10-26/2026-10-30", "Personal", "high", "matches_leave"],
       [6, "forager", "update", "ho-runbook state: not_done -> handed_over", "His handover", "low", "needs_ok"],
       [7, "forager", "braid_same", 'blocker "Store sales feed access" same_as br-feed-blocker', "Same subject as #151", "high", "pre_accepted"],
-      [8, "forager", "braid_new", 'risk "Trend model may slip to 24 Oct" new null', "Same quote as #4", "medium", "needs_ok"],
+      [8, "forager", "braid_new", 'risk "Trend model may slip to 26 Oct" new null', "Same quote as #4", "medium", "needs_ok"],
       [9, "forager", "braid_same", 'risk "Only Kemar can run the pipeline" same_as br-pipeline-risk', "Same subject as #5 and #6", "medium", "needs_ok"],
       [10, "insights", "update", "wi-208 state: in_progress -> done", '"On Store Insights"', "high", "pre_accepted"],
       [11, "insights", "braid_new", 'decision "Move the daily refresh to 6am" new null', '"On Store Insights"', "high", "pre_accepted"],
@@ -219,7 +219,7 @@ describe("check 5: dates resolve against message time", () => {
 
   it("the server's date wins over the model's", () => {
     const { item } = one(update({ targetId: "ms-trend", field: "forecast", newValue: "2026-10-25", quote: "the model slips a day" }), KEMAR_CONTEXT);
-    expect(item?.target?.newValue).toBe("2026-10-24");
+    expect(item?.target?.newValue).toBe("2026-10-26");
   });
 
   it("a date that is not in the words is dropped", () => {
@@ -240,7 +240,7 @@ describe("check 6: one card per target and field", () => {
     );
     expect(dropped).toEqual([]);
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ mark: "needs_ok", target: { newValue: "2026-10-25" } });
+    expect(items[0]).toMatchObject({ mark: "needs_ok", target: { newValue: "2026-10-27" } });
     expect(quoted(items[0], ctx.text)).toEqual(["The trend model slips a day", "two days late"]);
   });
 });

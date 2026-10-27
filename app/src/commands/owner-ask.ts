@@ -72,7 +72,7 @@ async function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
   switch (target.type) {
     case "work_item": {
       const [row] = await tx.select().from(t.workItems).where(eq(t.workItems.id, target.id));
-      return row ? (target.field === "blocked_note" ? row.blockedNote : row.state) : null;
+      return row ? (target.field === "blocked_note" ? row.blockedNote : target.field === "forecast" ? (row.forecastDate ?? row.dueDate) : row.state) : null;
     }
     case "milestone": {
       const [row] = await tx.select().from(t.milestones).where(eq(t.milestones.id, target.id));

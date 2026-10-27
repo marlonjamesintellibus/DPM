@@ -202,7 +202,7 @@ function editOf(item: ExtractedItem): ReviewItem["edit"] {
   if (target.type === "work_item" && target.field === "state")
     return { input: "choice", value, options: WORK_CHOICES.map((v) => ({ value: v, label: WORK_STATE_LABEL[v] })) };
   if (target.type === "handover") return { input: "choice", value, options: STEP_CHOICES.map((v) => ({ value: v, label: HANDOVER_STEP_LABEL[v] })) };
-  if (target.type === "milestone") return { input: "date", value, options: [] };
+  if (target.type === "milestone" || (target.type === "work_item" && target.field === "forecast")) return { input: "date", value, options: [] };
   return { input: "text", value, options: [] };
 }
 
@@ -217,17 +217,19 @@ function leaveRange(value: string): string {
 
 /** The records update items name, loaded once for their titles and changes. */
 export type TargetRecords = {
-  workItems: { id: string; number: string | null; title: string }[];
+  workItems: { id: string; number: string | null; title: string; dueDate: string | null }[];
   milestones: { id: string; name: string }[];
   steps: { id: string; title: string; toName: string }[];
+  /** Section 20, WF4: the author's live leave, so a forecast that lands in it says so. */
+  leave: { start: string; end: string }[];
 };
 
 /** The records these items update, for targetTitle and targetChange (the review, and the updates answer of section 18). */
-export async function loadTargetRecords(conn: Conn, drafts: readonly ExtractedItemDraft[]): Promise<TargetRecords> {
+export async function loadTargetRecords(conn: Conn, drafts: readonly ExtractedItemDraft[], authorId?: string): Promise<TargetRecords> {
   const ids = (type: string) => [...new Set(drafts.flatMap((d) => (d.target?.type === type ? [d.target.id] : [])))];
   const [workIds, milestoneIds, stepIds] = [ids("work_item"), ids("milestone"), ids("handover")];
-  const [workItems, milestones, steps] = await Promise.all([
-    workIds.length ? conn.select({ id: t.workItems.id, number: t.workItems.number, title: t.workItems.title }).from(t.workItems).where(inArray(t.workItems.id, workIds)) : [],
+  const [workItems, milestones, steps, leave] = await Promise.all([
+    workIds.length ? conn.select({ id: t.workItems.id, number: t.workItems.number, title: t.workItems.title, dueDate: t.workItems.dueDate }).from(t.workItems).where(inArray(t.workItems.id, workIds)) : [],
     milestoneIds.length ? conn.select({ id: t.milestones.id, name: t.milestones.name }).from(t.milestones).where(inArray(t.milestones.id, milestoneIds)) : [],
     stepIds.length
       ? conn
@@ -237,8 +239,11 @@ export async function loadTargetRecords(conn: Conn, drafts: readonly ExtractedIt
           .innerJoin(t.people, eq(t.people.id, t.handovers.toPersonId))
           .where(inArray(t.handoverSteps.id, stepIds))
       : [],
+    authorId
+      ? conn.select({ start: t.leave.startDate, end: t.leave.endDate }).from(t.leave).where(and(eq(t.leave.personId, authorId), inArray(t.leave.state, ["requested", "approved"])))
+      : [],
   ]);
-  return { workItems, milestones, steps };
+  return { workItems, milestones, steps, leave };
 }
 
 /** "Issue #145 Google Trends connector", "Milestone Trend model", "Handover Runbook", "Leave Kemar Brown". */
@@ -257,22 +262,31 @@ export function targetTitle(target: NonNullable<ExtractedItemDraft["target"]>, r
   }
 }
 
-/** What an update item changes: "In progress to Done", "Forecast 23 Oct to 24 Oct", "Not done to Handed to Jodian". */
+/** What an update item changes: "In progress to Done", "Forecast 23 Oct to 26 Oct", "Not done to Handed to Jodian". */
 export function targetChange(item: ExtractedItem, records: TargetRecords): string {
   const target = item.draft.target!;
   const value = item.value ?? target.newValue;
   const nothing = item.state === "no_change";
+  const date = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? shortDate(s) : (s ?? "none"));
+  // WF4: a forecast in the author's own leave says so, so the plan is not built on a day they are away
+  // Only on the author's own records: someone else's forecast is not about the author's leave (an ask, U5)
+  const away = (s: string) => (!item.draft.ask && records.leave.some((l) => l.start <= s && s <= l.end) ? ", when you're on leave" : "");
   switch (target.type) {
     case "work_item": {
       if (target.field === "blocked_note") return `Note: ${value}`;
+      if (target.field === "forecast") {
+        // Section 20, U6: said against the due date, which is the plan
+        const due = records.workItems.find((x) => x.id === target.id)?.dueDate ?? null;
+        if (nothing) return `Forecast already ${date(value)}`;
+        const late = due !== null && value > due ? ` (due ${date(due)})` : due !== null ? ", on time" : "";
+        return `Forecast ${date(target.oldValue)} to ${date(value)}${late}${away(value)}`;
+      }
       const label = (s: string | null) => (s ? (WORK_STATE_LABEL[s as WorkItemState] ?? s) : "None");
       if (nothing) return `Already ${label(value)}`;
       return `${label(target.oldValue)} to ${label(value)}${target.note ? `: ${target.note}` : ""}`;
     }
-    case "milestone": {
-      const date = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? shortDate(s) : (s ?? "none"));
-      return nothing ? `Forecast already ${date(value)}` : `Forecast ${date(target.oldValue)} to ${date(value)}`;
-    }
+    case "milestone":
+      return nothing ? `Forecast already ${date(value)}` : `Forecast ${date(target.oldValue)} to ${date(value)}${away(value)}`;
     case "handover": {
       const to = records.steps.find((x) => x.id === target.id)?.toName;
       const label = (s: string | null) => (s === "handed_over" && to ? `Handed to ${firstName(to)}` : s ? (HANDOVER_STEP_LABEL[s] ?? s) : "Not done");
@@ -301,7 +315,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   // D7: whether the author may resolve a blocker they say is cleared (S13), for the card's wording
   const authorsHeld = await conn.select({ blockedLinks: t.workItems.blockedLinks }).from(t.workItems).where(eq(t.workItems.ownerId, capture.authorId));
   const [records, entries, sources, projects, memberships] = await Promise.all([
-    loadTargetRecords(conn, drafts),
+    loadTargetRecords(conn, drafts, capture.authorId),
     entryIds.length ? conn.select().from(t.braidEntries).where(inArray(t.braidEntries.id, entryIds)) : [],
     entryIds.length ? conn.select({ entryId: t.braidSources.entryId, extractionId: t.braidSources.extractionId }).from(t.braidSources).where(inArray(t.braidSources.entryId, entryIds)) : [],
     projectIds.length ? conn.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).where(inArray(t.projects.id, projectIds)) : [],

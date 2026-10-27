@@ -30,6 +30,7 @@ import { ROWS as MeetingRows, PLANTS as MeetingPlants } from './rows/meeting.mjs
 import { ROWS as CoverRequestRows, PLANTS as CoverRequestPlants } from './rows/coverRequest.mjs';
 import { ROWS as EvalCandidateRows, PLANTS as EvalCandidatePlants } from './rows/evalCandidate.mjs';
 import OwnerAsk from './models/ownerAsk.mjs';
+import WorkForecast from './models/workForecast.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -112,6 +113,8 @@ export const ROWS = [
   // OwnerAsk is M37, section 20, U5 and U7: a change to someone else's record, or new work, asks the person with the right
   { spec: 'OwnerAsk', setting: 'a change to a record', model: OwnerAsk({ Kind: 'change' }), expectFail: [] },
   { spec: 'OwnerAsk', setting: 'new work, for the PM', model: OwnerAsk({ Kind: 'new_work' }), expectFail: [] },
+  // WorkForecast is section 20, U6: a work item's forecast, set by its owner; the due date never moves from a message
+  { spec: 'WorkForecast', setting: 'as given', model: WorkForecast(), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -217,4 +220,8 @@ export const PLANTS = [
   { spec: 'OwnerAsk', setting: 'bug: accept ignores what the author saw', model: OwnerAsk({ Bug: 'blindAccept' }), expectFail: ['NeverOverwriteUnseen'] },
   { spec: 'OwnerAsk', setting: 'bug: an ask never expires', model: OwnerAsk({ Bug: 'noExpiry' }), expectFail: ['AskEnds'] },
   { spec: 'OwnerAsk', setting: 'bug: a declined ask leaves its item open', model: OwnerAsk({ Bug: 'keepItem' }), expectFail: ['ItemMatchesCause'] },
+  { spec: 'WorkForecast', setting: 'bug: the forecast replaces the due date in the rule', model: WorkForecast({ Bug: 'forecastHidesLate' }), expectFail: ['ForecastNeverHidesLate'] },
+  { spec: 'WorkForecast', setting: 'bug: a message moves the due date', model: WorkForecast({ Bug: 'captureMovesDue' }), expectFail: ['DueNeverFromCapture'] },
+  { spec: 'WorkForecast', setting: "bug: anyone's words set the forecast", model: WorkForecast({ Bug: 'anyoneForecasts' }), expectFail: ['ForecastOnlyByOwner'] },
+  { spec: 'WorkForecast', setting: 'bug: a finished item keeps its forecast', model: WorkForecast({ Bug: 'keepForecastWhenDone' }), expectFail: ['DoneHasNoForecast'] },
 ];

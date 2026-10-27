@@ -1529,6 +1529,19 @@ The story changes: Kemar's "the model slips a day", said on Tuesday about Friday
 | WD4 | "Slips a couple of days" | 2 working days, Medium confidence (check 4) |
 | WD5 | Tolerance | Stays in calendar days until F10 is decided |
 
+### U6 and U8 built (27 Oct 2026)
+
+- **Model first:** `research/state-machines/js/models/workForecast.mjs` (162 states): ForecastNeverHidesLate, LateForecastIsSeen, DoneHasNoForecast, DueNeverFromCapture and ForecastOnlyByOwner pass; four planted bugs each fail (the forecast replaces the due date in the rule; a message moves the due date; anyone's words set the forecast; a finished item keeps its forecast). U8 changes a date calculation, not a state, so it is tested, not modelled.
+- **M5:** `forecastDate` on the record (migration `0011`), SET_FORECAST for its owner on work not finished, and finishing clears it. Status rule: Off track if past due, or the forecast is beyond due by more than the tolerance (3 days, as milestones); At risk if blocked or the forecast is after due. A forecast never hides a missed due date.
+- **Checks:** `forecast` is a work item date field for its owner (anyone else's becomes an Ask, U5); WF2 a day already past is refused; WF3 finished work is No change; WF7 the due date is refused with "the due date is the plan; ask Alicia Campbell to move it, or say when you now expect it done". Atlas sees a work item's forecast (its due date when none is set) and due date.
+- **U8:** `addWorkingDays` in `domain/dates.ts`. A counted slip ("a day", "two days late", "a week" as 5) and "in two days" count working days; a named day ("Saturday", "tomorrow", "the 24th") is kept as said.
+- **The story moves:** Kemar's "the model slips a day" (said Tuesday about Friday 23 Oct) is Monday 26 Oct; the risk is "Trend model may slip to 26 Oct". The milestone stays At risk (3 days is within the tolerance). The use case table, the fixture, the tests and the browser story say 26 Oct; questions 3 and 5 in use case 1 are marked answered.
+- **WF4:** a forecast that lands in the author's own live leave says ", when you're on leave": the story's card reads "Forecast 23 Oct to 26 Oct, when you're on leave". Found while building: it first showed on an Ask about Jodian's work too, which is wrong (it is not her leave); it shows only on the author's own records.
+- **Screens:** "Forecast 23 Oct to 26 Oct (due 23 Oct)" when later than due, ", on time" otherwise; the edit is a date.
+- **Atlas:** prompt `read-13`. A work item's forecast when its owner says when it will be done; never its due date.
+- **Evaluation:** `own-work-forecast`, `slip-working-day` and `due-not-from-message` added; `kemar-note` expects 26 Oct and `forecast-shift` 27 Oct only. The set (105 with wave 1's) passes 104 with GPT-6.1 Sol; the miss is `andre-decision` (D23), as before.
+- **Tests:** WF1 to WF5 and WF7 against PGlite (`commands/work-forecast.test.ts`); the machine, the rule (with a property for ForecastNeverHidesLate) and WD1 to WD4. 1,123 unit tests and the 12-step browser story pass.
+
 ### Evaluation cases to add
 
 New keys: `outcome:<entryId>=<outcome>`, `supersede:<entryId>`, `ask:<targetId>.<field>=<value>`, `track:<project>` (new work), `upd:<workItemId>.forecast=<date>`, and `new:dependency:<project>@<date>` for an expected date. A new optional `titleHas` lists words a passing BRAID title must contain. An approved decision on Store Insights ("Move the daily refresh to 6am") is added to the evaluation seed only, not the story seed.

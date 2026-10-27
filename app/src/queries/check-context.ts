@@ -52,7 +52,8 @@ export async function loadCheckContext(
         number: w.number ?? undefined,
         title: w.title,
         ownerId: w.ownerId,
-        values: { state: w.state, blocked_note: w.blockedNote },
+        // Section 20, U6: a work forecast starts from the due date, as a milestone's from its target
+        values: { state: w.state, blocked_note: w.blockedNote, forecast: w.forecastDate ?? w.dueDate, due: w.dueDate },
       })),
       ...milestones.map((m) => ({
         type: "milestone" as const,

@@ -110,7 +110,7 @@ test("3. Alicia set Forager 2.0 Off track at 9:02 with no reason", async () => {
 
 test("4. Kemar accepts #4, #8 and #9, edits #6 and saves: 9 changes for 2 projects", async () => {
   await viewAs("kemar", "/review/cap-kemar-0858");
-  for (const text of ["Milestone Trend model", "Trend model may slip to 24 Oct", "Only Kemar can run the pipeline"]) {
+  for (const text of ["Milestone Trend model", "Trend model may slip to 26 Oct", "Only Kemar can run the pipeline"]) {
     await card(text).getByRole("button", { name: "Accept" }).click();
     await expect(card(text).getByRole("button", { name: "Undo" })).toBeVisible();
   }
@@ -130,7 +130,7 @@ test("5. The rules run: Forager is calculated At risk, the blocker has 2 reports
   await viewAs("alicia", "/projects/forager?view=table");
   const blocker = page.locator("details").filter({ hasText: "Store sales feed access" }).filter({ hasText: "Blocker" }).first();
   await expect(blocker.locator("summary")).toContainText("2");
-  await expect(page.locator("details").filter({ hasText: "Trend model may slip to 24 Oct" }).locator("summary")).toContainText("Waiting for PM or Lead");
+  await expect(page.locator("details").filter({ hasText: "Trend model may slip to 26 Oct" }).locator("summary")).toContainText("Waiting for PM or Lead");
   await page.goto("/projects/forager");
   await expect(page.locator("section").filter({ hasText: "Plan" }).first()).toContainText("At risk");
 });
@@ -138,13 +138,13 @@ test("5. The rules run: Forager is calculated At risk, the blocker has 2 reports
 test("6. Alicia's Today: she approves Kemar's risk, then saves the reason linked to the blocker and the risk", async () => {
   await viewAs("alicia", "/?view=inbox");
   await expect(page.getByRole("link", { name: "Forager 2.0 is set Off track, but the plan says At risk" }).first()).toBeVisible();
-  await page.getByRole("link", { name: /Kemar raised a risk: Trend model may slip to 24 Oct/ }).first().click();
+  await page.getByRole("link", { name: /Kemar raised a risk: Trend model may slip to 26 Oct/ }).first().click();
   await page.getByRole("button", { name: "Approve" }).click();
   await expect(page.getByRole("link", { name: /Kemar raised a risk/ })).toHaveCount(0);
 
   await page.getByRole("link", { name: "Forager 2.0 is set Off track, but the plan says At risk" }).first().click();
   await expect(page.getByLabel("Reason")).not.toBeEmpty();
-  for (const chip of ["Blocker · Store sales feed access", "Risk · Trend model may slip to 24 Oct"]) {
+  for (const chip of ["Blocker · Store sales feed access", "Risk · Trend model may slip to 26 Oct"]) {
     const button = page.getByRole("button", { name: new RegExp(`^${chip}`) }).first();
     if ((await button.getAttribute("aria-pressed")) === "false") await button.click();
     await expect(button).toHaveAttribute("aria-pressed", "true");

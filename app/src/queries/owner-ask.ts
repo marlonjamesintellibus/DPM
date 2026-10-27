@@ -41,7 +41,8 @@ export async function describeOwnerAsk(conn: Conn, askId: string): Promise<Owner
     const [w] = await conn.select({ number: t.workItems.number, title: t.workItems.title }).from(t.workItems).where(eq(t.workItems.id, target.id));
     what = w ? `${w.number ?? ""} ${w.title}`.trim() : target.id;
     const label = (s: string | null) => (s ? (WORK_STATE_LABEL[s as WorkItemState] ?? s) : "None");
-    change = target.field === "blocked_note" ? `Note: ${r.value}` : `${label(r.saw)} to ${label(r.value)}`;
+    const date = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? shortDate(s) : (s ?? "none"));
+    change = target.field === "blocked_note" ? `Note: ${r.value}` : target.field === "forecast" ? `Forecast ${date(r.saw)} to ${date(r.value)}` : `${label(r.saw)} to ${label(r.value)}`;
   } else if (target?.type === "milestone") {
     const [m] = await conn.select({ name: t.milestones.name }).from(t.milestones).where(eq(t.milestones.id, target.id));
     what = `Milestone ${m?.name ?? target.id}`;

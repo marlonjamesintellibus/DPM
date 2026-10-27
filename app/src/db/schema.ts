@@ -186,6 +186,8 @@ export const workItems = pgTable(
     /** When the work is planned to start; with dueDate it draws the plan's bar (L14). */
     startDate: day("start_date"),
     dueDate: day("due_date"),
+    /** Section 20, U6: when its owner now expects it done; Done clears it. */
+    forecastDate: day("forecast_date"),
     blockedNote: text("blocked_note"),
     blockedLinks: text("blocked_links").array().notNull().default(sql`'{}'::text[]`),
     /** The PR or document that finished it (A10.1: Done with no linked change is an error). */

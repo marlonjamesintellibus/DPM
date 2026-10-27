@@ -72,11 +72,11 @@ Snapshot: Tuesday 20 Oct 2026, America/Jamaica. All names are placeholders (KB P
    | 1 | Forager 2.0 | Update | Issue #142 TikTok trend ingest | Already Done | #142 | High | No change |
    | 2 | Forager 2.0 | Update | Issue #145 Google Trends connector | In progress to Done | #145 | High | Ready |
    | 3 | Forager 2.0 | Update | Issue #151 Store sales feed access | to Blocked: waiting on Kyle (Sprouts IT) | Kyle is the contact on #151 | High | Ready |
-   | 4 | Forager 2.0 | Update | Milestone Trend model | Forecast 23 Oct to 24 Oct | Kemar owns it | Medium | Needs your OK |
+   | 4 | Forager 2.0 | Update | Milestone Trend model | Forecast 23 Oct to 26 Oct, when you're on leave | Kemar owns it | Medium | Needs your OK |
    | 5 | You | Update | Leave Kemar Brown | 26 to 30 Oct | Personal | High | Matches approved leave |
    | 6 | Forager 2.0 | Update | Handover Runbook | Not done to Handed to Jodian | His handover | Low | Needs your OK |
    | 7 | Forager 2.0 | BRAID, same as existing | Blocker "Store sales feed access" | Add Kemar as a source (2 reports) | Same subject as #151 | High | Ready |
-   | 8 | Forager 2.0 | BRAID, new | Risk "Trend model may slip to 24 Oct" | Propose to the PM | Same quote as #4 | Medium | Needs your OK |
+   | 8 | Forager 2.0 | BRAID, new | Risk "Trend model may slip to 26 Oct" | Propose to the PM | Same quote as #4 | Medium | Needs your OK |
    | 9 | Forager 2.0 | BRAID, same as existing | Risk "Only Kemar can run the pipeline" | Add evidence: runbook handed to Jodian | Same subject as #5 and #6 | Medium | Needs your OK |
    | 10 | Store Insights | Update | Issue #208 Weekly sales export | In progress to Done | "On Store Insights" | High | Ready |
    | 11 | Store Insights | BRAID, new | Decision "Move the daily refresh to 6am" | Propose to the decider | "On Store Insights" | High | Ready (as a proposal) |
@@ -93,7 +93,7 @@ Snapshot: Tuesday 20 Oct 2026, America/Jamaica. All names are placeholders (KB P
    - BRAID entries are categories, so none of them changes a calculated status (A4.1, P6).
 6. **Alicia's Today (L6)** shows:
    - Item 1: "Forager 2.0 is set Off track, but the plan says At risk" (unchanged from the design).
-   - Item 2 (new): "Kemar raised a risk: Trend model may slip to 24 Oct. Add to the risk log?" She approves it.
+   - Item 2 (new): "Kemar raised a risk: Trend model may slip to 26 Oct. Add to the risk log?" She approves it.
    - Back on item 1, Atlas drafts a reason from the BRAID log. She saves it linked to the blocker and the risk she just approved. Both items close.
 7. **Andre's Today** shows "Kemar proposed a decision for Store Insights: move the daily refresh to 6am", with Approve, Decline or Ask for more. He approves, and the decision is on the Store Insights log with Andre as approver and Kemar's words as the source.
 8. **What each person can see:**
@@ -186,6 +186,6 @@ Marked ASSUMPTION where the knowledge base does not decide it. Each is one const
 
 1. L16 marks High confidence updates "Applied" before Save, while A9.2 says nothing reaches the plan until the person confirms. This plan says "Ready". Is that the right word?
 2. #151 is "blocked for 6 days" in L6 but becomes Blocked through update 3 in L16. Which system first marked it blocked: GitHub, or Kemar's note?
-3. L16 shows "Sat 24 Oct" as the new forecast. Should forecasts snap to working days?
+3. L16 shows "Sat 24 Oct" as the new forecast. Should forecasts snap to working days? **Answered 27 Oct (machines doc section 20, U8):** count, don't snap. "Slips a day" counts working days, so Friday 23 Oct becomes Monday 26 Oct; a day someone names is kept as said. 26 Oct is Kemar's first day of leave, and the card says so.
 4. Should a Blocker entry and a work item's Blocked state stay separate (this plan), or be one thing?
-5. Is an action someone is assigned in conversation a work item, a BRAID entry, or both?
+5. Is an action someone is assigned in conversation a work item, a BRAID entry, or both? **Answered 27 Oct (machines doc section 20, U7):** one, never both, by who does it. Someone outside the team: a BRAID dependency. Someone in the project: a work item, matched to a listed one, or proposed to the PM as new work (M37). The author's own promise waits for phase E.

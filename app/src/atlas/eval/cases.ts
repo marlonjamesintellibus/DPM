@@ -57,7 +57,7 @@ export const EVAL_CASES: EvalCase[] = [
       "upd:wi-145.state=done",
       "upd:wi-151.state=blocked",
       "same:br-feed-blocker",
-      "upd:ms-trend.forecast=2026-10-24",
+      "upd:ms-trend.forecast=2026-10-26",
       "new:risk:forager",
       "upd:leave-kemar.dates=2026-10-26*",
       "upd:ho-runbook.state=handed_over",
@@ -111,9 +111,9 @@ export const EVAL_CASES: EvalCase[] = [
   },
   {
     id: "forecast-shift",
-    about: "a relative slip",
+    about: "a relative slip, in working days (section 20, U8): Friday plus two is Tuesday",
     text: "The trend model is going to slip two days.",
-    expect: [["upd:ms-trend.forecast=2026-10-25", "upd:ms-trend.forecast=2026-10-27"]],
+    expect: ["upd:ms-trend.forecast=2026-10-27"],
     allow: ["new:risk:forager"],
   },
   {
@@ -251,6 +251,29 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Working on the trend scoring piece today.",
     expect: ["upd:wi-147.state=in_progress"],
     forbid: ["track:*"],
+  },
+  // Section 20, U6 and U8: a work item's forecast is its owner's; its due date is the plan; counted slips are working days
+  {
+    id: "own-work-forecast",
+    about: "when his own work will be done",
+    text: "The trend scoring model will take until Monday.",
+    expect: ["upd:wi-147.forecast=2026-10-26"],
+    allow: ["upd:ms-trend.forecast*", "new:risk:forager"],
+  },
+  {
+    id: "slip-working-day",
+    about: "a day from Friday is Monday",
+    text: "I think the trend model slips a day.",
+    expect: ["upd:ms-trend.forecast=2026-10-26"],
+    allow: ["new:risk:forager"],
+  },
+  {
+    id: "due-not-from-message",
+    about: "a due date is the plan, never moved by a message",
+    text: "Push the due date for #147 to the 30th.",
+    expect: [],
+    allow: ["upd:wi-147.forecast=2026-10-30"],
+    forbid: ["upd:wi-147.due*"],
   },
   {
     id: "own-promise",
@@ -691,7 +714,7 @@ export const EVAL_CASES: EvalCase[] = [
     id: "ja-code-switch",
     about: "JA4 code-switching in one sentence: quotes keep the exact words",
     text: "Finished the TikTok ingest yesterday, but di store feed still nuh come through from Kyle, so mi tink di trend model a go slip a day.",
-    expect: ["upd:wi-142.state=done", ["same:br-feed-blocker", "upd:wi-151.state=blocked"], "upd:ms-trend.forecast=2026-10-24"],
+    expect: ["upd:wi-142.state=done", ["same:br-feed-blocker", "upd:wi-151.state=blocked"], "upd:ms-trend.forecast=2026-10-26"],
     allow: ["same:br-feed-blocker", "upd:wi-151.state=blocked", "same:br-feed-dependency", "new:risk:forager"],
     forbid: ["resolve:*"],
     // "mi tink" is a hedge, as "I think" is in the story (E12)

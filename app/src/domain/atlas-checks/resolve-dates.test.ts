@@ -69,8 +69,8 @@ describe("check 5: relative words read against message time", () => {
 
 describe("shifts from a date on record", () => {
   it("slips a day from the current forecast (story item 4)", () => {
-    expect(findShift("so I think the model slips a day", "2026-10-23")).toMatchObject({ date: "2026-10-24", relative: true });
-    expect(findShift("it's two days late", "2026-10-23")?.date).toBe("2026-10-25");
+    expect(findShift("so I think the model slips a day", "2026-10-23")).toMatchObject({ date: "2026-10-26", relative: true });
+    expect(findShift("it's two days late", "2026-10-23")?.date).toBe("2026-10-27");
     expect(findShift("pushed back a week", "2026-10-23")?.date).toBe("2026-10-30");
     expect(findShift("pulled in by 2 days", "2026-10-23")?.date).toBe("2026-10-21");
     expect(findShift("nothing moves", "2026-10-23")).toBeNull();
@@ -78,7 +78,7 @@ describe("shifts from a date on record", () => {
 
   it("a date field prefers a stated date, then a shift, then a relative word", () => {
     expect(readDateValue("slips a day, so Fri 24 Oct", AT, "2026-10-23")?.date).toBe("2026-10-24");
-    expect(readDateValue("finished yesterday so it slips a day", AT, "2026-10-23")?.date).toBe("2026-10-24");
+    expect(readDateValue("finished yesterday so it slips a day", AT, "2026-10-23")?.date).toBe("2026-10-26");
     expect(readDateValue("done by Monday", AT, "2026-10-23")).toMatchObject({ date: "2026-10-26", relative: true });
     expect(readDateValue("no dates here", AT, "2026-10-23")).toBeNull();
   });
@@ -101,5 +101,27 @@ describe("leave ranges", () => {
     expect(readLeaveRange("out from the 26th to the 30th", AT)).toMatchObject({ start: "2026-10-26", end: "2026-10-30" });
     expect(readLeaveRange("I'm out Monday", AT)).toMatchObject({ start: "2026-10-26", end: "2026-10-26", relative: true });
     expect(readLeaveRange("no dates", AT)).toBeNull();
+  });
+});
+
+// Section 20, U8 (question 3): a counted time is in working days; a named day keeps its date
+describe("counted slips use working days (section 20, U8)", () => {
+  it("WD1: a day from a Friday is the Monday", () => {
+    expect(findShift("slips a day", "2026-10-23")?.date).toBe("2026-10-26");
+  });
+
+  it("WD2: a week is 5 working days, from any day", () => {
+    expect(findShift("slips a week", "2026-10-21")?.date).toBe("2026-10-28");
+  });
+
+  it("WD3: a named day is kept as said, even a Saturday", () => {
+    expect(readDateValue("lands Saturday", AT, "2026-10-23")?.date).toBe("2026-10-24");
+    expect(resolveDate("tomorrow", new Date("2026-10-23T13:58:00Z"))?.date).toBe("2026-10-24");
+  });
+
+  it('WD4: "in two days" counts working days from the message day', () => {
+    expect(resolveDate("in two days", AT)?.date).toBe("2026-10-22");
+    expect(resolveDate("in two days", new Date("2026-10-22T13:58:00Z"))?.date).toBe("2026-10-26");
+    expect(resolveDate("in a week", AT)?.date).toBe("2026-10-27");
   });
 });

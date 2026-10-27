@@ -14,6 +14,8 @@ export type WorkItemRecord = {
   ownerId: string;
   state: WorkItemState;
   dueDate: IsoDate | null;
+  /** Section 20, U6: when its owner now expects it done. A field, not a state; Done clears it. */
+  forecastDate: IsoDate | null;
   /** Set only while blocked: what it waits on ("waiting on Kyle (Sprouts IT)"). */
   blockedNote: string | null;
   /** BRAID entries the block relates to, when there are any (#151 to the Dependency and the Blocker). */
@@ -28,7 +30,9 @@ export type WorkItemEvent =
   | { type: "UPDATE_BLOCKED_NOTE"; note: string; links?: readonly string[] }
   | { type: "UNBLOCK" }
   | { type: "REOPEN" }
-  | { type: "CANCEL" };
+  | { type: "CANCEL" }
+  /** Section 20, U6: the owner says when it will be done (WorkForecast). The due date never moves from a message. */
+  | { type: "SET_FORECAST"; forecast: IsoDate };
 
 type Ctx = { record: WorkItemRecord; actor: Actor };
 
@@ -53,6 +57,13 @@ export const workItemMachine = defineMachine<WorkItemState, WorkItemEvent, Ctx>(
           : "only the owner, a PM or a Lead reopens finished work",
     },
     { from: ["to_do", "in_progress", "blocked", "done"], on: "CANCEL", to: "cancelled" },
+    // Section 20, U6 (ForecastOnlyByOwner): its owner's word, as a milestone's forecast is its owner's (S5)
+    ...(["to_do", "in_progress", "blocked"] as const).map((s) => ({
+      from: [s],
+      on: "SET_FORECAST" as const,
+      to: s,
+      guard: ({ record, actor }: Ctx) => (actor.personId === record.ownerId ? null : "only its owner forecasts it"),
+    })),
   ],
 });
 
@@ -62,6 +73,9 @@ export type WorkItemResult = { outcome: Outcome<WorkItemState>; record: WorkItem
 export function applyWorkItem(record: WorkItemRecord, event: WorkItemEvent, actor: Actor): WorkItemResult {
   const outcome = transition(workItemMachine, record.state, event, { record, actor });
   if (!outcome.ok) return { outcome, record };
+  if (event.type === "SET_FORECAST") return { outcome, record: { ...record, forecastDate: event.forecast } };
+  // DoneHasNoForecast: finished work has nothing left to forecast
+  if (outcome.to === "done") return { outcome, record: { ...record, state: outcome.to, blockedNote: null, forecastDate: null } };
   if (event.type === "BLOCK" || event.type === "UPDATE_BLOCKED_NOTE") {
     const links = event.links ?? (event.type === "BLOCK" ? [] : record.blockedLinks);
     return { outcome, record: { ...record, state: outcome.to, blockedNote: event.note.trim(), blockedLinks: links } };

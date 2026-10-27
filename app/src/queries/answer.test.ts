@@ -46,9 +46,9 @@ describe("questions in the chat", () => {
     expect(row.answer).toMatchObject({ topic: "needs_me", wording: "rules", text: "Your update from 8:58am has 4 items waiting for your OK before it can be saved.", more: null });
     // Section 17: the answer lists each item that needs his OK, with Accept
     expect(row.answer!.cards.map((c) => [c.title, c.detail, c.tag])).toEqual([
-      ["Milestone Trend model", "Forager 2.0: Forecast 23 Oct to 24 Oct", "Needs your OK · Medium confidence"],
+      ["Milestone Trend model", "Forager 2.0: Forecast 23 Oct to 26 Oct, when you're on leave", "Needs your OK · Medium confidence"],
       ["Handover Runbook", "Forager 2.0: Not done to Handed to Jodian", "Needs your OK · Low confidence"],
-      ["Trend model may slip to 24 Oct", "Forager 2.0: Propose to Alicia, the PM", "Needs your OK · Medium confidence"],
+      ["Trend model may slip to 26 Oct", "Forager 2.0: Propose to Alicia, the PM", "Needs your OK · Medium confidence"],
       ["Only Kemar can run the pipeline", "Forager 2.0: Add as evidence (2 sources)", "Needs your OK · Medium confidence"],
     ]);
     expect(row.answer!.cards.every((c) => c.href === "/review/cap-kemar-0858" && c.accept?.captureId === "cap-kemar-0858")).toBe(true);

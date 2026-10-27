@@ -259,7 +259,7 @@ describe("updates: what's new since you last asked", () => {
     expect(answer.cards.map((c) => [c.title, c.detail])).toEqual(
       expect.arrayContaining([
         ["Kemar: Issue #145 Google Trends connector", "Forager 2.0: In progress to Done"],
-        ["Kemar: Milestone Trend model", "Forager 2.0: Forecast 23 Oct to 24 Oct"],
+        ["Kemar: Milestone Trend model", "Forager 2.0: Forecast 23 Oct to 26 Oct"],
       ]),
     );
     const said = JSON.stringify(answer);
@@ -273,10 +273,10 @@ describe("updates: what's new since you last asked", () => {
 
   it("CQ6 his own saves are not news to him; a notice to him is", async () => {
     await kemarSaves();
-    const proposed = (await db.select().from(t.braidEntries).where(eq(t.braidEntries.title, "Trend model may slip to 24 Oct")))[0];
+    const proposed = (await db.select().from(t.braidEntries).where(eq(t.braidEntries.title, "Trend model may slip to 26 Oct")))[0];
     await decideBraidEntry(as("alicia", 2), proposed.id, { type: "approve" });
     const { answer } = await ask("kemar", "Any updates?");
-    expect(answer.cards[0]).toMatchObject({ title: "Alicia approved your risk: Trend model may slip to 24 Oct.", tag: "For you", href: "/projects/forager?view=table" });
+    expect(answer.cards[0]).toMatchObject({ title: "Alicia approved your risk: Trend model may slip to 26 Oct.", tag: "For you", href: "/projects/forager?view=table" });
     expect(JSON.stringify(answer)).not.toContain("Kemar:");
   });
 

@@ -64,6 +64,8 @@ const FIELDS: Record<CandidateRecord["type"], Record<string, FieldRule>> = {
   work_item: {
     state: { who: "owner_or_lead", values: ["to_do", "in_progress", "blocked", "done"] },
     blocked_note: { who: "owner_or_lead" },
+    // Section 20, U6: when its owner now expects it done; the due date is the plan, never from a message
+    forecast: { who: "owner", date: true },
   },
   // S5: only the owner moves a forecast. The target never moves from a capture (M6).
   milestone: { forecast: { who: "owner", date: true } },
@@ -280,6 +282,9 @@ const fieldAllowed: Check = [
     if (!rule) {
       if (t.record.type === "milestone" && w.field === "target")
         return `moving ${t.record.title}'s target is a decision for ${s.leadOf(t.project)}`;
+      // WF7: a due date is the plan, as a milestone's target is
+      if (t.record.type === "work_item" && (w.field === "due" || w.field === "due_date"))
+        return `${describe(t)}'s due date is the plan; ask ${s.leadOf(t.project)} to move it, or say when you now expect it done`;
       return `${w.field || "that field"} on ${describe(t)} cannot change from a message`;
     }
     const isOwner = t.record.ownerId === s.ctx.author.id;
@@ -333,7 +338,7 @@ const confidenceFloor: Check = [
 
 const datesResolve: Check = [
   5,
-  (w) => {
+  (w, s) => {
     if (!isDateField(w)) return null;
     if (w.target?.type === "leave") {
       if (!w.leave) return "no leave dates found in what you said";
@@ -342,6 +347,9 @@ const datesResolve: Check = [
       return null;
     }
     if (!w.date) return "no date found in what you said";
+    // WF2: a work forecast is when it will be done, so never a day already past
+    if (w.target?.type === "record" && w.target.record.type === "work_item" && daysBetween(messageDay(s.ctx.messageAt), w.date.date) < 0)
+      return `a forecast for ${describe(w.target)} is a day still to come`;
     w.newValue = w.date.date;
     if (w.date.weekdayMismatch) w.needsOk = true;
     return null;
@@ -415,6 +423,8 @@ const mark: Check = [
       if (fit?.kind === "change") w.newValue = leaveValue(fit.to.start, fit.to.end);
       if (fit?.kind === "matches" || fit?.kind === "change") w.oldValue = leaveValue(fit.kind === "matches" ? fit.range.start : fit.from.start, fit.kind === "matches" ? fit.range.end : fit.from.end);
       w.mark = fit?.kind === "matches" ? "matches_leave" : "needs_ok";
+    } else if (w.target?.type === "record" && w.target.record.type === "work_item" && w.field === "forecast" && w.target.record.values.state === "done") {
+      w.mark = "no_change"; // WF3: finished work has nothing left to forecast
     } else if (w.target?.type === "record" && w.newValue !== null && w.oldValue !== null && norm(w.newValue) === norm(w.oldValue)) {
       w.mark = "no_change";
     } else if (w.kind === "braid_resolve" && w.match?.entry.state === (w.p.outcome ?? "resolved")) {

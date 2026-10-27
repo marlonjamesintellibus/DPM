@@ -92,7 +92,7 @@ describe("use case 1: a daily update reaches the right projects", () => {
     expect(work.find((w) => w.number === "#145")?.state).toBe("done");
     const blocker = forager.braid.entries.find((e) => e.title === "Store sales feed access" && e.kind === "blocker")!;
     expect(blocker.reportCount).toBe(2);
-    expect(forager.braid.entries.find((e) => e.title === "Trend model may slip to 24 Oct")).toMatchObject({ kind: "risk", waitingForApproval: true });
+    expect(forager.braid.entries.find((e) => e.title === "Trend model may slip to 26 Oct")).toMatchObject({ kind: "risk", waitingForApproval: true });
     const insights = await project("andre", "insights", "09:12");
     expect(insights.braid.entries.find((e) => e.kind === "decision")).toMatchObject({ title: "Move the daily refresh to 6am", waitingForApproval: true });
     const [runbook] = await db.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, "ho-runbook"));
@@ -102,7 +102,7 @@ describe("use case 1: a daily update reaches the right projects", () => {
   it("each person sees only their part: inboxes, and the quotes behind the BRAID entries (rule 9, E79)", async () => {
     expect(await titles("alicia", "09:12")).toEqual([
       "Forager 2.0 is set Off track, but the plan says At risk",
-      "Kemar raised a risk: Trend model may slip to 24 Oct",
+      "Kemar raised a risk: Trend model may slip to 26 Oct",
     ]);
     expect(await titles("andre", "09:12")).toEqual(["Kemar proposed a decision: move the daily refresh to 6am"]);
     // M5, A10.1: work Done by voice with no PR linked is expected to ask its owner for the link (D18)
@@ -120,7 +120,7 @@ describe("use case 1: a daily update reaches the right projects", () => {
   });
 
   it("Alicia approves the risk, then saves the reason Atlas drafted; Forager shows Off track", async () => {
-    const risk = (await project("alicia", "forager", "09:20")).braid.entries.find((e) => e.title === "Trend model may slip to 24 Oct")!;
+    const risk = (await project("alicia", "forager", "09:20")).braid.entries.find((e) => e.title === "Trend model may slip to 26 Oct")!;
     await decideBraidEntry(as("alicia", "09:20"), risk.id, { type: "approve" });
     const draft = await draftReason(db, "forager", jamaica("09:21"));
     const blocker = (await project("alicia", "forager", "09:21")).braid.entries.find((e) => e.kind === "blocker" && e.title === "Store sales feed access")!;

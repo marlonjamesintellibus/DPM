@@ -45,6 +45,19 @@ export function isWorkingDay(date: IsoDate): boolean {
   return d !== "Saturday" && d !== "Sunday";
 }
 
+/**
+ * Section 20, U8: `n` working days after `date` (before it when negative), Monday to Friday. A counted
+ * slip ("a day", "two days", "a week" as 5) is in working days: Friday plus a day is Monday.
+ */
+export function addWorkingDays(date: IsoDate, n: number): IsoDate {
+  let d = date;
+  for (let left = Math.abs(n); left > 0; ) {
+    d = addDays(d, Math.sign(n));
+    if (isWorkingDay(d)) left--;
+  }
+  return d;
+}
+
 /** Working days after `from`, up to and including `to`. */
 export function workingDaysBetween(from: IsoDate, to: IsoDate): number {
   let n = 0;

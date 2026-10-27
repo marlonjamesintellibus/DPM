@@ -14,6 +14,7 @@ const item = (state: WorkItemState, over: Partial<WorkItemRecord> = {}): WorkIte
   ownerId: "kemar",
   state,
   dueDate: "2026-10-23",
+  forecastDate: null,
   blockedNote: state === "blocked" ? "waiting on Kyle" : null,
   blockedLinks: [],
   ...over,
@@ -151,6 +152,41 @@ describe("work items keep their rules", () => {
         }
       }),
       { numRuns: 2000 },
+    );
+  });
+});
+
+// Section 20, U6 (research model workForecast.mjs): a forecast is its owner's; Done clears it; it never hides a missed due date
+describe("a work item's forecast (section 20, U6)", () => {
+  it("only its owner sets it, on work not finished", () => {
+    expect(apply(item("in_progress"), { type: "SET_FORECAST", forecast: "2026-10-26" }).record.forecastDate).toBe("2026-10-26");
+    expect(apply(item("in_progress"), { type: "SET_FORECAST", forecast: "2026-10-26" }, JODIAN).outcome.ok).toBe(false);
+    expect(apply(item("in_progress"), { type: "SET_FORECAST", forecast: "2026-10-26" }, ALICIA).outcome.ok).toBe(false);
+    expect(apply(item("done"), { type: "SET_FORECAST", forecast: "2026-10-26" }).outcome.ok).toBe(false);
+  });
+
+  it("DoneHasNoForecast: finishing clears it", () => {
+    const r = apply(item("in_progress", { forecastDate: "2026-10-26" }), { type: "FINISH" });
+    expect([r.record.state, r.record.forecastDate]).toEqual(["done", null]);
+  });
+
+  it("the status: at risk when forecast after due, off track beyond the tolerance, and a forecast never hides a missed due date", () => {
+    const w = (forecastDate: string | null, state: WorkItemState = "in_progress") => ({ state, dueDate: "2026-10-23", forecastDate });
+    expect(workItemStatus(w("2026-10-23"), "2026-10-21")).toBe("on_track");
+    expect(workItemStatus(w("2026-10-26"), "2026-10-21")).toBe("at_risk");
+    expect(workItemStatus(w("2026-10-27"), "2026-10-21")).toBe("off_track");
+    // ForecastNeverHidesLate: past due and not done is Off track whatever the forecast says
+    expect(workItemStatus(w("2026-10-30"), "2026-10-26")).toBe("off_track");
+    expect(workItemStatus(w("2026-10-21", "to_do"), "2026-10-20")).toBe("not_started");
+  });
+
+  it("property: past due and not done is always Off track (ForecastNeverHidesLate)", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 1, max: 20 }), fc.option(fc.integer({ min: 0, max: 30 })), fc.constantFrom<WorkItemState>("to_do", "in_progress", "blocked"), (late, f, state) => {
+        const today = `2026-10-${String(23 + Math.min(late, 8)).padStart(2, "0")}`;
+        const forecastDate = f === null ? null : `2026-11-${String(1 + (f % 28)).padStart(2, "0")}`;
+        expect(workItemStatus({ state, dueDate: "2026-10-23", forecastDate }, today)).toBe("off_track");
+      }),
     );
   });
 });

@@ -7,12 +7,22 @@ import { worst, type Status } from "./status";
 export type WorkItemState = "to_do" | "in_progress" | "blocked" | "done" | "cancelled";
 export type MilestoneState = "planned" | "in_progress" | "done" | "missed";
 
-/** Done; Off track if past due and not done; At risk if blocked (ASSUMPTION); Not started if to do; else On track. */
-export function workItemStatus(item: { state: WorkItemState; dueDate: IsoDate | null }, today: IsoDate): Status | null {
+/**
+ * Done; Off track if past due and not done, or forecast beyond due + tolerance; At risk if blocked
+ * (ASSUMPTION) or forecast after due; Not started if to do; else On track. Section 20, U6: the
+ * forecast never hides a missed due date (WorkForecast, ForecastNeverHidesLate).
+ */
+export function workItemStatus(
+  item: { state: WorkItemState; dueDate: IsoDate | null; forecastDate?: IsoDate | null },
+  today: IsoDate,
+  toleranceDays: number = config.milestoneToleranceDays,
+): Status | null {
   if (item.state === "cancelled" || item.dueDate === null) return null; // E50, E51: no target
   if (item.state === "done") return "done";
   if (daysBetween(item.dueDate, today) > 0) return "off_track";
-  if (item.state === "blocked") return "at_risk";
+  const late = item.forecastDate ? daysBetween(item.dueDate, item.forecastDate) : 0;
+  if (late > toleranceDays) return "off_track";
+  if (item.state === "blocked" || late > 0) return "at_risk";
   if (item.state === "to_do") return "not_started";
   return "on_track";
 }
@@ -43,7 +53,7 @@ export function projectCalculatedStatus(threads: readonly (Status | null)[]): St
 export type PlanRows = {
   threads: readonly { id: string }[];
   milestones: readonly { threadId: string | null; state: MilestoneState; targetDate: IsoDate; forecastDate: IsoDate | null }[];
-  workItems: readonly { threadId: string | null; state: WorkItemState; dueDate: IsoDate | null }[];
+  workItems: readonly { threadId: string | null; state: WorkItemState; dueDate: IsoDate | null; forecastDate?: IsoDate | null }[];
 };
 
 /**

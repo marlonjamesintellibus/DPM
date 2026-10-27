@@ -596,6 +596,11 @@ async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<
       const actor = actorIn(authorId, row.projectId, world.memberships);
       return (value) => {
         if (target.field === "blocked_note") return applyWorkItem(record, { type: "UPDATE_BLOCKED_NOTE", note: value }, actor).outcome.ok ? null : `${row.number ?? row.title} is not blocked`;
+        if (target.field === "forecast") {
+          if (!isIsoDate(value)) return "a forecast is a date";
+          const r = applyWorkItem(record, { type: "SET_FORECAST", forecast: value }, actor);
+          return r.outcome.ok ? null : r.outcome.reason;
+        }
         if (!SETTABLE_WORK_STATES.includes(value)) return `"${value}" is not a state an update can set`;
         if (value === row.state) return null;
         const event = workItemEventTo(row.state, value as WorkItemState, target.note ?? "");
@@ -639,7 +644,7 @@ async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<
 }
 
 function workItemRecordOf(row: typeof t.workItems.$inferSelect): WorkItemRecord {
-  return { id: row.id, projectId: row.projectId, ownerId: row.ownerId, state: row.state, dueDate: row.dueDate, blockedNote: row.blockedNote, blockedLinks: row.blockedLinks };
+  return { id: row.id, projectId: row.projectId, ownerId: row.ownerId, state: row.state, dueDate: row.dueDate, forecastDate: row.forecastDate, blockedNote: row.blockedNote, blockedLinks: row.blockedLinks };
 }
 
 function milestoneRecordOf(row: typeof t.milestones.$inferSelect): MilestoneRecord {
@@ -875,7 +880,8 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
     case "work_item": {
       const [row] = await tx.select().from(t.workItems).where(eq(t.workItems.id, target.id));
       if (!row) return gone("that issue");
-      return target.field === "blocked_note" ? row.blockedNote : row.state;
+      // Section 20, U6: no forecast means the forecast is the due date, as a milestone's is its target
+      return target.field === "blocked_note" ? row.blockedNote : target.field === "forecast" ? (row.forecastDate ?? row.dueDate) : row.state;
     }
     case "milestone": {
       const [row] = await tx.select().from(t.milestones).where(eq(t.milestones.id, target.id));
@@ -913,6 +919,7 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       const label = row.number ?? row.title;
       let event: WorkItemEvent | null;
       if (w.target.field === "blocked_note") event = { type: "UPDATE_BLOCKED_NOTE", note: w.value };
+      else if (w.target.field === "forecast") event = { type: "SET_FORECAST", forecast: w.value }; // Section 20, U6
       else if (!SETTABLE_WORK_STATES.includes(w.value)) event = null;
       else {
         const links = s.blockLinks.get(item.id);
@@ -923,7 +930,7 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       if (!r.outcome.ok) throw new CommandRefused(`${label}: ${r.outcome.reason}`);
       const rows = await tx
         .update(t.workItems)
-        .set({ state: r.record.state, blockedNote: r.record.blockedNote, blockedLinks: [...r.record.blockedLinks], version: nextVersion(t.workItems.version), updatedAt: now })
+        .set({ state: r.record.state, blockedNote: r.record.blockedNote, blockedLinks: [...r.record.blockedLinks], forecastDate: r.record.forecastDate, version: nextVersion(t.workItems.version), updatedAt: now })
         .where(and(eq(t.workItems.id, row.id), eq(t.workItems.version, row.version)))
         .returning({ id: t.workItems.id });
       expectOne(rows, `work item ${row.id}`);

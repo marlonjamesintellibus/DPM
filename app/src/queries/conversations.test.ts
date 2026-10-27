@@ -115,12 +115,12 @@ describe("conversations (M18)", () => {
       await (await import("../commands/capture")).decideExtraction(as("kemar", 1), item.id, { type: "accept" });
     }
     await saveCapture(as("kemar", 2), "cap-kemar-0858");
-    const risk = (await db.select().from(t.braidEntries).where(eq(t.braidEntries.title, "Trend model may slip to 24 Oct")))[0];
+    const risk = (await db.select().from(t.braidEntries).where(eq(t.braidEntries.title, "Trend model may slip to 26 Oct")))[0];
     await (await import("../commands/braid")).decideBraidEntry({ db, now: at(5), actorId: "alicia" }, risk.id, { type: "approve", note: "Logged" });
     const other = await send("kemar", "What needs me today?", null, { minutes: 6 });
     const atlas = await getThread(db, "kemar", "conv-atlas-kemar", at(10));
     const newer = await getThread(db, "kemar", other.conversationId!, at(10));
-    expect(atlas.found && atlas.notices.map((x) => x.text)).toContain("Alicia approved your risk: Trend model may slip to 24 Oct. Note: Logged");
+    expect(atlas.found && atlas.notices.map((x) => x.text)).toContain("Alicia approved your risk: Trend model may slip to 26 Oct. Note: Logged");
     expect(newer.found && newer.notices).toEqual([]);
   });
 });

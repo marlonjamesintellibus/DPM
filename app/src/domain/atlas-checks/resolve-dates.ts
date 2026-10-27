@@ -5,7 +5,7 @@
 // "Monday", "slips a day"). A stated day number ("Monday the 26th", "the 26th", "Fri 23 Oct")
 // is explicit, so it does not lower confidence unless its weekday disagrees (E13).
 import { config } from "../config";
-import { addDays, dateInZone, daysBetween, isIsoDate, weekday, WEEKDAYS, type IsoDate } from "../dates";
+import { addDays, addWorkingDays, dateInZone, daysBetween, isIsoDate, weekday, WEEKDAYS, type IsoDate } from "../dates";
 
 export type ResolvedDate = {
   date: IsoDate;
@@ -38,7 +38,7 @@ const NUM = `(\\d+|${alternation(Object.keys(NUMBER_WORDS))})`;
 const MOD = "(?:(?:last|next|this|coming)\\s+)?";
 const ORD = "(?:st|nd|rd|th)";
 
-type Parts = { year?: number; month?: number; day?: number; wd?: number; mod?: string; offset?: number };
+type Parts = { year?: number; month?: number; day?: number; wd?: number; mod?: string; offset?: number; workingOffset?: number };
 type Pattern = { re: RegExp; parts: (m: RegExpExecArray) => Parts };
 
 const wdOf = (s: string | undefined) => (s ? WEEKDAY_WORDS[s.toLowerCase()] : undefined);
@@ -70,14 +70,16 @@ const PATTERNS: Pattern[] = [
     re: /\b(today|tonight|tomorrow|yesterday)\b/gi,
     parts: (m) => ({ offset: { today: 0, tonight: 0, tomorrow: 1, yesterday: -1 }[m[1].toLowerCase()] }),
   },
-  { re: new RegExp(`\\bin\\s+${NUM}\\s+(days?|weeks?)\\b`, "gi"), parts: (m) => ({ offset: count(m[1]) * unit(m[2]) }) },
+  // Section 20, U8: a counted time ("in two days") is in working days; a named day keeps its date
+  { re: new RegExp(`\\bin\\s+${NUM}\\s+(days?|weeks?)\\b`, "gi"), parts: (m) => ({ workingOffset: count(m[1]) * unit(m[2]) }) },
 ];
 
 function count(word: string): number {
   return /^\d+$/.test(word) ? Number(word) : NUMBER_WORDS[word.toLowerCase()];
 }
+/** Working days in a counted unit (section 20, U8): a week is 5. */
 function unit(word: string): number {
-  return word.toLowerCase().startsWith("week") ? 7 : 1;
+  return word.toLowerCase().startsWith("week") ? 5 : 1;
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -103,6 +105,7 @@ function nearest(today: IsoDate, candidates: IsoDate[]): IsoDate | null {
 function resolveParts(p: Parts, today: IsoDate): { date: IsoDate; relative: boolean; weekdayMismatch: boolean } | null {
   const [y, m] = today.split("-").map(Number);
   if (p.offset !== undefined) return { date: addDays(today, p.offset), relative: true, weekdayMismatch: false };
+  if (p.workingOffset !== undefined) return { date: addWorkingDays(today, p.workingOffset), relative: true, weekdayMismatch: false };
   if (p.day === undefined) {
     // A weekday alone: the coming one (today counts), "next" strictly after today, "last" strictly before
     if (p.wd === undefined) return null;
@@ -173,8 +176,9 @@ export function findShift(text: string, base: IsoDate): ResolvedDate | null {
     re.lastIndex = 0;
     const m = re.exec(text);
     if (m) {
+      // Section 20, U8: "the model slips a day" from Friday 23 Oct is Monday 26 Oct
       const days = sign * count(m[1]) * unit(m[2]);
-      return { date: addDays(base, days), relative: true, weekdayMismatch: false, start: m.index, end: m.index + m[0].length };
+      return { date: addWorkingDays(base, days), relative: true, weekdayMismatch: false, start: m.index, end: m.index + m[0].length };
     }
   }
   return null;
