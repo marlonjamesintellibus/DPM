@@ -1,8 +1,8 @@
 # Atlas conversational plan: waves 0 and 1 (27 Oct 2026)
 
 **Goes with:** `atlas-conversational-plan.md` (the plan) and `01-update-to-plan-machines.md` sections 15 to 18
-**Branch:** `atlas-conv/wave-1`, from `3c94eb2`. Not merged into main. Nothing pushed.
-**Status:** built and checked, waiting for review. This file holds what the build found, so the plan and the machines doc can be updated when this branch is merged.
+**Branch:** `atlas-conv/wave-1`, from `3c94eb2`, merged with main on 27 Oct 2026. Nothing pushed.
+**Status:** built, checked, decided and folded into the plan docs. This file is the record of what the wave built and found.
 
 ## 1. What was built
 
@@ -115,9 +115,9 @@ Every machine was modelled as the plan draws it, with a planted bug for each pro
 | M36 | No arrow for opting out (LF2) | `logged --OPTED_OUT--> deleted`, same transaction (built) |
 | M36 | Original words kept forever after accept or dismiss | Every final state drops them (built) |
 
-## 5. Merging into main
+## 5. Merged with main (27 Oct 2026)
 
-- Main moved on while this ran (`ef1dc1d`, `14c1a05`, `04c9994`, `b2e72ff`). A trial merge conflicts in three files: `app/src/atlas/prompt.ts`, `app/src/queries/chat.ts`, `app/src/queries/review.ts`.
-- **Migrations collide.** Phase S adds `0007` and `0008`; the other session has an uncommitted `0007_dependency_expected`. Whichever lands second regenerates its migrations after the other's.
-- `research/state-machines/js/checks.mjs` and `results.md` are changed on both sides; re-run `node run-all.mjs` after the merge (several minutes, 361+ rows).
-- Run the full eval set on the merged prompt before merging.
+- Main's section 19 and 20 work was merged into this branch first. Conflicts in `prompt.ts` (now `read-9`, with section 20's dependency guidance and phase R's Patois guidance), `chat.ts` (main's set-aside summary and phase S's feedback), `review.ts` (imports) and `timers.ts` (both the dependency check and eval candidate expiry run) were resolved keeping both sides.
+- Migrations: phase S's two became one, `0008_learning_from_use`, generated again after main's `0007_dependency_expected`.
+- After the merge: typecheck and lint clean, 1,068 unit tests and the 12-step browser story pass, and the full eval passes 92 of 93 on `read-9` (the miss is Andre's decision, as before, D23).
+- This report is folded into the plan: build notes and G51 to G55 in section 18 of the machines doc; in `atlas-conversational-plan.md`, a "Built" note for phases A, R and S, a "Model check" list in every other phase, the new config keys and decisions CD30 to CD33. This file stays as the record of the wave.

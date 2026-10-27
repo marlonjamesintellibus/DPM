@@ -2,7 +2,7 @@
 
 **Goes with:** `01-update-to-plan-machines.md` sections 15 (questions in the chat), 16 (conversations), 17 (the message flow) and 18 (talking to Atlas about your work); `atlas-bot-plan.md` (the DPM bot in Atlas)
 **Vocabulary:** the shapes in `research/state-machines/js/map-data.mjs` (Thing, Job, Ask, Switch, Stage, Status rule)
-**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. Nothing here is built. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
+**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. **Phases A, R and S are built** (wave 1, merged 27 Oct 2026; `atlas-conversational-wave-1.md` is the build report). Every other phase is plan, and its section ends with what the model check of its machines found: fix those before building it. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
 
 Atlas today reads updates, answers questions in conversations, follows up ("and on Store Insights?"), words its answers over DPM's facts, and shows cards with Accept (sections 15 to 17). This plan goes from "a search box you type into" to a teammate: Atlas answers, lets you act on the answer, explains why, speaks first when something needs you, keeps track of what you promised, drafts what you would otherwise write, and asks when it is unsure. Then it moves from one person to the team: it works in the project group, runs the standup with you, spots trouble before anyone reports it, chases people for you, handles meetings and leave, and learns from how it is used.
 
@@ -58,6 +58,10 @@ Suggested order:
 
 Planned in section 18 of the machines doc (topics my_work, updates, mentions, small_talk; richer project_status; edge cases CQ1 to CQ16). Already built before it: answers as cards with "as of" and Accept, Atlas's wording over DPM's facts, and suggested follow-ups (section 17); conversations, whose earlier messages are how follow-ups and later phases know what "the second one" or "that risk" means (section 16).
 
+### Built (wave 1)
+
+Built with the `due` topic below; see section 18 of the machines doc (Built, G51 to G55). Follow-ups are section 16's, so CQ15 and `followUpMinutes` are superseded.
+
 ### Added: the `due` topic
 
 "What's due this week?", "When's the next milestone?", "Anything due tomorrow?"
@@ -107,6 +111,11 @@ proposed ──TIMER command_expiry (DECIDE: 30 minutes)──▶ expired       
 | AC8 | "Approve all of them" | DECIDE: one card per line (default), never one tap for many decisions |
 | AC9 | A command on a project they cannot read (the injection case) | The referent is checked like `checkQuestion`: not in their lines, not a command |
 | AC10 | The card expires unanswered | Expired, nothing changes, the answer stays as it was |
+
+### Model check (27 Oct 2026): fix before building
+
+- M20: check a reply's referent against the asker's lines **now** (the per-viewer query again), not the answer's old lines; if it is no longer theirs to read, it is not a command ("That answer is out of date. Ask again."), naming nothing.
+- M20: CONFIRM checks the right before the version (AC1 before AC2 and AC3), so someone who left is never told who decided.
 
 ## 5. Phase C. Ask why
 
@@ -172,6 +181,12 @@ asked ──capture expires or is rejected──▶ closed
 | CL7 | Voice message | Same: the question is asked in text after the transcript |
 | CL8 | No model connected | No clarification (the rule path makes no proposals) |
 
+### Model check (27 Oct 2026): fix before building
+
+- M21: a capture that holds only a command has no review card, so add `asked --TIMER clarify_expiry--> closed` ("Nothing was done; ask again") for it, and let CHECKS_DONE cover a command that matches 2 or 3 answer lines.
+- M21: the question is always asked in the author's own chat, never in a group (rules 3 and 8).
+- M21: ask in the chat only when choose_project has 2 or 3 candidates; with more, only the review card asks.
+
 ## 7. Phase E. Commitments
 
 ### What changes
@@ -212,6 +227,14 @@ checking ──TIMER no reply after config.commitmentCheckIns check-ins──▶
 | CM10 | Moved many times | Counted; after 3 moves the check-in asks whether to drop it (DECIDE) |
 | CM11 | The linked work item is cancelled | The commitment asks once whether it still stands |
 | CM12 | "What did I promise?" | A new topic `commitments`: their open and due commitments |
+
+### Model check (27 Oct 2026): fix before building
+
+- Section 20 of the machines doc already sets the author's own promise aside as "a promise; commitments come later" and turns someone else's promise into a dependency with a date (U2). Phase E picks up those set-aside promises.
+- M22: DONE and DROP (the owner's word, a done item in an update, the linked work item going Done) from open, due and checking; withdraw any check-in that is out.
+- M22: match the same promise against any live commitment (open, due or checking); a new date moves it back to open, counted as a move.
+- M22: read the linked record at save: a promise about a Done work item saves as No change; one about a cancelled work item saves with CM11's question already asked.
+- M22: draw `checking --TIMER (fewer than commitmentCheckIns sent)--> checking`; a new date restarts the count; CM11's question is a field that any reply answers.
 
 ## 8. Phase F. Atlas speaks first
 
@@ -264,6 +287,14 @@ On or off per kind, plus their start time. Defaults (DECIDE): brief on, mention 
 | PN11 | The brief would be empty | Not sent |
 | PN12 | A reply to a nudge that is also an update about something else | Read as a normal update; the nudge context is only a hint |
 
+### Model check (27 Oct 2026): fix before building
+
+- M23: `sending --TIMER (send timeout)--> retry_wait`; a late SENT for an attempt that timed out is dropped.
+- M23: a retry goes back to composing, so the guards and the facts are read again (leave, left the project, kind turned off).
+- M23: the daily cap counts every nudge handed to the app today, whatever its state, and is checked in the same transaction as the move to sending, with the version.
+- M23: a reply that quotes a nudge answers it from composing, sending and retry_wait as well as sent.
+- M23: once-only sends need the bot to send the nudge id and drop a repeat; add it to `atlas-bot-plan.md` (AQ5).
+
 ## 9. Phase G. Drafts
 
 ### What changes
@@ -303,6 +334,12 @@ ready ──TIMER config.draftExpiryHours──▶ expired
 | DR6 | No model connected | The plain template |
 | DR7 | Quotes from other people's updates | Never in a draft, even when visible to the asker (DECIDE) |
 | DR8 | Posted twice | Once only by draft id |
+
+### Model check (27 Oct 2026): fix before building
+
+- M25: a timer on requested (`draftModelSeconds`) counts as DRAFT_FAILED, so a draft always reaches ready.
+- M25: POST, and COPY of a client status, check every fact against the readers there **now** (the group's members, or the client view); refuse and offer Refresh.
+- M25: draw `ready --REFRESH (the right, checked now)--> requested` for DR5.
 
 ## 10. Phase H. Ask about people
 
@@ -382,6 +419,13 @@ composing ──(nothing is left)──▶ answered with "Nothing I can share wi
 | GR11 | An edited or deleted message | DECIDE: an edit before review is a new read; after save, nothing changes (default). A deleted message withdraws its unsaved capture |
 | GR12 | Someone asks Atlas in the group to approve something | A chat command (M20), confirmed by the person directly, never in the group |
 
+### Model check (27 Oct 2026): fix before building
+
+- M27: filter the facts again in the posting transaction, against the members and their reads now; if any fact was dropped, use DPM's own words. This replaces "composing again", which could loop forever.
+- M26: draw GR9 (about another person: M34 to them) and GR12 (a decision: an M20 command in the sender's own chat) as branches, not only edge cases.
+- M34 CONFIRM gets the M20 guard and a refused state.
+- Decide with the Atlas spec whether someone who joins a group sees earlier messages; if so, Atlas's answers are hidden from later joiners.
+
 ## 12. Phase J. Standup with Atlas
 
 ### What changes
@@ -427,6 +471,13 @@ composed ──▶ one capture (M1, M2) from the answers, each read with its que
 | SU9 | On leave | Never scheduled |
 | SU10 | Two standups in a day (they started one, Atlas starts another) | One per person per day |
 
+### Model check (27 Oct 2026): fix before building
+
+- M28: `scheduled --TIMER (rules fail)--> skipped`, with the skip guard (an update today, or no open work) written first.
+- M28: STOP, or the last SKIP, with nothing answered is abandoned, not an empty capture.
+- M28: at save, recheck ownership as well as membership: an answer about a record someone else now owns becomes an Ask to the owner (section 20's M37), never an edit. This also holds for free-form updates.
+- M28: draw START from none, scheduled and skipped; one per day counts standups that asked. Draw the "Stuck" follow-up as `asking(k) --ANSWER Stuck--> asking(k, "What's it waiting on?")`.
+
 ## 13. Phase K. Signals
 
 ### What changes
@@ -470,6 +521,12 @@ raised ──TIMER signalExpiryDays──▶ expired                            
 | SG8 | The stale item's owner answers "still going" | The item's clock restarts; no signal to the PM |
 | SG9 | A signal on a project the PM has since left | Their copy closes; others still see it |
 | SG10 | Many signals at once on one project | Grouped into one inbox item per project per day |
+
+### Model check (27 Oct 2026): fix before building
+
+- M29: on ACCEPT, DISMISS and expiry store the level and the condition's episode (when it started); DETECTED raises only when there is no memory, the episode is new, or it is worse. Otherwise an accepted signal comes back every night.
+- M29: "worse" is compared within one episode, so a condition that ends and comes back is raised again.
+- M29: draw the stale-work escalation, `raised(owner) --TIMER ownerAnswerDays--> raised(PM and Leads)`; the expiry clock starts there.
 
 ## 14. Phase L. Undo, "why did you file that?", and corrections
 
@@ -518,6 +575,13 @@ proposed ──TIMER reminders (S18 rhythm), then vocabExpiryDays──▶ expir
 | UN9 | An alias that clashes with another project | Refused before it is proposed |
 | UN10 | They move items in review often for one word | DECIDE: after 2 moves of the same word, propose it as a correction (default) |
 
+### Model check (27 Oct 2026): fix before building
+
+- M30: draw `undoing --> refused`; versions and the right are checked again in the transaction that runs the UNDO arrows.
+- M30: "Kemar undid this" goes only to people who can still open the record; a refusal names and links only records the asker can open now.
+- M31: check the alias clash again at APPROVE.
+- M31: check a clash only against projects the person told can open; where one person is in both projects, M14 sends their item to choose_project.
+
 ## 15. Phase M. Chasing people for you
 
 ### What changes
@@ -554,6 +618,11 @@ waiting ──CANCEL, or the subject was resolved elsewhere──▶ closed     
 | CH8 | Asked to chase many people at once | One draft each, one confirm each |
 | CH9 | The reply contains an update about something else | Read as a capture of the asker's review with the reply as context; nothing is saved as the replier's |
 | CH10 | The asker leaves the project | Open chases are closed |
+
+### Model check (27 Oct 2026): fix before building
+
+- M32: `reminded --REPLY--> replied` (CH3); a reply after the chase ended is shown to the asker as is, nothing proposed.
+- M32: close from sending and reminded too when the subject is resolved or the asker leaves, and when the asker can no longer reach the person ("I can't reach Kyle any more").
 
 ## 16. Phase N. Questions for leads and executives
 
@@ -633,6 +702,13 @@ proposed ──TIMER attributedExpiryDays──▶ expired; not filed           
 | MT11 | A long meeting | Over `maxProposalsPerCapture`: more found, as E-cases for long updates |
 | MT12 | An attendee is on leave by the time it arrives | Their item waits until they are back, then the timer starts |
 
+### Model check (27 Oct 2026): fix before building
+
+- M33: draw `received --OWN_NOTES_ONLY--> transcribing` for a note whose attendees were not told (MT4, CD17).
+- M33: items whose speaker is unsure wait in a `held` state in the recorder's review until the speaker is fixed (MT2).
+- M33: decisions go through the recorder's review first, then to the deciders (two confirmations).
+- M34: ask only members of the item's project (anyone else's item goes to the recorder, as MT1); withdraw when they leave; the timer pauses during leave.
+
 ## 18. Phase P. Leave and handover in the chat
 
 ### What changes
@@ -668,6 +744,13 @@ asked ──the leave is cancelled──▶ withdrawn                           
 | LV9 | Leave not yet approved | Cover can be asked; the handover waits on the approval |
 | LV10 | A commitment due during leave | Moved to the first working day back, with their OK in the review |
 
+### Model check (27 Oct 2026): fix before building
+
+- M35: `suggested` is withdrawn when the leave starts or is cancelled, or on DISMISS.
+- M35 and M7: a declined leave counts as cancelled.
+- M35: withdraw, telling nobody, when the asker or the teammate leaves the project.
+- M35: refuse PICK for an item already in an asked request or a live cover.
+
 ## 19. Phase Q. "What is Forager?"
 
 ### What changes
@@ -696,7 +779,7 @@ The team writes and speaks the way it talks: "mi done wid di feed", "di access s
 
 - **Prompt:** Atlas reads Jamaican English and Patois as written, never corrects or translates the quoted words, and keeps quotes exactly as said.
 - **Rules (no model):** the question and small talk patterns learn common forms ("wah", "weh", "mi", "unu", "nuh", "a weh", "wha gwaan").
-- **Transcription:** vocabulary hints for project, record and people names and common Patois words; transcripts below a confidence mark their items low (as today).
+- **Transcription:** DPM does not transcribe; the Atlas app sends the transcript (`atlas/transcriber.ts`). Vocabulary hints belong to whatever transcribes there. Items from a low-confidence transcript are Medium (E5) and need the author's OK.
 - **Evals:** a set of cases written in how the team actually talks, kept alongside the existing ones, with negation and tense cases first.
 - **Replies:** DECIDE: Atlas replies in standard English (default), or mirrors the person.
 
@@ -711,7 +794,14 @@ The team writes and speaks the way it talks: "mi done wid di feed", "di access s
 | JA5 | "Wha gwaan?" | small_talk |
 | JA6 | "Weh mi fi do today?" | needs_me / my_work |
 | JA7 | A name that is also a word | Matched only in the shape of a reference (capitalised, or next to a record) |
-| JA8 | A voice note in heavy Patois with low transcript confidence | Items marked low; the transcript is shown to fix before review |
+| JA8 | A voice note in heavy Patois with low transcript confidence | Items are Medium and need the author's OK; the transcript is shown exactly as sent and never edited (A5.6); corrections go in the items (W-D2) |
+
+### Built (wave 1)
+
+- Prompt (`read-9` with section 20): Patois read as written, quotes exact, replies in standard English (CD20). Check 4 treats Patois hedges ("mi tink", "mebbe", "nuh sure") as hedges; "soon done" and "a go finish" drop a done value to Medium (JA2).
+- JA7 in code: `namesProject` counts a project name or alias only with its capital or next to one of its record numbers; routing is always strict, so "mi done wid forager" goes to choose_project. A message with no capitals at all still counts a name in any case (QA8). People's names follow W-D1 and W-D4.
+- Rules: greetings are stripped with or without a comma (CQ13); "unu", "wen", "weh" and "anybody" ask only with "?", because Patois yes or no questions are shaped like statements.
+- 19 `ja-` eval cases.
 
 ## 21. Phase S. Learning from use
 
@@ -728,6 +818,8 @@ The team writes and speaks the way it talks: "mi done wid di feed", "di access s
 logged ──ACCEPT (a maintainer, with the expected result; text anonymised to seed names and ids)──▶ in_eval_set   final
 logged ──DISMISS──▶ dismissed                                                                                   final
 logged ──TIMER evalCandidateDays──▶ deleted                                                                     final
+logged ──OPTED_OUT (the person turns "Help improve Atlas" off; same transaction)──▶ deleted                       final
+logged ──WITHDRAWN (the person changes a thumbs down to up)──▶ deleted                                         final
 ```
 
 - The person's words are theirs (M1). Without their OK, only the counts are kept, never the text.
@@ -737,14 +829,21 @@ logged ──TIMER evalCandidateDays──▶ deleted                           
 
 | # | Case | Expected |
 |---|---|---|
-| LF1 | "Help improve Atlas" is off | Counts only; no text stored as a candidate |
-| LF2 | They turn it off later | Their logged candidates are deleted; accepted cases were already anonymised and stay |
+| LF1 | "Help improve Atlas" is off | Counts only; no text stored as a candidate, and "What was wrong?" is not stored at all |
+| LF2 | They turn it off later | Their logged candidates are deleted and their "What was wrong?" notes cleared, in the same transaction; accepted cases were already anonymised and stay |
 | LF3 | A candidate contains a client's name or data | Anonymised before acceptance; a maintainer can dismiss it outright |
 | LF4 | Thumbs down on a correct answer | Logged; dismissed by the maintainer with a note |
 | LF5 | Many of the same question can't be answered | Grouped; the count is the signal for what to build |
 | LF6 | Feedback on an answer from days ago | Accepted; tied to that answer's "as of" |
 | LF7 | Who sees the numbers | DECIDE: DPM maintainers only (default); org executives see their org's counts, never text |
 | LF8 | A metric would identify one person (a team of two) | Shown only above a minimum count (DECIDE: 5) |
+
+### Built (wave 1)
+
+- Thumbs up or down with "What was wrong?" under every answer; "Help improve Atlas" on `people`, off by default, in the sidebar account menu and offered after a thumbs down. Migration `0008_learning_from_use`.
+- M36 as drawn above, in `domain/machines/eval-candidate.ts`: ACCEPT and DISMISS recheck the OK, every final state drops the original words, and the timer event is EXPIRE. Once only means one live candidate per cause per answer; a deleted one can be logged again. ACCEPT refuses text that matches the stored words or holds a real (non-seed) name; the maintainer writes the anonymised case.
+- Numbers: `pnpm atlas:usage`. There is no maintainer role or screen yet, so whoever runs it is the maintainer (`--as`). Maintainers see every count (W-D3); `--org` is an org's executive view, which hides any number from fewer than 5 people and any it would give by subtraction. Numbers for B, F, J, K and L wait on those phases.
+- Model check: a candidate can hold another person's words (a thumbs down on a group answer, phase I); guard LOGGED on everyone whose words it holds before phase I is built.
 
 ## 22. Parked ideas
 
@@ -760,7 +859,7 @@ Not planned yet; written down so they are not lost.
 
 | Key | Default | Phase |
 |---|---|---|
-| followUpMinutes | 30 | A |
+| ~~followUpMinutes~~ | not added | A: superseded by section 16 |
 | updatesMaxDays | 7 | A |
 | mentionsDays | 14 | A |
 | commandExpiryMinutes | 30 | B |
@@ -772,6 +871,7 @@ Not planned yet; written down so they are not lost.
 | briefTime | "08:30" | F |
 | missingUpdateTime | "16:00" | F |
 | draftExpiryHours | 24 | G |
+| draftModelSeconds | 30 | G (model check) |
 | standupMaxQuestions | 4 | J |
 | standupIdleMinutes | 60 | J |
 | standupTime | "09:00" | J |
@@ -781,6 +881,7 @@ Not planned yet; written down so they are not lost.
 | quietProjectDays | 3 working days | K |
 | signalSnoozeDays | 7 | K |
 | signalExpiryDays | 14 | K |
+| ownerAnswerDays | 2 working days | K (model check) |
 | undoMinutes | 15 | L |
 | vocabExpiryDays | 14 | L |
 | chaseReminderWorkingDays | 2 | M |
@@ -824,3 +925,7 @@ Marlon asked for the best defaults to be chosen. Every DECIDE in this plan takes
 | CD27 | "Who hasn't updated" asked early | Before the standup time (9am) it says "It's early" (changed: the 4pm reminder time would hide the whole morning) |
 | CD28 | Smallest group a usage number is shown for | 5 |
 | CD29 | Mention matching on a shared first name | As CQ9: first name only where no other member of that project shares it |
+| CD30 | Does a lowercase first name count as a mention? (W-D1) | Yes, unless the name is also an everyday word (Mark, Will, May): those need their capital. A full name counts in any case |
+| CD31 | JA8: fix a transcript before review? (W-D2) | No: shown exactly as sent, items Medium, corrections go in the items |
+| CD32 | Who sees usage counts from fewer than 5 people? (W-D3) | DPM maintainers see every count; executives get the strict view |
+| CD33 | Does routing by a person need the name to look like a name? (W-D4) | Yes, the CD30 rule (`domain/names.ts`) |
