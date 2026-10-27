@@ -195,6 +195,7 @@ function editOf(item: ExtractedItem): ReviewItem["edit"] {
   const d = item.draft;
   if (d.kind === "braid_resolve") return null;
   if (d.braid) return { input: "text", value: item.value ?? d.braid.title, options: [] };
+  if (d.newWork) return { input: "text", value: item.value ?? d.newWork.title, options: [] };
   const target = d.target;
   if (!target) return null;
   const value = item.value ?? target.newValue;
@@ -327,6 +328,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
 
   const titleOf = (item: ExtractedItem): string => {
     const d = item.draft;
+    if (d.newWork) return `New work: ${item.value ?? d.newWork.title}`;
     if (d.braid) {
       if (d.kind === "braid_same" || d.kind === "braid_resolve" || d.braid.match === "same_as") return entries.find((e) => e.id === d.braid!.matchEntryId)?.title ?? d.braid.title;
       return item.value ?? d.braid.title;
@@ -334,7 +336,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     return targetTitle(d.target!, records, author?.name ?? capture.authorId);
   };
 
-  const changeOf = (item: ExtractedItem): string => {
+  const saidChangeOf = (item: ExtractedItem): string => {
     const d = item.draft;
     if (d.braid) {
       if (d.kind === "braid_resolve") {
@@ -369,6 +371,18 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     return targetChange(item, records);
   };
 
+  // Section 20, U5 and U7: someone else's record asks its owner; new work is proposed to the PM (M37)
+  const nameIn = (personId: string) => firstName(memberships.find((m) => m.personId === personId)?.name ?? personId);
+  const changeOf = (item: ExtractedItem): string => {
+    const d = item.draft;
+    if (d.newWork) {
+      const pm = memberships.find((m) => m.projectId === d.projectId && m.role === "pm" && m.state === "member" && m.personId !== capture.authorId);
+      return `${pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM"}: ${WORK_STATE_LABEL[d.newWork.state]}`;
+    }
+    const said = saidChangeOf(item);
+    return d.ask && item.state !== "no_change" ? `Ask ${nameIn(d.ask.ownerId)}: ${said}` : said;
+  };
+
   const reviewItems: ReviewItem[] = items.map((item) => {
     const d = item.draft;
     const mark = displayMark(item);
@@ -377,7 +391,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       id: item.id,
       ordinal: d.ordinal,
       kind: d.kind,
-      kindLabel: d.braid ? `BRAID · ${KIND_LABEL[d.braid.kind]}` : "Update",
+      kindLabel: d.braid ? `BRAID · ${KIND_LABEL[d.braid.kind]}` : d.newWork ? "New work" : "Update",
       braidKind: d.braid?.kind ?? null,
       title: titleOf(item),
       change: changeOf(item),
@@ -419,7 +433,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
               .map((e) => ({ id: e.id, title: e.title, stateLabel: e.state.replace("_", " ") }))
           : [],
       // A same-as report or a resolution belongs to its entry's log, like an update to its record
-      canMove: d.scope === "project" && (d.kind === "braid_new" || (d.kind === "update" && !d.target)),
+      canMove: d.scope === "project" && (d.kind === "braid_new" || d.kind === "new_work" || (d.kind === "update" && !d.target)),
     };
   });
 

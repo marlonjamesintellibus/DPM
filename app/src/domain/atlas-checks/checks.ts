@@ -7,7 +7,7 @@ import { OUTCOME_FROM, OUTCOMES, type BraidEntryState, type ResolveOutcome } fro
 import { fitLeave, type LeaveFit } from "../machines/leave";
 import { namesPerson } from "../names";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind } from "../rights";
-import { CONFIDENCES, lowerTo, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type RoutingState, type SourceSpan } from "../shared";
+import { CONFIDENCES, lowerTo, NEW_WORK_STATES, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type NewWorkState, type RoutingState, type SourceSpan } from "../shared";
 
 export { lowerTo };
 import { daysBetween } from "../dates";
@@ -106,6 +106,8 @@ type Work = {
   outcome: ResolveOutcome | null;
   /** Section 20, U4: the decision a new decision reverses. */
   supersedes: { project: CandidateProject; entry: OpenBraidEntry } | null;
+  /** Section 20, U5: the owner to ask, when the author may not change the record themselves. */
+  ask: string | null;
 };
 
 type Scope = ReturnType<typeof scopeOf>;
@@ -229,7 +231,7 @@ function leaveFitOf(range: LeaveRange | null, ctx: CheckContext): LeaveFit | nul
 
 // ---- Checks 1 to 5: one proposal at a time ----
 
-const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same", "braid_resolve"];
+const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same", "braid_resolve", "new_work"];
 
 // Kind is tested before anything else because every later check depends on it (check 11 owns it)
 const knownKind: Check = [11, (w) => (ITEM_KINDS.includes(w.kind) ? null : `"${w.kind}" is not something Atlas may propose`)];
@@ -282,8 +284,13 @@ const fieldAllowed: Check = [
     }
     const isOwner = t.record.ownerId === s.ctx.author.id;
     const isLead = t.project.role === "pm" || t.project.role === "lead";
-    if (!isOwner && !(rule.who === "owner_or_lead" && isLead))
-      return `${describe(t)} belongs to ${s.nameOf(t.record.ownerId)}; ask them to change its ${w.field}`;
+    if (!isOwner && !(rule.who === "owner_or_lead" && isLead)) {
+      // Section 20, U5 (S5): saving asks the owner instead (M37), when they are on the project to ask
+      const owner = t.record.ownerId ? t.project.people.find((p) => p.personId === t.record.ownerId && p.role !== null) : undefined;
+      if (!owner) return `${describe(t)} belongs to ${s.nameOf(t.record.ownerId)}; ask them to change its ${w.field}`;
+      w.ask = owner.personId;
+      w.needsOk = true; // it sends something to someone, so the author confirms it whatever the confidence
+    }
     if (rule.date) return null; // the value comes from check 5
     const value = w.newValue?.trim() ?? "";
     if (!value) return `no new ${w.field} for ${describe(t)}`;
@@ -521,10 +528,22 @@ const supersedesDecision: Check = [
   },
 ];
 
+// Section 20, U7: new work needs a title and a state it can start in; a PM or Lead decides it (M37)
+function newWorkGuard(w: Work): string | null {
+  const title = w.p.workTitle?.trim();
+  if (!title) return "new work needs a short title";
+  const state = (w.p.newValue?.trim() || "in_progress") as NewWorkState;
+  if (!NEW_WORK_STATES.includes(state)) return `new work starts as to do or in progress, not "${state}"`;
+  w.newValue = state;
+  w.needsOk = true;
+  return null;
+}
+
 const kindAllowed: Check = [
   11,
   (w, s) => {
     if (w.kind === "update") return null;
+    if (w.kind === "new_work") return newWorkGuard(w);
     const kind = w.braidKind as BraidKind;
     if (!BRAID_KINDS.includes(kind)) return `"${w.braidKind ?? ""}" is not a BRAID kind`;
     // Any member may say it is cleared: with the right it resolves, without it it is a proposal (S13)
@@ -564,7 +583,7 @@ const noHealthNoJudgement: Check = [
       return null;
     }
     if (w.kind === "update") return null;
-    const said = `${quote}\n${w.p.braidTitle ?? ""}`;
+    const said = `${quote}\n${w.p.braidTitle ?? ""}\n${w.p.workTitle ?? ""}`;
     if (HEALTH.some((h) => mentions(said, h))) return "Atlas keeps health out of project logs; the private care route is there if you want it";
     if (JUDGEMENTS.some((j) => mentions(said, j))) {
       const named = s.ctx.projects.flatMap((p) => p.people).find((person) => mentions(said, person.name) || mentions(said, person.name.split(" ")[0]));
@@ -701,7 +720,9 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     // Checks 3 and 12 drop every other target; reaching here means one of them was skipped
     else throw new Error(`check ${t.type === "entry" ? 12 : 3} let through an update to ${describe(t)}`);
   }
-  if (w.kind !== "update") {
+  if (w.ask) draft.ask = { ownerId: w.ask };
+  if (w.kind === "new_work") draft.newWork = { title: w.p.workTitle!.trim(), state: w.newValue as NewWorkState };
+  if (w.kind !== "update" && w.kind !== "new_work") {
     const title = w.match && w.matchState === "same_as" ? w.match.entry.title : w.p.braidTitle?.trim() || s.quoteText(w);
     draft.braid = { kind: w.braidKind as BraidKind, title, match: w.matchState, matchEntryId: w.match?.entry.id ?? null };
     if (w.match) draft.braid.seenState = w.match.entry.state; // compared again at save (E83)
@@ -743,6 +764,7 @@ function start(p: RawProposal): Work {
     options: null,
     outcome: null,
     supersedes: null,
+    ask: null,
   };
 }
 

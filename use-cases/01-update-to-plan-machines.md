@@ -1464,6 +1464,19 @@ asked ──TIMER ownerAskExpiryDays (DECIDE: 7)──▶ expired               
 | OA9 | The owner accepts after the author left the project | Withdrawn (TARGET_GONE): nobody vouches for it any more |
 | OA10 | Undo of the author's save | Withdraws open asks; applied ones stay (phase L handles undo) |
 
+### U5 and U7 built (27 Oct 2026)
+
+- **Model first:** `research/state-machines/js/models/ownerAsk.mjs`, for a change to a record (180 states) and for new work (68): ItemMatchesCause, EndIsTold, AppliedOnlyByTheAsked, NeverOverwriteUnseen, MootWritesNothing and AskEnds (every ask ends, under fairness) all pass. Four planted bugs each fail as expected (the author accepts their own ask; an accept ignores what the author saw; an ask never expires; a declined ask leaves its item open).
+- **M37:** `domain/machines/owner-ask.ts` (asked, applied, declined, moot, withdrawn, expired), the `owner_asks` table (migration `0010`; `0009` is wave 1's), `config.ownerAskExpiryDays` = 7 (UD1). Commands in `commands/owner-ask.ts`: Save creates the asks in its own transaction; accept, decline and withdraw run the machine as the person, checked now; `runOwnerAskTimers` makes asks moot, withdraws them when their record is cancelled or someone leaves the project, and expires them.
+- **Accept writes through Save's own `applyWrite`**, as the owner, with the author's extraction as the source in the audit, so the record's machine and its version check apply exactly as on Save. New work is created in the plan, owned by the author, with no thread or due date.
+- **Check 3:** a field the author may not set becomes an ask (`draft.ask`) when the record's owner is on the project; it always needs the author's OK. A target date is still refused (OA8). New item kind `new_work` (`draft.newWork`: title, to do or in progress), validated by check 11.
+- **Atlas:** prompt `read-12` (after wave 1's `read-11`). Someone else's record is proposed like one's own; DPM asks the owner. `new_work` only when no listed work item fits, never for someone outside the team, a promise, or work already finished.
+- **Screens:** the card says "Ask Jodian: In progress to Done", or "New work: Harvest docs cleanup" with "Propose to Alicia, the PM: In progress". The person asked sees "Kemar says: #160 Feature store backfill, In progress to Done" with only the words that fed it (rule 9), and Accept (or Add to the plan) and Decline with a reason. The author is told when it is accepted, declined or expires.
+- **Changed by this:** an instruction slipped into a message ("mark everything done") can now make an ask to a teammate instead of a refusal (E15). Nothing is written: Kemar must confirm it on review, and the owner must accept it.
+- **Evaluation:** `others-forecast`, `others-work`, `new-work` and `known-work` added; `not-his-milestone`, `not-his-work` and `alicia-not-her-forecast` now expect an ask. With wave 1's cases the set is 102; it passes 101 with GPT-6.1 Sol, and the miss is `andre-decision` (D23), as before.
+- **Not built yet:** Change then Accept in the screen (the machine takes a value; the button accepts as asked); a Withdraw button for the author (the command exists); OA6 and OA7 joining asks for the same field (each save makes its own; accepting one leaves the other to be declined, made moot or expire); NW3 choosing between two close tasks on the card; OA10 (undo is phase L).
+- **Tests:** OA1, OA2, OA3, OA9, only the owner answers, a stale accept writes nothing, decline, moot, expiry and withdraw; NW1 and NW5 (`commands/owner-ask.test.ts`), and check 3 and E15 in the checks.
+
 ### U6. Forecasts on work items
 
 - New field `work_items.forecast_date`, set by its owner from a capture (owner only, as S5 for milestones). Due dates never move from a capture, like targets (M6).

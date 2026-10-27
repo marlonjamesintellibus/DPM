@@ -59,6 +59,7 @@ import { ownsBlockedWork } from "./braid";
 import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
+import { createOwnerAsks } from "./owner-ask";
 
 type CaptureRow = typeof t.captures.$inferSelect;
 type Actor = { type: "person" | "atlas" | "rule" | "system"; id: string | null };
@@ -824,7 +825,7 @@ export type SaveResult =
       evaluations: Map<string, Evaluation>;
     };
 
-type SaveScope = {
+export type SaveScope = {
   tx: Tx;
   now: Date;
   authorId: string;
@@ -899,8 +900,11 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
   }
 }
 
-/** Runs one planned write through its record's machine, with the author as actor. Returns the project it touched. */
-async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string | null> {
+/**
+ * Runs one planned write through its record's machine, with the author as actor. Returns the project it touched.
+ * Also used by M37 when an owner accepts (section 20, U5), with the owner as `authorId`.
+ */
+export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string | null> {
   const { tx, now } = s;
   const item = s.byId.get(w.itemId)!;
   switch (w.target.type) {
@@ -1260,6 +1264,9 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
         await applyBraid(s, projectId, intents);
         touched.add(projectId);
       }
+      // Section 20, U5 and U7: someone else's record, or new work, asks the person with the right (M37)
+      await createOwnerAsks(tx, ctx.now, { id: captureId, authorId }, plan.asks);
+      for (const a of plan.asks) touched.add(a.projectId);
     });
     await syncReminder(tx, ctx.now, authorId, captureId, false, true);
     // Rules run after the change, as the author, so items their own save resolved close as acted

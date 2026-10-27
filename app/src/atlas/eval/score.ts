@@ -6,7 +6,10 @@ import { checkQuestion, type RawQuestion } from "../../domain/question";
 import type { EvalCase } from "./cases";
 
 export function itemKey(i: ExtractedItemDraft): string {
+  // Section 20, U5 and U7: someone else's record asks its owner; work with no record is new work
+  if (i.target && i.ask) return `ask:${i.target.id}.${i.target.field}=${i.target.newValue}`;
   if (i.target) return `upd:${i.target.id}.${i.target.field}=${i.target.newValue}`;
+  if (i.newWork) return `track:${i.projectId ?? "none"}`;
   // Section 20, U3: a risk, assumption or dependency says how it ended
   if (i.kind === "braid_resolve") return i.braid?.outcome ? `outcome:${i.braid.matchEntryId}=${i.braid.outcome}` : `resolve:${i.braid?.matchEntryId}`;
   if (i.braid?.match === "same_as") return `same:${i.braid.matchEntryId}`;

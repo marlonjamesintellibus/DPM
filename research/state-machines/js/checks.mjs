@@ -29,6 +29,7 @@ import { ROWS as OutboundAskRows, PLANTS as OutboundAskPlants } from './rows/out
 import { ROWS as MeetingRows, PLANTS as MeetingPlants } from './rows/meeting.mjs';
 import { ROWS as CoverRequestRows, PLANTS as CoverRequestPlants } from './rows/coverRequest.mjs';
 import { ROWS as EvalCandidateRows, PLANTS as EvalCandidatePlants } from './rows/evalCandidate.mjs';
+import OwnerAsk from './models/ownerAsk.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -108,6 +109,9 @@ export const ROWS = [
   ...CoverRequestRows,
   // Phase S: M36 Eval candidate
   ...EvalCandidateRows,
+  // OwnerAsk is M37, section 20, U5 and U7: a change to someone else's record, or new work, asks the person with the right
+  { spec: 'OwnerAsk', setting: 'a change to a record', model: OwnerAsk({ Kind: 'change' }), expectFail: [] },
+  { spec: 'OwnerAsk', setting: 'new work, for the PM', model: OwnerAsk({ Kind: 'new_work' }), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -209,4 +213,8 @@ export const PLANTS = [
   ...CoverRequestPlants,
   // Phase S: M36 Eval candidate
   ...EvalCandidatePlants,
+  { spec: 'OwnerAsk', setting: 'bug: the author accepts their own ask', model: OwnerAsk({ Bug: 'authorAccepts' }), expectFail: ['AppliedOnlyByTheAsked'] },
+  { spec: 'OwnerAsk', setting: 'bug: accept ignores what the author saw', model: OwnerAsk({ Bug: 'blindAccept' }), expectFail: ['NeverOverwriteUnseen'] },
+  { spec: 'OwnerAsk', setting: 'bug: an ask never expires', model: OwnerAsk({ Bug: 'noExpiry' }), expectFail: ['AskEnds'] },
+  { spec: 'OwnerAsk', setting: 'bug: a declined ask leaves its item open', model: OwnerAsk({ Bug: 'keepItem' }), expectFail: ['ItemMatchesCause'] },
 ];

@@ -27,6 +27,7 @@ import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { ConversationState } from "../domain/machines/conversation";
 import type { EvalCandidateDetail, EvalCandidateState, EvalCause } from "../domain/machines/eval-candidate";
 import type { KindRequestState } from "../domain/machines/kind-request";
+import type { OwnerAskKind, OwnerAskState } from "../domain/machines/owner-ask";
 import type { Answer, AskedQuestion } from "../domain/question";
 import type { LeaveState } from "../domain/machines/leave";
 import type { MembershipState } from "../domain/machines/membership";
@@ -502,6 +503,38 @@ export const evalCandidates = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("eval_candidates_person").on(t.personId, t.state), uniqueIndex("eval_candidates_dedup_live").on(t.dedupKey).where(sql`${t.state} <> 'deleted'`)],
+);
+
+// ---- Asks to the owner (M37, section 20, U5 and U7) ----
+
+export const ownerAsks = pgTable(
+  "owner_asks",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    /** The item whose words it came from: only those words are shown to the person asked (rule 9). */
+    extractionId: text("extraction_id").notNull().references(() => extractions.id),
+    authorId: text("author_id").notNull().references(() => people.id),
+    kind: text("kind").$type<OwnerAskKind>().notNull(),
+    targetType: text("target_type").$type<"work_item" | "milestone" | "handover">(),
+    targetId: text("target_id"),
+    targetField: text("target_field"),
+    ownerId: text("owner_id").references(() => people.id),
+    saw: text("saw"),
+    value: text("value").notNull(),
+    title: text("title"),
+    state: text("state").$type<OwnerAskState>().notNull(),
+    askedOn: day("asked_on").notNull(),
+    decidedBy: text("decided_by").references(() => people.id),
+    decidedOn: day("decided_on"),
+    reason: text("reason"),
+    appliedValue: text("applied_value"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("owner_asks_project_state").on(t.projectId, t.state)],
 );
 
 // ---- Notices (D15) ----

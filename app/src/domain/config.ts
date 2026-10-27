@@ -18,6 +18,8 @@ export const config = {
   // S4: remind about an unfinished review, then expire it
   reviewReminderWorkingHours: 4,
   reviewExpiryDays: 7,
+  // Section 20, UD1: an Ask to the owner (M37) expires after this, like a review
+  ownerAskExpiryDays: 7,
 
   // S7, S8
   captureMaxTries: 3,

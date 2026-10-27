@@ -16,7 +16,8 @@ export function lowerTo(confidence: Confidence, cap: Confidence): Confidence {
 
 /** update: changes a record. braid_new: proposes a new BRAID entry. braid_same: adds a source to an existing one. */
 /** braid_resolve (D7, E93): "Kyle sent the feed" resolves a blocker or issue, or proposes it to those who may. */
-export type ItemKind = "update" | "braid_new" | "braid_same" | "braid_resolve";
+/** new_work (section 20, U7): work with no record, proposed to the PM and Leads. */
+export type ItemKind = "update" | "braid_new" | "braid_same" | "braid_resolve" | "new_work";
 
 /** M14. routed: filed in a project (or personal). choose_project: two or more fit. not_filed: none fits; stays private. */
 export type RoutingState = "routed" | "choose_project" | "not_filed";
@@ -71,7 +72,15 @@ export type ExtractedItemDraft = {
   leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
   /** Section 16: the earlier unsaved item this one corrects; it is withdrawn as replaced when this one is proposed. */
   replaces?: string;
+  /** Section 20, U5: the record is someone else's; saving asks its owner (M37) instead of changing it. */
+  ask?: { ownerId: string };
+  /** Section 20, U7: work with no record, proposed to the PM and Leads (M37), owned by the author. */
+  newWork?: { title: string; state: NewWorkState };
 };
+
+/** The states new work may start in: what the author said they are doing. */
+export const NEW_WORK_STATES = ["to_do", "in_progress"] as const;
+export type NewWorkState = (typeof NEW_WORK_STATES)[number];
 
 /** "a risk", "an issue". */
 export function withArticle(kind: string): string {

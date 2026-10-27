@@ -138,11 +138,10 @@ describe("check 3: field allowed for the author's role and target type", () => {
     expect(r.dropped.reason).toContain("Alicia Campbell");
   });
 
-  it("S5: another person's milestone forecast is theirs to move", () => {
+  it("S5: another person's milestone forecast is theirs to move, so saving asks them (section 20, U5)", () => {
     const ctx = ctxWith("Release 1 slips a day.");
     const r = one(update({ targetId: "ms-release-1", field: "forecast", newValue: "2026-10-31", quote: "Release 1 slips a day" }), ctx);
-    expect(r.dropped.check).toBe(3);
-    expect(r.dropped.reason).toContain("Alicia Campbell");
+    expect(r.item).toMatchObject({ ask: { ownerId: "alicia" }, mark: "needs_ok", target: { id: "ms-release-1", field: "forecast" } });
   });
 
   it("M6: a milestone target never moves from a capture", () => {
@@ -151,12 +150,16 @@ describe("check 3: field allowed for the author's role and target type", () => {
     expect(r.dropped.check).toBe(3);
   });
 
-  it("refuses a value that is not a state, and a teammate's work item, but a PM may update it", () => {
+  it("refuses a value that is not a state; a teammate's work item asks them, but a PM may update it", () => {
     expect(one(update({ targetId: "wi-145", field: "state", newValue: "shipped", quote: "done too" }), KEMAR_CONTEXT).dropped.check).toBe(3);
     const jodians = update({ targetId: "wi-160", field: "state", newValue: "done", quote: "done too" });
-    expect(one(jodians, KEMAR_CONTEXT).dropped.check).toBe(3);
+    expect(one(jodians, KEMAR_CONTEXT).item).toMatchObject({ ask: { ownerId: "jodian" }, mark: "needs_ok" });
+    // OA3: a PM or Lead changes it on save; no ask
     const asPm = { ...KEMAR_CONTEXT, projects: KEMAR_CONTEXT.projects.map((p) => (p.id === "forager" ? { ...p, role: "pm" as const } : p)) };
-    expect(one(jodians, asPm).item?.target?.newValue).toBe("done");
+    expect(one(jodians, asPm).item).toMatchObject({ target: { newValue: "done" } });
+    expect(one(jodians, asPm).item?.ask).toBeUndefined();
+    // A teammate's value is checked the same way before it is asked
+    expect(one(update({ targetId: "wi-160", field: "state", newValue: "shipped", quote: "done too" }), KEMAR_CONTEXT).dropped.check).toBe(3);
   });
 });
 
@@ -492,10 +495,13 @@ describe("whole capture rules", () => {
       ["wi-145", "wi-160", "wi-999", "ms-release-1", "br-pipeline-risk", "forager"].map((targetId) => update({ targetId, field: "state", newValue: "done", quote })),
       ctx,
     );
-    expect(items.map((i) => i.target?.id)).toEqual(["wi-145"]);
+    // Section 20, U5: Jodian's #160 is not changed; saving would ask her, and only once Kemar confirms it on review
+    expect(items.map((i) => [i.target?.id, i.ask?.ownerId ?? null, i.mark])).toEqual([
+      ["wi-145", null, "pre_accepted"],
+      ["wi-160", "jodian", "needs_ok"],
+    ]);
     // Checks 1 to 5 run on every proposal before checks 7 to 14, so drops are listed in that order
     expect(dropped.map((d) => [d.proposal.targetId, d.check])).toEqual([
-      ["wi-160", 3],
       ["wi-999", 1],
       ["ms-release-1", 3],
       ["forager", 3],

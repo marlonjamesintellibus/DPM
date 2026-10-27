@@ -11,6 +11,7 @@ import type { PlanRows } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import type { Conn, Tx } from "./conn";
 import type { KindRequestRecord } from "../domain/machines/kind-request";
+import type { OwnerAskRecord } from "../domain/machines/owner-ask";
 import type { LeaveRecord } from "../domain/machines/leave";
 import * as t from "./schema";
 
@@ -353,6 +354,46 @@ export async function persistBraidLog(
 // ---- Kind change requests (M17, section 13) ----
 
 export type KindRequestRow = typeof t.braidKindRequests.$inferSelect;
+export type OwnerAskRow = typeof t.ownerAsks.$inferSelect;
+
+/** M37: an ask as its row holds it. */
+export function ownerAskOf(row: OwnerAskRow): OwnerAskRecord {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    captureId: row.captureId,
+    extractionId: row.extractionId,
+    authorId: row.authorId,
+    kind: row.kind,
+    target: row.targetType && row.targetId && row.targetField ? { type: row.targetType, id: row.targetId, field: row.targetField } : null,
+    ownerId: row.ownerId,
+    saw: row.saw,
+    value: row.value,
+    title: row.title,
+    state: row.state,
+    askedOn: row.askedOn,
+    decidedBy: row.decidedBy,
+    decidedOn: row.decidedOn,
+    reason: row.reason,
+    appliedValue: row.appliedValue,
+  };
+}
+
+/** Inserts a new ask (version null) or updates it where its version still matches. */
+export async function persistOwnerAsk(tx: Tx, r: OwnerAskRecord, version: number | null, now: Date): Promise<void> {
+  const { id, target, ...rest } = r;
+  const columns = { ...rest, targetType: target?.type ?? null, targetId: target?.id ?? null, targetField: target?.field ?? null };
+  if (version === null) {
+    await tx.insert(t.ownerAsks).values({ id, ...columns, createdAt: now, updatedAt: now });
+    return;
+  }
+  const rows = await tx
+    .update(t.ownerAsks)
+    .set({ ...columns, version: nextVersion(t.ownerAsks.version), updatedAt: now })
+    .where(and(eq(t.ownerAsks.id, id), eq(t.ownerAsks.version, version)))
+    .returning({ id: t.ownerAsks.id });
+  expectOne(rows, `ask ${id}`);
+}
 
 export function kindRequestOf(row: KindRequestRow): KindRequestRecord {
   return {

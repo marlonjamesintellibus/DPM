@@ -11,6 +11,8 @@
 //   resolve:<entryId>                  says a blocker or issue is cleared (D7)
 //   outcome:<entryId>=<outcome>        says a risk, assumption or dependency ended, and how (section 20, U3)
 //   supersede:<entryId>                a new decision that reverses that one (section 20, U4)
+//   ask:<targetId>.<field>=<value>     a change to someone else's record, asked of its owner (section 20, U5)
+//   track:<project|none>               new work with no record, proposed to the PM (section 20, U7)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
 import type { EarlierTurn } from "../../domain/atlas-checks/types";
@@ -123,18 +125,18 @@ export const EVAL_CASES: EvalCase[] = [
   },
   {
     id: "not-his-milestone",
-    about: "a forecast he does not own (check 3)",
+    about: "a forecast he does not own asks Alicia (S5, section 20, U5)",
     text: "Release 1 for the buyer pilot is going to slip a week.",
-    expect: [],
+    expect: ["ask:ms-release-1.forecast*"],
     allow: ["new:risk:forager"],
     forbid: ["upd:ms-release-1*"],
   },
   {
     id: "not-his-work",
-    about: "someone else's work item (check 3)",
+    about: "someone else's work item asks its owner (section 20, U5)",
     text: "Started on the feature store backfill, #160, today.",
-    expect: [],
-    forbid: ["upd:wi-160*"],
+    expect: ["ask:wi-160.state=in_progress"],
+    forbid: ["upd:wi-160*", "track:*"],
   },
   { id: "handover", about: "a handover step", text: "Handed the runbook over to Jodian this morning.", expect: ["upd:ho-runbook.state=handed_over"], allow: ["same:br-pipeline-risk"] },
   {
@@ -165,7 +167,7 @@ export const EVAL_CASES: EvalCase[] = [
     about: "a hedged slip with its cause, no milestone named",
     text: "I think Forager might be delayed by two days as I haven't finished working on the AI pipeline",
     expect: ["new:risk:forager"],
-    allow: ["upd:ms-trend.forecast*"],
+    allow: ["upd:ms-trend.forecast*", "track:forager"],
     forbidWords: ["the author"],
   },
   // Section 20, U2: someone else's promise is a dependency with its date; the author's own is not proposed
@@ -181,7 +183,7 @@ export const EVAL_CASES: EvalCase[] = [
     about: "found in use: a slip and a promise in one message",
     text: "I think Forager might be delayed by two days as I haven't finished working on the AI pipeline, I've spoken with Kyle to update the harvest docs he'll do it tomorrow",
     expect: ["new:risk:forager", "new:dependency:forager@2026-10-21"],
-    allow: ["upd:ms-trend.forecast*"],
+    allow: ["upd:ms-trend.forecast*", "track:forager"],
     forbidWords: ["the author", "by tomorrow"],
   },
   // Section 20, U3: how a risk, assumption or dependency ended; a member's words only propose it
@@ -221,6 +223,34 @@ export const EVAL_CASES: EvalCase[] = [
     braid: [{ projectId: "insights", id: "br-refresh-6am", kind: "decision", title: "Move the daily refresh to 6am", state: "approved" }],
     expect: ["supersede:br-refresh-6am"],
     forbid: ["same:br-refresh-6am"],
+  },
+  // Section 20, U5 and U7: someone else's record asks its owner; work with no record is proposed to the PM
+  {
+    id: "others-forecast",
+    about: "a slip on Alicia's milestone",
+    text: "Release 1 for the buyer pilot is going to slip to the 3rd.",
+    expect: ["ask:ms-release-1.forecast=2026-11-03"],
+    allow: ["new:risk:forager"],
+  },
+  {
+    id: "others-work",
+    about: "a teammate finished their work",
+    text: "Jodian finished the feature store backfill.",
+    expect: ["ask:wi-160.state=done"],
+    allow: ["same:br-pipeline-risk"],
+  },
+  {
+    id: "new-work",
+    about: "work with no task",
+    text: "Started on a harvest docs cleanup for Forager today.",
+    expect: ["track:forager"],
+  },
+  {
+    id: "known-work",
+    about: "a task named in other words is not new work",
+    text: "Working on the trend scoring piece today.",
+    expect: ["upd:wi-147.state=in_progress"],
+    forbid: ["track:*"],
   },
   {
     id: "own-promise",
@@ -329,9 +359,9 @@ export const EVAL_CASES: EvalCase[] = [
   {
     id: "alicia-not-her-forecast",
     author: "alicia",
-    about: "a forecast only its owner moves, even for a PM (S5)",
+    about: "a forecast only its owner moves, even for a PM, so it asks Kemar (S5, section 20, U5)",
     text: "The trend model is going to slip to the 27th.",
-    expect: [],
+    expect: ["ask:ms-trend.forecast=2026-10-27"],
     allow: ["new:risk:forager"],
     forbid: ["upd:ms-trend*"],
   },

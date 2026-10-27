@@ -14,6 +14,7 @@ import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
 import { getLeaveImpact } from "./leave";
+import { describeOwnerAsk } from "./owner-ask";
 import { OUTCOME_SAID } from "./review";
 import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, shortDate, STATUS_LABEL, statusLabel, todayIn } from "./project";
 
@@ -42,7 +43,9 @@ export type InboxCause =
   /** Section 20, U2: a dependency's promised date has passed; a PM or Lead marks it met or late, or gives a new date. */
   | "dependency_due"
   /** Section 20, U3: a member said a risk, assumption or dependency ended; a PM or Lead decides, or keeps it open. */
-  | "confirm_outcome";
+  | "confirm_outcome"
+  /** Section 20, U5 and U7 (M37): someone's update changes the viewer's record, or proposes new work to a PM or Lead. */
+  | "owner_ask";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -54,7 +57,8 @@ export type InboxSubject =
   | { type: "capture"; id: string }
   | { type: "leave"; id: string; projectId: string }
   | { type: "work_item"; id: string; projectId: string }
-  | { type: "kind_request"; id: string; entryId: string; projectId: string };
+  | { type: "kind_request"; id: string; entryId: string; projectId: string }
+  | { type: "owner_ask"; id: string; projectId: string };
 
 export type InboxEntry = {
   id: string;
@@ -88,7 +92,7 @@ export type Inbox = {
 
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
 const WORK_CAUSES: readonly string[] = ["done_no_change", "blocked_without_blocker"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -225,7 +229,32 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
     });
   }
 
-  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact")) {
+  // M37 (section 20, U5 and U7): an update asks the viewer to change their record, or to add new work
+  for (const p of parsed.filter((x) => x.cause === "owner_ask")) {
+    const ask = await describeOwnerAsk(conn, p.subjectId);
+    if (!ask || !reader.mayRead(ask.project.id)) continue;
+    const age = ageOf(ask.at, now, true);
+    const newWork = ask.record.kind === "new_work";
+    items.push({
+      id: p.row.id,
+      causeKey: p.row.causeKey,
+      cause: p.cause,
+      state: p.row.state,
+      title: newWork ? `${ask.author} proposes new work: ${ask.record.title}` : `${ask.author} says: ${ask.what}, ${ask.change}`,
+      why: newWork ? "there is no task for it in the plan; a PM or Lead adds it, or says why not" : "it is yours, so only you change it; accept it, or decline and say why",
+      source: `${ask.author}'s update`,
+      age,
+      sourceLine: `${ask.author}'s update · ${age}`,
+      action: "Decide",
+      group: "today",
+      groupLabel: GROUP_LABEL.today,
+      subject: { type: "owner_ask", id: ask.record.id, projectId: ask.project.id },
+      project: ask.project,
+      createdAt: p.row.createdAt,
+    });
+  }
+
+  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask")) {
     const projectId = projectOf(p);
     const project = projectId ? projects.get(projectId) : undefined;
     if (!project) continue; // not readable any more, or the subject is gone

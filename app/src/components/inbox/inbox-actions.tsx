@@ -3,6 +3,7 @@
 // command as the viewer; the command checks the right, so a button shown here can still be refused.
 import { useState, useTransition } from "react";
 import {
+  acceptAsk,
   acknowledgeEntry,
   addEntry,
   approveEntry,
@@ -11,6 +12,7 @@ import {
   confirmDraft,
   declineEntry,
   decideLeave,
+  declineAsk,
   dropDraft,
   endEntry,
   giveReason,
@@ -172,6 +174,32 @@ export function FollowUpControls({ entryId }: { entryId: string }) {
         </Button>
         <Button variant="secondary" disabled={pending} onClick={() => run(() => dropDraft(entryId))}>
           Drop it
+        </Button>
+      </div>
+      <ActionNote result={result} />
+    </div>
+  );
+}
+
+/** M37: the person asked accepts, or declines and says why; the author is told either way. */
+export function OwnerAskControls({ askId, acceptLabel }: { askId: string; acceptLabel: string }) {
+  const { pending, result, run } = useRun();
+  const [why, setWhy] = useState("");
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button disabled={pending} onClick={() => run(() => acceptAsk(askId))}>
+          {acceptLabel}
+        </Button>
+        <input
+          aria-label="Why not"
+          placeholder="Why not?"
+          value={why}
+          onChange={(e) => setWhy(e.target.value)}
+          className="min-w-0 flex-1 rounded-control border border-line-strong bg-panel px-2 py-1 type-body"
+        />
+        <Button variant="secondary" disabled={pending || !why.trim()} onClick={() => run(() => declineAsk(askId, why))}>
+          Decline
         </Button>
       </div>
       <ActionNote result={result} />

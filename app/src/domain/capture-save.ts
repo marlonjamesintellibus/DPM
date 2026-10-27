@@ -47,6 +47,19 @@ export type BraidIntent = {
   supersedes?: string;
 };
 
+/** Section 20, U5 and U7: what Save asks of the person with the right (M37) instead of writing. */
+export type PlannedAsk = {
+  itemId: string;
+  projectId: string;
+  kind: "change" | "new_work";
+  /** U5: the record, field and owner; null for new work. */
+  target: { type: "work_item" | "milestone" | "handover"; id: string; field: string } | null;
+  ownerId: string | null;
+  saw: string | null;
+  value: string;
+  title: string | null;
+};
+
 export type SaveConflict = { itemId: string; key: string; saw: string | null; current: string | null };
 
 export type SavePlan =
@@ -57,6 +70,7 @@ export type SavePlan =
       outcome: "apply";
       writes: PlannedWrite[];
       braid: BraidIntent[];
+      asks: PlannedAsk[];
       /** The target already has the new value (E2, E25): skipped, shown as no change. */
       noChange: string[];
       /** Applied before (another session, a retry): never applied again. */
@@ -102,8 +116,15 @@ export function planSave(
   const conflicts: SaveConflict[] = [];
   const writes: PlannedWrite[] = [];
   const braid: BraidIntent[] = [];
+  const asks: PlannedAsk[] = [];
   const noChange: string[] = [];
   for (const item of filed) {
+    // Section 20, U7: new work changes no record; it asks the PM and Leads
+    if (item.draft.kind === "new_work" && item.draft.newWork && item.draft.projectId) {
+      const w = item.draft.newWork;
+      asks.push({ itemId: item.id, projectId: item.draft.projectId, kind: "new_work", target: null, ownerId: null, saw: null, value: w.state, title: item.value ?? w.title });
+      continue;
+    }
     const { target, braid: entry, projectId, kind } = item.draft;
     const key = targetKey(item);
     const now = key === null ? null : valueOf(key);
@@ -113,7 +134,10 @@ export function planSave(
       conflicts.push({ itemId: item.id, key, saw: item.saw, current: now });
     } else if (kind === "update" && target && key !== null && item.value !== null) {
       if (alreadyTrue) noChange.push(item.id); // someone got there first
-      else {
+      else if (item.draft.ask && projectId && target.type !== "leave") {
+        // Section 20, U5: someone else's record is asked of its owner (M37), never written by the author
+        asks.push({ itemId: item.id, projectId, kind: "change", target: { type: target.type, id: target.id, field: target.field }, ownerId: item.draft.ask.ownerId, saw: item.saw, value: item.value, title: null });
+      } else {
         writes.push({ itemId: item.id, target: { type: target.type, id: target.id, field: target.field }, key, expected: item.saw, value: item.value });
         view.set(key, item.value);
       }
@@ -135,7 +159,7 @@ export function planSave(
   }
   // All or nothing (S3): one conflict and nothing is applied
   if (conflicts.length && (opts.applyMode ?? config.applyMode) === "all_or_nothing") return { outcome: "conflict", conflicts };
-  return { outcome: "apply", writes, braid, noChange, alreadyApplied, keptPrivate, conflicts };
+  return { outcome: "apply", writes, braid, asks, noChange, alreadyApplied, keptPrivate, conflicts };
 }
 
 /** Moves the items through M3 to match a plan once it has run (or, for a conflict, instead of running). */
@@ -144,7 +168,7 @@ export function settleItems(items: readonly ExtractedItem[], plan: SavePlan): Ex
   const conflicts = new Map(plan.conflicts.map((c) => [c.itemId, c]));
   const done =
     plan.outcome === "apply"
-      ? new Set([...plan.writes.map((w) => w.itemId), ...plan.braid.map((b) => b.itemId), ...plan.alreadyApplied])
+      ? new Set([...plan.writes.map((w) => w.itemId), ...plan.braid.map((b) => b.itemId), ...plan.asks.map((a) => a.itemId), ...plan.alreadyApplied])
       : new Set<string>();
   const noChange = new Set(plan.outcome === "apply" ? plan.noChange : []);
   return items.map((item) => {

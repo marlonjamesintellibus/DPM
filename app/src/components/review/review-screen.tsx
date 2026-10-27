@@ -459,7 +459,7 @@ function ItemCard({
 
 // The label and the item's card already say its kind and where it stands (section 19)
 function DetailCard({ item, review }: { item: ReviewItem; review: Review }) {
-  const label = `${item.braidKind ? `BRAID · ${item.kindLabel.replace("BRAID · ", "")}` : "Update"} · from update ${item.ordinal}`;
+  const label = `${item.kindLabel} · from update ${item.ordinal}`;
   const project = item.routing.projectId ? review.projects.find((p) => p.id === item.routing.projectId)?.name : null;
   return (
     <Card label={label} title={item.title}>

@@ -41,6 +41,7 @@ import {
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
 import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
+import { acceptOwnerAsk, declineOwnerAsk } from "@/commands/owner-ask";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonWithAtlas, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
 import { getDb } from "@/db/client";
@@ -263,6 +264,16 @@ export async function endEntry(entryId: string, outcome: ResolveOutcome): Promis
 /** Section 20, U2: a PM or Lead gives a dependency a new expected date. */
 export async function newExpectedDate(entryId: string, date: string): Promise<ActionResult> {
   return run((ctx) => setExpectedDate(ctx, entryId, date), "New date saved.");
+}
+
+// ---- Asks to the owner (M37, section 20, U5 and U7) ----
+
+export async function acceptAsk(askId: string): Promise<ActionResult> {
+  return run((ctx) => acceptOwnerAsk(ctx, askId), "Accepted.");
+}
+
+export async function declineAsk(askId: string, reason: string): Promise<ActionResult> {
+  return run((ctx) => declineOwnerAsk(ctx, askId, reason), "Declined. They are told why.");
 }
 
 export async function keepEntryOpen(entryId: string): Promise<ActionResult> {

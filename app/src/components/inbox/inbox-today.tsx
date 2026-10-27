@@ -13,11 +13,12 @@ import * as t from "@/db/schema";
 import { withArticle } from "@/domain/shared";
 import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
+import { describeOwnerAsk } from "@/queries/owner-ask";
 import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
 import { OUTCOME_ACT } from "@/queries/review";
 import { OUTCOMES, type ResolveOutcome } from "@/domain/machines/braid-entry";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
-import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
+import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, OwnerAskControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
 
 const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   status_set_with_no_reason: "Delivery check",
@@ -36,6 +37,7 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   blocked_without_blocker: "Delivery check",
   dependency_due: "Dependency due",
   confirm_outcome: "Ended?",
+  owner_ask: "Asked of you",
 };
 
 /** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
@@ -190,6 +192,8 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
       return <EntryDetail item={item} label={label} entryId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
     case "leave":
       return <LeaveDetail item={item} label={label} leaveId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} />;
+    case "owner_ask":
+      return <OwnerAskDetail item={item} label={label} askId={item.subject.id} />;
     case "kind_request":
       return <KindRequestDetail item={item} label={label} entryId={item.subject.entryId} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
     case "work_item":
@@ -219,6 +223,31 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
         </DetailCard>
       );
   }
+}
+
+/** M37 (section 20, U5 and U7): only the words that fed it, what it would change, and Accept or Decline. */
+async function OwnerAskDetail({ item, label, askId }: { item: InboxEntry; label: string; askId: string }) {
+  const ask = await describeOwnerAsk(await getDb(), askId);
+  if (!ask) return null;
+  const newWork = ask.record.kind === "new_work";
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Pair>
+        <Box head={`From ${ask.author}'s update, ${clockTime(ask.at)}`}>
+          <span className="type-caption text-fg-2">{ask.quote ? `"${ask.quote}."` : "Their words are no longer there."}</span>
+        </Box>
+        <Box head={newWork ? `New work on ${ask.project.name}` : ask.what}>
+          <span className="type-caption text-fg-2">{ask.change}</span>
+        </Box>
+      </Pair>
+      <Explain>
+        {newWork
+          ? `Accepting adds it to the plan as ${ask.author}'s, with no thread or due date yet. Nothing changes until you do.`
+          : `Nothing changed when ${ask.author} saved. Accepting changes it as you; if it has changed since ${ask.author} said it, you are told and nothing is written.`}
+      </Explain>
+      <OwnerAskControls askId={askId} acceptLabel={newWork ? "Add to the plan" : "Accept"} />
+    </DetailCard>
+  );
 }
 
 /** M17: a member asked to change an entry's kind; a PM or Lead switches it or keeps it with a reason. */

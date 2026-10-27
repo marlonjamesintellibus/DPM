@@ -118,10 +118,10 @@ describe("getReview privacy (M1)", () => {
 
 // Section 20, U1: what the checks refused and what fed nothing reach the author, and only the author
 describe("Set aside (section 20, U1)", () => {
-  const TEXT = "#145 is done. Jodian finished the feature store backfill. I've spoken with Kyle to update the harvest docs, he'll do it tomorrow.";
+  const TEXT = "#145 is done. Move the trend model target to the 30th. I've spoken with Kyle to update the harvest docs, he'll do it tomorrow.";
   const proposals: RawProposal[] = [
     { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#145", label: "#145" }, targetId: "wi-145", field: "state", newValue: "done", quote: "#145 is done", confidence: "high", rationale: "You finished #145." },
-    { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#160", label: "#160" }, targetId: "wi-160", field: "state", newValue: "done", quote: "Jodian finished the feature store backfill", confidence: "high", rationale: "Jodian finished #160." },
+    { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "trend model", label: "Kemar owns it" }, targetId: "ms-trend", field: "target", newValue: "2026-10-30", quote: "Move the trend model target to the 30th", confidence: "high", rationale: "You move the target." },
   ];
   const extractor: Extractor = { name: "fake", extract: async () => ({ proposals, malformed: [], model: "fake-model", usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 } }) };
 
@@ -136,7 +136,7 @@ describe("Set aside (section 20, U1)", () => {
     const r = await getReview(db, "kemar", await readNote());
     if (!r.found) throw new Error("Kemar should see his own review");
     expect(r.items.map((i) => i.title)).toEqual(["Issue #145 Google Trends connector"]);
-    expect(r.setAside.refused).toEqual([{ reason: "#160 Feature store backfill belongs to Jodian Taylor; ask them to change its state.", quote: "Jodian finished the feature store backfill" }]);
+    expect(r.setAside.refused).toEqual([{ reason: "Moving Trend model's target is a decision for Alicia Campbell.", quote: "Move the trend model target to the 30th" }]);
     expect(r.setAside.unused.map((u) => u.text)).toEqual(["I've spoken with Kyle to update the harvest docs, he'll do it tomorrow"]);
     expect(r.chatLine).toBe("Got it. 1 update for 1 project; 2 parts not used.");
   });

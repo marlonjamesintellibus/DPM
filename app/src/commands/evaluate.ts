@@ -4,7 +4,8 @@
 // calculated status (P6).
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Tx } from "../db/conn";
-import { kindRequestOf, loadBraidLog, loadPlanRows, loadProject, membersOf, persistKindRequest, persistSetStatus, setStatusRecordOf } from "../db/records";
+import { kindRequestOf, loadBraidLog, loadPlanRows, loadProject, membersOf, ownerAskOf, persistKindRequest, persistSetStatus, setStatusRecordOf } from "../db/records";
+import { ownerAskCauses } from "../domain/machines/owner-ask";
 import * as t from "../db/schema";
 import { braidEntryCauses, decidersFor, isOnLog, switchedTo, type BraidEntryRecord, type DecisionPolicy, type ProjectMember } from "../domain/machines/braid-entry";
 import { applyKindRequestEvent, kindRequestCauses } from "../domain/machines/kind-request";
@@ -157,9 +158,14 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
     for (const key of kindRequestCauses(record)) desired.set(key, ownersOf(key, project, entry, members, policy));
   }
 
-  // Every item ever made for this project's causes (the project itself, its BRAID entries, its work)
+  // M37 (section 20, U5 and U7): a live ask is in front of the record's owner, or the PM and Leads for new work
+  const asks = (await tx.select().from(t.ownerAsks).where(eq(t.ownerAsks.projectId, projectId))).map(ownerAskOf);
+  const leads = members.filter((m) => m.role === "pm" || m.role === "lead").map((m) => m.id);
+  for (const a of asks) for (const key of ownerAskCauses(a)) desired.set(key, a.kind === "new_work" ? leads : a.ownerId ? [a.ownerId] : []);
+
+  // Every item ever made for this project's causes (the project itself, its BRAID entries, its work, its asks)
   const allRequests = await tx.select({ id: t.braidKindRequests.id }).from(t.braidKindRequests).where(eq(t.braidKindRequests.projectId, projectId));
-  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id), ...allRequests.map((r) => r.id)]);
+  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id), ...allRequests.map((r) => r.id), ...asks.map((a) => a.id)]);
   const items = (await tx.select().from(t.inboxItems)).filter((i) => subjects.has(i.causeKey.slice(i.causeKey.indexOf(":") + 1)));
   const { opened, closed } = await syncInbox(tx, now, items, desired, opts);
 
