@@ -226,7 +226,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const workIds = ids((d) => (d.target?.type === "work_item" ? d.target.id : null));
   const milestoneIds = ids((d) => (d.target?.type === "milestone" ? d.target.id : null));
   const stepIds = ids((d) => (d.target?.type === "handover" ? d.target.id : null));
-  const entryIds = ids((d) => d.braid?.matchEntryId);
+  const entryIds = [...new Set([...ids((d) => d.braid?.matchEntryId), ...ids((d) => d.braid?.supersedes)])];
   const projectIds = [...new Set([...ids((d) => d.projectId), ...drafts.flatMap((d) => d.options ?? [])])];
 
   const [author] = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(eq(t.people.id, capture.authorId));
@@ -365,7 +365,9 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
             label:
               d.kind === "braid_resolve"
                 ? `${d.braid.outcome ? "Ends" : "Resolves"}: ${matchEntry?.title ?? d.braid.title}`
-                : d.braid.match === "new"
+                : d.braid.supersedes
+                  ? `Replaces: ${entries.find((e) => e.id === d.braid!.supersedes)?.title ?? "an earlier decision"}`
+                  : d.braid.match === "new"
                   ? "New"
                   : `${d.braid.match === "same_as" ? "Same as" : "Related to"}: ${matchEntry?.title ?? d.braid.title}`,
           }

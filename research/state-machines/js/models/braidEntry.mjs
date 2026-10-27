@@ -92,6 +92,8 @@ export default function BraidEntry({
           if (Entries[e] === 'risk' && canDecide(s.role[p], e)) return [decide(t, e, p, 'button')];
           // Planted bug approveByText: "Andre and I agreed" is taken as the approval
           if (says && Bug === 'approveByText') return [decide(t, e, 'atlas', 'text')];
+          // Planted bug supersedeOnReport (section 20, U4): "we're going back to 5am" replaces the approved decision before anyone approves the new one
+          if (Bug === 'supersedeOnReport' && Entries[e] === 'decision') for (const q of partners(e)) if (t.st[q] === 'approved') t.st[q] = 'superseded';
           t.st[e] = 'proposed';
           return [syncItems(t, e)];
         },
@@ -183,6 +185,8 @@ export default function BraidEntry({
       NothingDecidesItself: (s) => ids.every((e) => s.via[e] !== 'timer'),
       // Two conflicting decisions never both stand: approving one supersedes the other
       ConflictsNeverSilent: (s) => Conflicts.every(([a, b]) => !(s.st[a] === 'approved' && s.st[b] === 'approved')),
+      // Section 20, U4: a decision is replaced only by one that was approved (SD1, SD3: a pending or declined reversal replaces nothing)
+      SupersededHasApprovedSuccessor: (s) => ids.every((e) => s.st[e] !== 'superseded' || partners(e).some((q) => s.st[q] === 'approved')),
       // A proposal is always in front of someone who can decide it, or the owner is told nobody can (E91)
       SomeoneIsAsked: (s) =>
         ids.every(

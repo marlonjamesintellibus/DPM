@@ -604,3 +604,42 @@ describe("outcomes from a message (section 20, U3)", () => {
     expect(ended("met", "br-feed-dependency").item?.braid).toMatchObject({ kind: "dependency", outcome: "met" });
   });
 });
+
+// Section 20, U4: a reversed decision names the one it replaces
+describe("a decision that reverses another (section 20, U4)", () => {
+  const SIX = { id: "br-refresh-6am", kind: "decision" as const, title: "Move the daily refresh to 6am" };
+  const reversal = (state: string, projectId = "insights", extra: Partial<RawProposal> = {}) => {
+    const ctx = ctxWith("Andre and I agreed to go back to the 5am refresh.");
+    ctx.projects = ctx.projects.map((p) => (p.id === projectId ? { ...p, braid: [...p.braid, { ...SIX, state }] } : p));
+    return one(
+      braid({
+        braidKind: "decision",
+        braidTitle: "Go back to the 5am refresh",
+        projectId: "insights",
+        routingReason: { basis: "reference", evidence: "Andre", label: "Andre leads Store Insights" },
+        supersedes: SIX.id,
+        quote: "Andre and I agreed to go back to the 5am refresh",
+        ...extra,
+      }),
+      ctx,
+    );
+  };
+
+  it("keeps the decision it replaces, approved or still waiting (E88)", () => {
+    expect(reversal("approved").item?.braid).toMatchObject({ kind: "decision", match: "new", supersedes: SIX.id });
+    expect(reversal("proposed").item?.braid?.supersedes).toBe(SIX.id);
+  });
+
+  it("SD2: one already replaced or withdrawn is not linked; the new decision stands alone", () => {
+    expect(reversal("superseded").item?.braid?.supersedes).toBeUndefined();
+    expect(reversal("declined").item?.braid?.supersedes).toBeUndefined();
+  });
+
+  it("SD5: a decision on another project's log is refused", () => {
+    expect(reversal("approved", "forager").dropped?.reason).toBe(`"Move the daily refresh to 6am" is on Forager 2.0's log; a decision there can only be replaced there`);
+  });
+
+  it("only a new decision replaces a decision", () => {
+    expect(reversal("approved", "insights", { braidKind: "risk" }).item?.braid?.supersedes).toBeUndefined();
+  });
+});

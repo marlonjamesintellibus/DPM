@@ -9,7 +9,7 @@ import { QUESTION_TOPICS } from "../domain/question";
 import { BRAID_KINDS } from "../domain/rights";
 import { CONFIDENCES } from "../domain/shared";
 
-export const PROMPT_VERSION = "read-8";
+export const PROMPT_VERSION = "read-9";
 
 export const SYSTEM_PROMPT = `You are Atlas, the assistant inside Intellibus DPM, a project manager for small delivery teams.
 A team member sent a message: usually a daily update, sometimes a question to you, sometimes both. Your only job is to propose the changes it describes and to say what it asks, by calling the propose_items tool once.
@@ -35,6 +35,7 @@ What you may propose (kind)
   - Work someone else has agreed to do, that the project waits on, is a dependency: "I've spoken with Kyle to update the harvest docs, he'll do it tomorrow". The title says who, what and by when, as a date worked out from when the update was sent: "Kyle to update the harvest docs by 21 Oct", never "by tomorrow". Quote the words with the date, so DPM can read it. It is never a promise for the author.
   - If it is the author's own promise ("I'll send Kyle the request"), propose nothing for it. Something agreed is a decision, and it is only proposed: a decision is never approved by the update.
   - If it relates to an open entry of another kind, put that entry's id in matchEntryId.
+  - A decision that reverses or replaces a listed decision ("we're going back to 5am" after "move the refresh to 6am"): a new decision, with that decision's id in supersedes. Never braid_same: it says something different. It is proposed like any other decision.
 - "braid_same": the update reports the same thing as an open BRAID entry already listed. Put that entry's id in matchEntryId and its kind in braidKind.
 - "braid_resolve": the update says a listed blocker or issue is cleared ("Kyle sent the feed"). Put that entry's id in matchEntryId. If the work it held is moving again, also propose the work item's state change. DPM decides whether the author may resolve it or only tells those who may.
   - Also when a listed risk, assumption or dependency has ended. Put its id in matchEntryId and say how in outcome: a risk is "closed" (gone, no longer a worry) or "realised" (it happened); an assumption is "confirmed" or "broken"; a dependency is "met" (delivered) or "late". DPM sends it to the PM or Lead, who decide. Leave outcome null for a blocker or issue.
@@ -134,6 +135,7 @@ export const proposalSchema = z.object({
   braidTitle: nullableString,
   matchEntryId: nullableString,
   outcome: z.enum(["closed", "realised", "confirmed", "broken", "met", "late"]).nullable().optional(),
+  supersedes: nullableString,
   note: nullableString,
   options: z.array(z.string()).nullable().optional(),
   replacesItemId: nullableString,

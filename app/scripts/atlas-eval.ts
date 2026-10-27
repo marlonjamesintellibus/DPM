@@ -7,7 +7,7 @@ import { scoreCase, type CaseScore } from "../src/atlas/eval/score";
 import { AtlasReadFailed } from "../src/atlas/extractor";
 import { createOpenRouter, DEFAULT_MODEL } from "../src/atlas/openrouter";
 import { PROMPT_VERSION } from "../src/atlas/prompt";
-import { evalContexts } from "../src/atlas/eval/contexts";
+import { caseContext, evalContexts } from "../src/atlas/eval/contexts";
 import type { CheckContext, RawProposal } from "../src/domain/atlas-checks/types";
 import { seededDb } from "../src/test/seeded-db";
 
@@ -33,7 +33,7 @@ async function evalModel(model: string, apiKey: string, cases: typeof EVAL_CASES
   const atlas = createOpenRouter({ apiKey, model, timeoutMs: 120_000 });
   return pool(cases, 4, async (c): Promise<Run> => {
     const started = Date.now();
-    const ctx: CheckContext = { ...contexts[c.author ?? "kemar"], text: c.text, ...(c.earlier ? { earlier: c.earlier } : {}) };
+    const ctx: CheckContext = caseContext(c, contexts);
     try {
       const out = await atlas.extract(ctx);
       return { id: c.id, seconds: (Date.now() - started) / 1000, costUsd: out.usage?.costUsd ?? 0, score: scoreCase(c, out.proposals, ctx, out.question ?? null), malformed: out.malformed.length, proposals: out.proposals };

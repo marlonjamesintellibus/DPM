@@ -47,6 +47,8 @@ export type RawProposal = {
   matchEntryId?: string | null;
   /** braid_resolve on a risk, assumption or dependency: how it ended (section 20, U3). */
   outcome?: string | null;
+  /** braid_new decision: the decision it reverses or replaces (section 20, U4). */
+  supersedes?: string | null;
   /** Ignored: a capture only ever reports or adds a source; the state is never the model's (check 12). */
   braidState?: string | null;
   /** update to state "blocked": what the work waits on ("waiting on Kyle (Sprouts IT)"). */

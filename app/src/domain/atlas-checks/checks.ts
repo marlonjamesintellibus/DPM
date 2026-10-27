@@ -97,6 +97,8 @@ type Work = {
   options: string[] | null;
   /** Section 20, U3: how a risk, assumption or dependency ended. */
   outcome: ResolveOutcome | null;
+  /** Section 20, U4: the decision a new decision reverses. */
+  supersedes: { project: CandidateProject; entry: OpenBraidEntry } | null;
 };
 
 type Scope = ReturnType<typeof scopeOf>;
@@ -467,6 +469,26 @@ const targetBelongs: Check = [
   },
 ];
 
+// Decisions a reversal can replace: approved ones, and (E88) ones still waiting, which the decider then sees side by side
+const REPLACEABLE: readonly string[] = ["approved", "proposed", "more_info"];
+
+/**
+ * Section 20, U4: "we're going back to 5am" names the decision it reverses. It must be a decision in the
+ * same project (SD5); one already replaced or withdrawn is not linked, and the new decision stands alone (SD2).
+ */
+const supersedesDecision: Check = [
+  10,
+  (w, s) => {
+    const id = w.p.supersedes;
+    if (!id || w.kind !== "braid_new" || w.braidKind !== "decision") return null;
+    const m = s.findEntry(id);
+    if (!m || m.entry.kind !== "decision") return null;
+    if (w.routing !== "routed" || w.projectId !== m.project.id) return `"${m.entry.title}" is on ${m.project.name}'s log; a decision there can only be replaced there`;
+    if (REPLACEABLE.includes(m.entry.state)) w.supersedes = m;
+    return null;
+  },
+];
+
 const kindAllowed: Check = [
   11,
   (w, s) => {
@@ -648,6 +670,7 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     draft.braid = { kind: w.braidKind as BraidKind, title, match: w.matchState, matchEntryId: w.match?.entry.id ?? null };
     if (w.match) draft.braid.seenState = w.match.entry.state; // compared again at save (E83)
     if (w.outcome) draft.braid.outcome = w.outcome;
+    if (w.supersedes) draft.braid.supersedes = w.supersedes.entry.id;
     // Section 20, U2: a new dependency keeps the date its promise names, read by the server, never the model.
     // A date already past is what happened, not a promise (DP1: none at all is fine).
     if (w.kind === "braid_new" && w.braidKind === "dependency") {
@@ -683,6 +706,7 @@ function start(p: RawProposal): Work {
     routingReason: "",
     options: null,
     outcome: null,
+    supersedes: null,
   };
 }
 
@@ -692,6 +716,7 @@ const PER_ITEM: Check[] = [
   mark,
   projectIsCandidate,
   targetBelongs,
+  supersedesDecision,
   kindAllowed,
   proposalsStayProposals,
   noHealthNoJudgement,

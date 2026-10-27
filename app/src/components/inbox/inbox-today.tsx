@@ -328,6 +328,8 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
   const sameKind = view.braid.entries.filter((e) => e.kind === entry.kind && e.id !== entry.id && e.onLog);
   const related = entry.links.map((l) => `${KIND_LABEL[l.kind]} · ${l.title}`);
   const said = entry.outcomesProposed;
+  // Section 20, U4: a reversal names the decision it replaces
+  const replaces = entry.links.filter((l) => l.relation === "conflicts_with" && l.kind === "decision");
 
   const source = (
     <Box head={words ? `From ${words.person.name.split(" ")[0]}'s update, ${clockTime(words.at)}` : `Reported by ${entry.reportedBy?.name ?? "someone"}`}>
@@ -340,7 +342,9 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
     <Box head={entry.kind === "decision" ? `Decisions on the ${view.project.name} log` : `Already on the ${view.project.name} log`}>
       <span className="type-caption text-fg-2">
         {entry.kind === "decision"
-          ? `${sameKind.length ? "None conflict." : "None yet."} Atlas checked ${sameKind.length} approved ${sameKind.length === 1 ? "decision" : "decisions"}.`
+          ? replaces.length
+            ? `It replaces ${replaces.map((l) => `"${l.title}" (${l.stateLabel.toLowerCase()})`).join(" and ")}. Approving it supersedes ${replaces.length === 1 ? "that one if it is approved" : "those that are approved"}; a pending one stays for you to decide.`
+            : `${sameKind.length ? "None conflict." : "None yet."} Atlas checked ${sameKind.length} approved ${sameKind.length === 1 ? "decision" : "decisions"}.`
           : `${entry.reportCount > 1 ? `Reported ${entry.reportCount} times.` : "Nothing like it."} Atlas checked ${sameKind.length} open ${KIND_LABEL[entry.kind].toLowerCase()}${sameKind.length === 1 ? "" : "s"}.`}
       </span>
     </Box>
