@@ -51,7 +51,7 @@ describe("getReview: Kemar's note at 9:10am (L16b)", () => {
       [5, "Update", "Leave Kemar Brown", "26 to 30 Oct", "high", "Matches approved leave", "Personal"],
       [6, "Update", "Handover Runbook", "Not done to Handed to Jodian", "low", "Needs your OK", "His handover"],
       [7, "BRAID · Blocker", "Store sales feed access", "Add Kemar as a source (2 reports)", "high", "Ready", "Same subject as #151"],
-      [8, "BRAID · Risk", "Trend model may slip to 24 Oct", "Propose to the PM", "medium", "Needs your OK", "Same quote as #4"],
+      [8, "BRAID · Risk", "Trend model may slip to 24 Oct", "Propose to Alicia, the PM", "medium", "Needs your OK", "Same quote as #4"],
       [9, "BRAID · Risk", "Only Kemar can run the pipeline", "Add as evidence (2 sources)", "medium", "Needs your OK", "Same subject as #5 and #6"],
       [10, "Update", "Issue #208 Weekly sales export", "In progress to Done", "high", "Ready", "\"On Store Insights\""],
       [11, "BRAID · Decision", "Move the daily refresh to 6am", "Propose to the decider", "high", "Ready", "\"On Store Insights\""],

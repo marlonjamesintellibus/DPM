@@ -266,7 +266,10 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       }
       const lands = landsAs(d.braid.kind, authorRole(d.projectId));
       if (lands !== "proposed") return "Add to the log";
-      return d.braid.kind === "decision" ? "Propose to the decider" : "Propose to the PM";
+      if (d.braid.kind === "decision") return "Propose to the decider";
+      // Section 19: say who decides, not only their role
+      const pm = memberships.find((m) => m.projectId === d.projectId && m.role === "pm" && m.state === "member" && m.personId !== capture.authorId);
+      return pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM";
     }
     const target = d.target!;
     const value = item.value ?? target.newValue;

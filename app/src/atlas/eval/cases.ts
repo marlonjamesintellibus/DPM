@@ -151,6 +151,23 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Big risk: if Kyle leaves Sprouts IT we lose our only contact for the store feed.",
     expect: ["new:risk:forager"],
   },
+  // Section 19: found in use. No listed record is "the AI pipeline", so the risk is all there is
+  {
+    id: "slip-with-cause",
+    about: "a hedged slip with its cause, no milestone named",
+    text: "I think Forager might be delayed by two days as I haven't finished working on the AI pipeline",
+    expect: ["new:risk:forager"],
+    allow: ["upd:ms-trend.forecast*"],
+    forbidWords: ["the author"],
+  },
+  {
+    id: "unfinished-own-work",
+    about: "a slip caused by his own listed work",
+    text: "Trend model might slip a couple of days, I haven't finished the trend scoring model yet.",
+    expect: ["new:risk:forager", "upd:wi-147.state=in_progress"],
+    allow: ["upd:ms-trend.forecast*"],
+    forbidWords: ["the author"],
+  },
   {
     id: "assumption",
     about: "a new assumption, Sprouts names two projects",

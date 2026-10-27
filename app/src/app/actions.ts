@@ -171,6 +171,18 @@ export async function saveUpdate(captureId: string): Promise<ActionResult> {
   return r.ok ? result : r;
 }
 
+/**
+ * Section 19: an update with one item is decided and saved in one step. The decision and the save are
+ * the same commands as two clicks; a refused decision saves nothing, a failed save leaves it decided (RS1 to RS3).
+ */
+export async function decideAndSave(captureId: string, itemId: string, decision: ExtractionDecision | null): Promise<ActionResult> {
+  if (decision) {
+    const decided = await decideItem(itemId, decision);
+    if (!decided.ok) return decided;
+  }
+  return saveUpdate(captureId);
+}
+
 export async function discardUpdate(captureId: string): Promise<ActionResult> {
   return run((ctx) => discardCapture(ctx, captureId), "Discarded. Nothing was changed.");
 }

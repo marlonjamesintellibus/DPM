@@ -48,7 +48,7 @@ describe("questions in the chat", () => {
     expect(row.answer!.cards.map((c) => [c.title, c.detail, c.tag])).toEqual([
       ["Milestone Trend model", "Forager 2.0: Forecast 23 Oct to 24 Oct", "Needs your OK · Medium confidence"],
       ["Handover Runbook", "Forager 2.0: Not done to Handed to Jodian", "Needs your OK · Low confidence"],
-      ["Trend model may slip to 24 Oct", "Forager 2.0: Propose to the PM", "Needs your OK · Medium confidence"],
+      ["Trend model may slip to 24 Oct", "Forager 2.0: Propose to Alicia, the PM", "Needs your OK · Medium confidence"],
       ["Only Kemar can run the pipeline", "Forager 2.0: Add as evidence (2 sources)", "Needs your OK · Medium confidence"],
     ]);
     expect(row.answer!.cards.every((c) => c.href === "/review/cap-kemar-0858" && c.accept?.captureId === "cap-kemar-0858")).toBe(true);
