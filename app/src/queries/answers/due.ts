@@ -15,7 +15,9 @@ type Window = { from: IsoDate; to: IsoDate; label: string; late: boolean };
 const TODAY = /\b(today|tiday|tideh)\b/;
 const TOMORROW = /\b(tomorrow|tumaro|tumoro|tomorra)\b/;
 const NEXT_WEEK = /\b(next week|nex week)\b/;
-const SAYS_WINDOW = /\b(today|tiday|tideh|tomorrow|tumaro|tumoro|tomorra|this week|dis week|next week|nex week)\b/;
+const THIS_WEEK = /\b(this week|dis week)\b/;
+// Built from the four, so a spelling added to one is a window for follow-ups too
+const SAYS_WINDOW = new RegExp([TODAY, TOMORROW, NEXT_WEEK, THIS_WEEK].map((r) => r.source).join("|"));
 const SAYS_MILESTONES = /\bmilestones?\b/;
 
 /**

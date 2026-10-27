@@ -157,6 +157,11 @@ describe("due: what's due, and the next milestone", () => {
     expect(dueWords("and on GQ?", ["Wah due tumaro?"])).toBe("Wah due tumaro?");
   });
 
+  it("CQ14 every spelling that sets a window is one a follow-up reads too", () => {
+    const spellings = ["today", "tiday", "tideh", "tomorrow", "tumaro", "tumoro", "tomorra", "this week", "dis week", "next week", "nex week"];
+    for (const w of spellings) expect(dueWords("and on GQ?", [`Wah due ${w}?`, "What's due next week?"]), w).toBe(`Wah due ${w}?`);
+  });
+
   it("phase R: 'Wah due tumaro?' with no model is answered as 'Anything due tomorrow?' is, in standard English", async () => {
     expect((await ask("kemar", "Wah due tumaro?")).answer.text).toBe("1 work item of yours is due tomorrow. The next milestone is Trend model, forecast Fri 23 Oct.");
   });

@@ -11,8 +11,9 @@ import { BRAID_KINDS } from "../domain/rights";
 import { CONFIDENCES } from "../domain/shared";
 
 // read-7: phase R, Jamaican English and Patois are read as written, quotes kept exactly, and what Atlas
-// writes is standard English (decision CD20)
-export const PROMPT_VERSION = "read-7";
+// writes is standard English (decision CD20). read-8: a hedge in Patois is a hedge ("mi tink"), and a
+// project name that is also a word ("di academy") is not the project (JA7)
+export const PROMPT_VERSION = "read-8";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -43,12 +44,13 @@ What you may propose (kind)
 - Propose every change the update states, even when the record already shows that value or the leave is already approved. DPM marks those as "no change" or "matches your leave" for the author.
 
 How the team writes
-- The team writes and speaks Jamaican English and Patois, often both in one sentence ("mi done wid di feed", "di access nuh come yet", "Kyle seh him a go send it likkle more"). Read it as written. It is as clear as standard English and is never a reason for lower confidence.
+- The team writes and speaks Jamaican English and Patois, often both in one sentence ("mi done wid di feed", "di access nuh come yet", "Kyle seh him a go send it likkle more"). Read it as written. It is as clear as standard English and is never by itself a reason for lower confidence.
+- A hedge is a hedge in Patois too: "mi tink", "mi feel seh", "mebbe" and "mussi" are "I think" and "maybe", so the confidence is medium.
 - Negation: "nuh", "nah", "neva", "cyaan", "no" mean it has not happened. "Di access nuh come yet" means the blocker is still open: never a resolve.
 - Tense: "done", "mi done wid", "did done" mean finished. "Soon done" and "almost done" mean still in progress, not done. "A go", "ago" and "gwine" before a verb are the future: a promise or something waited on, not done. "A" before a verb ("mi a work pon it") is happening now.
 - Never correct, translate or tidy their words. quote and evidence are copied exactly as written, spelling and all.
 - Write braidTitle, note, label and rationale in standard English, whatever language the message is in.
-- A word that is also a name ("sprouts" as food) is that person, company or project only when written as a name (capitalised) or next to one of their records.
+- A word that is also a name ("sprouts" as food, "a class at di academy") is that person, company or project only when written as a name (capitalised) or next to one of their records.
 
 Questions
 - If the message asks you for information ("What needs me today?", "What am I working on?", "What's due this week?", "Any updates?", "Who has mentioned me?", "Tell me about Forager"), fill question. Otherwise question is null.

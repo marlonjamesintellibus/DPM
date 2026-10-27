@@ -3,6 +3,7 @@
 // What Atlas says is untrusted, like a proposal: checkQuestion keeps only a known topic, a project the
 // asker is in, and words that are in the message. The answer itself is never written by Atlas; it is
 // read from the asker's own data (queries/answer.ts).
+import { namesProject, numbersOf } from "./atlas-checks/checks";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { GREETING, smallTalk } from "./topics/small-talk";
@@ -57,14 +58,21 @@ function followed(text: string, asked: string, topic: QuestionTopic, earlier: re
 // Phase R: "wah bout GQ?" and "how bout Forager?" follow up too
 const FOLLOW_UP = /^(and|what about|how about|wah bout|wha bout|wat bout|what bout|how bout)\b/i;
 // Section 18: "Tell me about Forager" asks too. Phase R, JA5, JA6: so do the team's question words ("Weh
-// mi fi do today?", "Wah due dis week?", "A who a hold up di feed?", "Anyting block?"). None of them starts
-// a statement, so "Mi done wid #208" and "Di access nuh come yet" stay updates.
+// mi fi do today?", "Wah due dis week?", "A who a hold up di feed?", "Anyting block?"), so "Mi done wid
+// #208" and "Di access nuh come yet" stay updates.
 const ASKING =
-  /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me|wah|wha|weh|wey|wen|a weh|a wah|a wha|a who|a wen|anyting|anybody|tell mi)\b/i;
+  /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me|wah|wha|a weh|weh mi fi|a wah|a wha|a who|a wen|anyting|tell mi)\b/i;
+// Phase R: "wen", "weh", "wey", "anybody" and "unu" are not in the list. They start statements as often as
+// questions ("Wen Kyle sen di access mi wi start #151", "Weh mi lef off yesterday, mi pick it back up today",
+// "Anybody can take #152", "Unu fi check #151"), so they ask only with a "?" like any other message. A Patois
+// yes or no question is shaped like a statement ("Unu have anyting fi mi"); without the "?" the model reads it.
+// Phase R, CQ13: a greeting does not make what follows it a question, with or without a comma ("Wha gwaan
+// everybody, mi done wid #208." and "Wha gwaan mi done wid #208" are updates). "Wha gwaan wid GQ" asks.
+const GREETED = new RegExp(
+  String.raw`${GREETING.source}(?:\s+(?:atlas|everybody|everyone|all|team|unu|people))?(?:\s*[,!.]\s*|\s+(?!\s|(?:wid|with|pon)\b))`,
+  "i",
+);
 // QA4: "Can you mark #145 done?" asks for a change, so it is an update, not a question
-// Phase R: a greeting set off by a comma or stop does not make what follows a question ("Wha gwaan, mi done
-// wid #208." is an update)
-const GREETED = new RegExp(String.raw`${GREETING.source}(?:\s+atlas)?\s*[,!.]\s*`, "i");
 const ASKS_FOR_A_CHANGE = /\b(mark|set|move|change|update|add|log|close|resolve|approve|assign)\b.*\b(#\d+|done|blocked|to\b)/i;
 
 /** The topic a question is about, from its words: what the rule can tell without a model. */
@@ -87,8 +95,7 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   if (FOLLOW_UP.test(text) && !ASKS_FOR_A_CHANGE.test(text) && (text.endsWith("?") || text.split(/\s+/).length <= 6) && !/[.!]\s/.test(text)) {
     // Section 18: small talk is no question to follow, so "Thanks!" in between changes nothing
     const before = [...(ctx.earlier ?? [])].reverse().find((t) => t.asked && t.asked.topic !== "small_talk")?.asked;
-    const lower_ = text.toLowerCase();
-    const named = ctx.projects.find((p) => [p.name, ...p.aliases].some((n) => n && lower_.includes(n.toLowerCase())));
+    const named = namedProject(text, ctx.projects);
     if (!before) return { asked: text, topic: "unclear", projectId: null };
     const topic = (QUESTION_TOPICS as readonly string[]).includes(before.topic) ? (before.topic as QuestionTopic) : "other";
     return { asked: text, topic, projectId: named?.id ?? null };
@@ -96,9 +103,17 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   const sentences = text.split(/(?<=[.!?])\s+|\n+/).filter((s) => s.trim());
   if (sentences.length !== 1) return null;
   if (!(text.endsWith("?") || ASKING.test(text.replace(GREETED, ""))) || ASKS_FOR_A_CHANGE.test(text)) return null;
-  const lower = text.toLowerCase();
-  const project = ctx.projects.find((p) => [p.name, ...p.aliases].some((n) => n && lower.includes(n.toLowerCase())));
-  return { asked: text, topic: topicOf(text), projectId: project?.id ?? null };
+  return { asked: text, topic: topicOf(text), projectId: namedProject(text, ctx.projects)?.id ?? null };
+}
+
+/**
+ * JA7: the project whose name or alias the words say in the shape of a reference ("Mi a teach a class at
+ * di academy" is a word, not GQ & Academy). A question with no capitals at all has no shape to read, so
+ * there a name counts in any case (QA8: "how is forager doing").
+ */
+function namedProject(text: string, projects: CheckContext["projects"]) {
+  const shaped = text !== text.toLowerCase();
+  return projects.find((p) => [p.name, ...p.aliases].some((n) => namesProject(text, shaped ? n : n.toLowerCase(), numbersOf(p))));
 }
 
 /**

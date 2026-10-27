@@ -43,6 +43,10 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
     else used.add(at);
   }
   const forbidden = keys.filter((k) => (c.forbid ?? []).some((p) => matches(p, k)));
+  // E12: a guess, in English or Patois, comes through held for the author's OK, never at High
+  items.forEach((item, i) => {
+    if (item.confidence === "high" && (c.held ?? []).some((p) => matches(p, keys[i]))) forbidden.push(`${keys[i]} at high`);
+  });
   const words = items.flatMap((i) => [i.braid?.title ?? "", i.target?.note ?? "", i.rationale]).join(" \n ").toLowerCase();
   for (const w of c.forbidWords ?? []) if (words.includes(w.toLowerCase())) forbidden.push(`says "${w}"`);
   const extra = keys.filter((k, i) => !used.has(i) && !(c.allow ?? []).some((p) => matches(p, k)) && !forbidden.includes(k));

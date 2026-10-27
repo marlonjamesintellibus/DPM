@@ -27,6 +27,8 @@ export type EvalCase = {
   allow?: string[];
   /** Must never pass the checks. */
   forbid?: string[];
+  /** E12: items that, when they pass, must be below High (held for the author's OK). */
+  held?: string[];
   /** Words that must not appear in any titles, notes or rationales that pass. */
   forbidWords?: string[];
   /** Section 15: the question it asks, after the checks; a list of topics is met by any one. */
@@ -576,6 +578,24 @@ export const EVAL_CASES: EvalCase[] = [
     expect: ["upd:wi-142.state=done", ["same:br-feed-blocker", "upd:wi-151.state=blocked"], "upd:ms-trend.forecast=2026-10-24"],
     allow: ["same:br-feed-blocker", "upd:wi-151.state=blocked", "same:br-feed-dependency", "new:risk:forager"],
     forbid: ["resolve:*"],
+    // "mi tink" is a hedge, as "I think" is in the story (E12)
+    held: ["upd:ms-trend.forecast=*", "new:risk:forager"],
+  },
+  {
+    id: "ja-mussi-done",
+    about: "E12 a Patois hedge on done is held for the author's OK",
+    text: "Mussi #208 done, mi nuh check yet.",
+    expect: [],
+    allow: ["upd:wi-208.state=done"],
+    held: ["upd:wi-208.state=done"],
+  },
+  {
+    id: "ja-soon-done-held",
+    about: "JA2 soon done: if done comes through at all, it waits for the author's OK",
+    text: "#208 soon done.",
+    expect: [],
+    allow: ["upd:wi-208.state=done", "upd:wi-208.state=in_progress"],
+    held: ["upd:wi-208.state=done"],
   },
   {
     id: "ja-risk-english",
@@ -631,6 +651,23 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
     ask: { topic: ["updates", "project_status"], projectId: "insights" },
+  },
+  {
+    id: "ja-academy-word",
+    author: "alicia",
+    about: "JA7 'di academy' as a word is not GQ & Academy",
+    text: "Mi a teach a class at di academy tomorrow but di room nuh book yet.",
+    expect: [],
+    allow: ["new:*"],
+    forbid: ["new:blocker:gq", "new:risk:gq", "new:assumption:gq", "new:issue:gq", "new:dependency:gq", "new:decision:gq"],
+  },
+  {
+    id: "ja-academy-name",
+    author: "alicia",
+    about: "JA7 against it: 'di Academy' written as a name is GQ & Academy",
+    text: "Di Academy room nuh book yet fi tomorrow class.",
+    expect: [["new:issue:gq", "new:blocker:gq", "new:risk:gq"]],
+    allow: ["new:dependency:gq"],
   },
   {
     id: "ja-sprouts-word",

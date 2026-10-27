@@ -26,6 +26,13 @@ describe("scoreCase", () => {
     expect(scoreCase(byId("meetings"), [done], KEMAR_CONTEXT)).toMatchObject({ pass: false, forbidden: ["upd:wi-145.state=done"] });
   });
 
+  it("E12 an item the case holds fails at High; the checks hold a Patois hedge, so it passes", () => {
+    const c = byId("ja-mussi-done");
+    const done = { ...KEMAR_PROPOSALS[0], projectId: "insights", targetId: "wi-208", routingReason: { basis: "target" as const, evidence: "#208", label: "#208" }, quote: "Mussi #208 done" };
+    expect(scoreCase(c, [done], KEMAR_CONTEXT)).toMatchObject({ pass: true, keys: ["upd:wi-208.state=done"] });
+    expect(scoreCase({ ...c, text: "#208 done, mi check it." }, [{ ...done, quote: "#208 done" }], KEMAR_CONTEXT)).toMatchObject({ pass: false, forbidden: ["upd:wi-208.state=done at high"] });
+  });
+
   it("every case is well formed: unique ids, and no key both expected and forbidden", () => {
     expect(new Set(EVAL_CASES.map((c) => c.id)).size).toBe(EVAL_CASES.length);
     expect(EVAL_CASES.length).toBeGreaterThanOrEqual(30);

@@ -219,8 +219,10 @@ describe("capture and proposals (5.1)", () => {
     expect(moves.map((m) => m.action)).toEqual(["RECEIVED", "START", "TRANSCRIBED", "PROPOSALS_READY"]);
   });
 
-  it("JA8 a voice note in heavy Patois with low transcript confidence: items held for an OK, the transcript shown as sent", async () => {
-    // DPM does not transcribe: the Atlas app sends the transcript and how sure it was (atlasTranscript)
+  it("JA8 a voice note in heavy Patois with low transcript confidence: items held for an OK at Medium (E5), the transcript shown as sent", async () => {
+    // DPM does not transcribe: the Atlas app sends the transcript and how sure it was (atlasTranscript).
+    // E5 caps items at Medium, not Low as JA8 says, and M2 has no step to fix a transcript before review yet
+    // (JA8 "shown to fix"): review shows it exactly as sent, so the author fixes the items, not the words.
     const transcript = "Mi done wid di Google Trends connector, but di store feed access still nuh come thru from Kyle.";
     const { captureId } = await createCapture(kemar(), {
       channel: "atlas",

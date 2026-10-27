@@ -211,6 +211,58 @@ describe("phase R: Jamaican English and Patois by the rule", () => {
     expect(ruleQuestion(ctx(text))).toBeNull();
   });
 
+  // CQ13: the "wha" of a greeting is no question word, with or without a comma after it
+  it.each(["Wha gwaan mi done wid #208", "Wha gwaan everybody, mi done wid #208.", "Mawnin mi done wid #208", "Yow Atlas mi done wid #208"])(
+    "CQ13 a greeting then an update is not a question: %s",
+    (text) => {
+      expect(ruleQuestion(ctx(text))).toBeNull();
+    },
+  );
+
+  it("CQ13 a greeting before a question still lets it ask; 'Wha gwaan wid GQ' asks without a '?'", () => {
+    expect(ruleQuestion(ctx("Mawnin wah due dis week"))).toEqual({ asked: "Mawnin wah due dis week", topic: "due", projectId: null });
+    expect(ruleQuestion(ctx("Wha gwaan wid GQ"))).toEqual({ asked: "Wha gwaan wid GQ", topic: "updates", projectId: "gq" });
+  });
+
+  // "wen", "weh", "anybody" and "unu" start statements too, so they ask only with a "?"
+  it.each([
+    "Wen Kyle sen di access mi wi start #151",
+    "Weh mi lef off yesterday, mi pick it back up today",
+    "Anybody can take #152 if dem want",
+    "Unu fi check #151",
+    "Unu have anyting fi mi",
+  ])("a statement that starts like a question is not one: %s", (text) => {
+    expect(ruleQuestion(ctx(text))).toBeNull();
+  });
+
+  it("with a '?' they ask: 'Unu have anyting fi mi?' is needs me", () => {
+    expect(ruleQuestion(ctx("Unu have anyting fi mi?"))).toEqual({ asked: "Unu have anyting fi mi?", topic: "needs_me", projectId: null });
+    expect(ruleQuestion(ctx("Anybody mention mi?"))?.topic).toBe("mentions");
+  });
+
+  it("updates is 'gwaan wid', never 'happen with': a question about one thing is not the news feed", () => {
+    expect(topicOf("what will happen with the budget?")).not.toBe("updates");
+    expect(topicOf("wha happen wid #151?")).not.toBe("updates");
+    expect(topicOf("wha gwaan wid #151?")).toBe("updates");
+  });
+
+  it("mentions is 'call mi name', not 'mi name' alone", () => {
+    expect(topicOf("mi name deh pon #151 now")).not.toBe("mentions");
+    expect(topicOf("a mi name deh pon #151?")).not.toBe("mentions");
+    expect(topicOf("who call mi name?")).toBe("mentions");
+  });
+
+  it("JA7 a project name that is also a word names the project only written as a name", () => {
+    expect(ruleQuestion(ctx("Wah due fi di academy class tomorrow?"))?.projectId).toBeNull();
+    expect(ruleQuestion(ctx("Wah due fi Academy tomorrow?"))?.projectId).toBe("gq");
+    // QA8: a question with no capitals at all has no shape to read
+    expect(ruleQuestion(ctx("wah due fi academy tomorrow?"))?.projectId).toBe("gq");
+    // Next to one of the project's records counts in any case
+    const room = { type: "work_item" as const, id: "wi-301", number: "#301", title: "Room booking", ownerId: "kemar", values: {} };
+    const withRecord = PROJECTS.map((p) => (p.id === "gq" ? { ...p, records: [room] } : p));
+    expect(ruleQuestion({ text: "Wah due pon academy #301?", projects: withRecord })?.projectId).toBe("gq");
+  });
+
   it("JA5 the hello goes to a Patois greeting; thanks gets 'Any time'", () => {
     expect(GREETING.test("wha gwaan?")).toBe(true);
     expect(GREETING.test("mawnin")).toBe(true);
