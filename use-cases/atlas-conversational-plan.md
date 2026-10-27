@@ -119,7 +119,7 @@ proposed ──TIMER command_expiry (DECIDE: 30 minutes)──▶ expired       
 
 ### Built (wave 2)
 
-See `atlas-conversational-wave-2.md`. Card actions run each screen's own command (Mark done and Unblock through the new `commands/work.ts`); typed replies become M20 confirm cards; AC6 and AC7 answer "Say it again with its name" until phase D. Open: W2-D2 and W2-D3.
+See `atlas-conversational-wave-2.md`. Card actions run each screen's own command (Mark done and Unblock through the new `commands/work.ts`); typed replies become M20 confirm cards; AC6 and AC7 answer "Say it again with its name" until phase D. Decided: W2-D2 (no command without an open answer) and W2-D3 (a reminder does not refuse a card).
 
 ## 5. Phase C. Ask why
 
@@ -565,7 +565,7 @@ proposed ──DECLINE──▶ declined                                        
 proposed ──TIMER reminders (S18 rhythm), then vocabExpiryDays──▶ expired                             final
 ```
 
-- Kinds: a project alias ("Academy" for GQ), a contact on the project (Kyle for Store Insights), a person tied to a record.
+- Kinds: a project alias ("Academy" for GQ) and a contact on the project (Kyle for Store Insights). A person tied to a record is dropped for now (CD38): DPM ties people to projects, not records.
 - An alias already used by another project the org can see is refused (it would make routing ambiguous).
 
 ### Edge cases (UN1 to UN10)
@@ -592,7 +592,7 @@ proposed ──TIMER reminders (S18 rhythm), then vocabExpiryDays──▶ expir
 
 ### Built (wave 2)
 
-See `atlas-conversational-wave-2.md`. M30 with UNDO arrows (leave included) and a receipt per save; `why_filed`; M31 for aliases and contacts, refusals kept per asker. Open: W2-D1, W2-D4, W2-D5.
+See `atlas-conversational-wave-2.md`. M30 with UNDO arrows (leave included) and a receipt per save; `why_filed`; M31 for aliases and contacts, refusals kept per asker. Decided: W2-D1 (undo withdraws the save's waiting Asks), W2-D4 (a PM or Lead may approve their own correction), W2-D5 (M31 covers aliases and contacts; "a person tied to a record" is dropped).
 
 ## 15. Phase M. Chasing people for you
 
@@ -941,3 +941,8 @@ Marlon asked for the best defaults to be chosen. Every DECIDE in this plan takes
 | CD31 | JA8: fix a transcript before review? (W-D2) | No: shown exactly as sent, items Medium, corrections go in the items |
 | CD32 | Who sees usage counts from fewer than 5 people? (W-D3) | DPM maintainers see every count; executives get the strict view |
 | CD33 | Does routing by a person need the name to look like a name? (W-D4) | Yes, the CD30 rule (`domain/names.ts`) |
+| CD34 | Undoing a save that asked an owner something (W2-D1) | Its waiting Asks are withdrawn (M37 WITHDRAW); answered ones stay |
+| CD35 | A typed approve with no answer open (W2-D2) | Not a command |
+| CD36 | Does a reminder count as a change that refuses a chat card? (W2-D3) | No: only bookkeeping by a rule since the answer, and the card runs |
+| CD37 | May a PM or Lead approve a correction they proposed? (W2-D4) | Yes, the right checked when they approve |
+| CD38 | M31's "a person tied to a record" (W2-D5) | Dropped for now |

@@ -24,6 +24,11 @@ export async function readReceipt(conn: Conn, captureId: string): Promise<Stored
   return row ? receiptOf(row) : null;
 }
 
+/** W2-D1: how many Asks to an owner a save made that are still waiting; undoing withdraws them. */
+export async function liveAsksOfSave(conn: Conn, captureId: string): Promise<number> {
+  return (await conn.select({ id: t.ownerAsks.id }).from(t.ownerAsks).where(and(eq(t.ownerAsks.captureId, captureId), eq(t.ownerAsks.state, "asked")))).length;
+}
+
 /** "Undo that": the author's last save, whatever came after it. */
 export async function lastSave(conn: Conn, authorId: string): Promise<StoredReceipt | null> {
   const [row] = await conn
@@ -54,6 +59,7 @@ export async function undoViewOf(conn: Conn, viewerId: string, captureId: string
   const [job] = await conn.select().from(t.undos).where(and(eq(t.undos.captureId, captureId), eq(t.undos.ownerId, viewerId)));
   if (job) return { may: false, state: job.state, at: job.updatedAt, jobId: job.id };
   const receipt = await readReceipt(conn, captureId);
-  const may = !!receipt && receipt.authorId === viewerId && receipt.records.length > 0 && withinUndoWindow(receipt.savedAt, now);
+  const may =
+    !!receipt && receipt.authorId === viewerId && (receipt.records.length > 0 || (await liveAsksOfSave(conn, captureId)) > 0) && withinUndoWindow(receipt.savedAt, now);
   return { may, state: null, at: null, jobId: null };
 }

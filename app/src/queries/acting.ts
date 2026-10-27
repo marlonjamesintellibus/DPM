@@ -158,6 +158,22 @@ const DID: Record<string, string> = {
   UNBLOCK: "unblocked this",
 };
 
+/** Rule moves that only keep count and change nothing anyone decides on (W2-D3): a reminder (S18). */
+const BOOKKEEPING = ["REMIND"];
+
+/**
+ * W2-D3: whether everything that happened to the subject since the answer is bookkeeping by a rule, so
+ * a version that moved for a reminder alone does not refuse the command (AC3 is about real changes).
+ * False when nothing is on record, so a version that moved unaudited still refuses.
+ */
+export async function onlyBookkeepingSince(conn: Conn, subject: CommandSubject, since: Date): Promise<boolean> {
+  const rows = await conn
+    .select({ actorType: t.auditEntries.actorType, action: t.auditEntries.action })
+    .from(t.auditEntries)
+    .where(and(eq(t.auditEntries.subjectType, subject.type), eq(t.auditEntries.subjectId, subject.id), gt(t.auditEntries.at, since)));
+  return rows.length > 0 && rows.every((r) => r.actorType === "rule" && BOOKKEEPING.includes(r.action));
+}
+
 /**
  * AC2, AC3: what changed since the answer (`since`, its "as of"), as the record's trail says: "Alicia
  * approved this at 9:52am." Only entries after the answer count, so an older change is never named; the

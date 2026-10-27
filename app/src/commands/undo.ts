@@ -17,11 +17,12 @@ import { applyMilestone } from "../domain/machines/milestone";
 import { applySetStatus } from "../domain/machines/set-status";
 import { applyUndo, keyOf, projectsOf, undoVerdict, type SavedRecord, type SavedRef, type Told, type UndoEvent, type UndoRecord, type UndoRefusal } from "../domain/machines/undo";
 import { applyWorkItem } from "../domain/machines/work-item";
-import { lastSave, readReceipt, RECEIPT_ACTION, type StoredReceipt } from "../queries/undo";
+import { lastSave, liveAsksOfSave, readReceipt, RECEIPT_ACTION, type StoredReceipt } from "../queries/undo";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { syncLeaveImpact } from "./leave";
 import { notice } from "./notices";
+import { withdrawAsksOfSave } from "./owner-ask";
 
 // ---- The receipt, kept by the save (commands/capture.ts) ----
 
@@ -127,8 +128,10 @@ export async function undoInTx(tx: Tx, now: Date, actorId: string, input: { comm
     return { kind: "job", job: jobOf(same) };
   }
   const receipt = input.captureId ? await readReceipt(tx, input.captureId) : await lastSave(tx, actorId);
-  // UN4: their own save only; anyone else's reads as nothing to undo (P10)
-  if (!receipt || receipt.authorId !== actorId || !receipt.records.length) return { kind: "nothing" };
+  // UN4: their own save only; anyone else's reads as nothing to undo (P10). W2-D1: a save made only of
+  // Asks to an owner still has something to take back while they wait
+  if (!receipt || receipt.authorId !== actorId) return { kind: "nothing" };
+  if (!receipt.records.length && !(await liveAsksOfSave(tx, receipt.captureId))) return { kind: "nothing" };
   // UN5: one undo per save, however often it is asked
   const [done] = await tx.select().from(t.undos).where(eq(t.undos.captureId, receipt.captureId));
   if (done) return { kind: "job", job: jobOf(done) };
@@ -156,8 +159,10 @@ export async function undoInTx(tx: Tx, now: Date, actorId: string, input: { comm
   const refusal = await runUndoArrows(tx, now, actorId, receipt, job.id);
   let told: string[] = [];
   if (!refusal) {
+    // W2-D1: the Asks the save made that still wait are taken back too
+    const askProjects = await withdrawAsksOfSave(tx, now, actorId, receipt.captureId);
     // UN3: the deciders' items close as cause gone, as the rules see it now; then the people the save told hear it
-    await evaluateProjects(tx, projectsOf(receipt), now, { actorId });
+    await evaluateProjects(tx, [...new Set([...projectsOf(receipt), ...askProjects])].sort(), now, { actorId });
     told = await tellUndone(tx, now, actorId, receipt);
   }
   // Kept with the move, so the answer says who was told and never more than happened (rule 2 of the plan)

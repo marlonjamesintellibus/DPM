@@ -158,6 +158,27 @@ export function withdrawOwnerAsk(ctx: CommandCtx, askId: string): Promise<OwnerA
 }
 
 /**
+ * Phase L, W2-D1: undoing a save takes back the Asks it made that are still waiting, through M37's own
+ * WITHDRAW arrow as their author, so no owner is left deciding something taken back. An Ask already
+ * answered stays as it is: accepting it was the owner's decision, not part of the save. Returns the
+ * projects whose Asks moved, for the rules to run on.
+ */
+export async function withdrawAsksOfSave(tx: Tx, now: Date, authorId: string, captureId: string): Promise<string[]> {
+  const rows = await tx.select().from(t.ownerAsks).where(and(eq(t.ownerAsks.captureId, captureId), eq(t.ownerAsks.state, "asked")));
+  const projects = new Set<string>();
+  for (const row of rows) {
+    const record = ownerAskOf(row);
+    const actor = { id: authorId, role: await roleOf(tx, authorId, record.projectId) };
+    const r = applyOwnerAskEvent(record, { type: "WITHDRAW" }, { actor, current: await currentValue(tx, record), today: todayOf(now) });
+    if (!r.outcome.ok) continue;
+    await persistOwnerAsk(tx, r.record, row.version, now);
+    await auditAsk(tx, now, r.record, moved(r.outcome), authorId, { undone: true });
+    projects.add(record.projectId);
+  }
+  return [...projects].sort();
+}
+
+/**
  * The daily rule (run by the minute timer, cheap when nothing is asked): an ask whose record already
  * holds the value is moot; one whose record was cancelled, or whose author or owner left the project,
  * is withdrawn (OA9); one older than config.ownerAskExpiryDays expires, and its author is told.

@@ -69,8 +69,8 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-14's words and order (phase C added why; phase L why_filed, correction and undo); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-14");
+  it("the topics come from domain/topics in read-15's words and order (phase C added why; phase L why_filed, correction and undo); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-15");
     expect(SYSTEM_PROMPT).toContain(
       'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );

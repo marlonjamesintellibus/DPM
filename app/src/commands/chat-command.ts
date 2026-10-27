@@ -26,7 +26,7 @@ import {
   type CommandInput,
   type Standing,
 } from "../domain/machines/chat-command";
-import { aboutOf, standingOf, whatChanged } from "../queries/acting";
+import { aboutOf, onlyBookkeepingSince, standingOf, whatChanged } from "../queries/acting";
 import { projectReader } from "../queries/project";
 import { decideBraidEntryIn, keepOpenIn, resolveBraidEntryIn } from "./braid";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, StaleVersion, type CommandCtx } from "./core";
@@ -121,6 +121,12 @@ function auditMove(tx: Tx, now: Date, r: ChatCommandRecord, outcome: Extract<Out
   });
 }
 
+/** When the answer the command came from was given: what "changed since" is measured from. */
+async function answeredAt(tx: Tx, r: ChatCommandRecord): Promise<Date> {
+  const [answer] = await tx.select({ answer: t.captures.answer }).from(t.captures).where(eq(t.captures.id, r.answerCaptureId));
+  return answer?.answer ? new Date(answer.answer.asOf) : r.createdAt;
+}
+
 /**
  * The command's own words for a refusal, read now: AC1 names nothing; AC2 and AC3 say who changed it and
  * when, from what happened to it after the answer was given.
@@ -129,11 +135,8 @@ async function refusalOf(tx: Tx, r: ChatCommandRecord, standing: Standing, now: 
   switch (r.refusedWhy) {
     case "right_lost":
       return rightLostText(r.act);
-    case "changed": {
-      const [answer] = await tx.select({ answer: t.captures.answer }).from(t.captures).where(eq(t.captures.id, r.answerCaptureId));
-      const since = answer?.answer ? new Date(answer.answer.asOf) : r.createdAt;
-      return `${await whatChanged(tx, r.askerId, r.subject, since, now)} Ask again for a fresh answer.`;
-    }
+    case "changed":
+      return `${await whatChanged(tx, r.askerId, r.subject, await answeredAt(tx, r), now)} Ask again for a fresh answer.`;
     default: {
       const why = standing.refusedBy ?? "it could not be done";
       return `${why.charAt(0).toUpperCase()}${why.slice(1)}${/[.!?]$/.test(why) ? "" : "."}`;
@@ -179,8 +182,11 @@ async function runAct(tx: Tx, ctx: CommandCtx, r: ChatCommandRecord): Promise<vo
  * in a savepoint, and its own refusal ("a decline needs a reason", a self-approval the project forbids)
  * makes the command refused with nothing changed. Words still missing leave a card as it was.
  */
-async function decide(tx: Tx, ctx: CommandCtx, r: ChatCommandRecord, event: Extract<ChatCommandEvent, { type: "TAP" | "CONFIRM" }>): Promise<{ record: ChatCommandRecord; outcome: Extract<Outcome<ChatCommandState>, { ok: true }> }> {
-  const standing: Standing = await standingOf(tx, ctx.actorId, r);
+async function decide(tx: Tx, ctx: CommandCtx, seen: ChatCommandRecord, event: Extract<ChatCommandEvent, { type: "TAP" | "CONFIRM" }>): Promise<{ record: ChatCommandRecord; outcome: Extract<Outcome<ChatCommandState>, { ok: true }> }> {
+  const standing: Standing = await standingOf(tx, ctx.actorId, seen);
+  // W2-D3: a version moved only by a reminder is the same record the asker decided on; it runs against the version now
+  const bookkeeping = standing.version !== null && standing.version !== seen.seenVersion && (await onlyBookkeepingSince(tx, seen.subject, await answeredAt(tx, seen)));
+  const r = bookkeeping ? { ...seen, seenVersion: standing.version! } : seen;
   const at = { actorId: ctx.actorId, now: ctx.now, readable: true };
   let next = applyChatCommandEvent(r, event, { ...at, standing });
   if (!next.outcome.ok) throw new CommandRefused(next.outcome.reason);

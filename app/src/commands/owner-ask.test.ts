@@ -8,10 +8,12 @@ import * as t from "../db/schema";
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { getInbox } from "../queries/inbox";
 import { getReview } from "../queries/review";
+import { undoViewOf } from "../queries/undo";
 import { at, seededDb } from "../test/seeded-db";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./capture";
 import { CommandRefused } from "./core";
 import { acceptOwnerAsk, declineOwnerAsk, runOwnerAskTimers, withdrawOwnerAsk } from "./owner-ask";
+import { undoSave } from "./undo";
 
 let db: Db;
 const DAY = 24 * 60;
@@ -127,6 +129,24 @@ describe("an Ask to the owner (M37, section 20, U5)", () => {
     const { askId } = await kemarSays(JODIAN_DONE);
     await withdrawOwnerAsk(as("kemar", 10), askId);
     expect((await ask(askId)).state).toBe("withdrawn");
+  });
+
+  it("W2-D1: undoing a save made only of Asks takes the waiting Ask back, and Jodian is no longer asked", async () => {
+    const { askId } = await kemarSays(JODIAN_DONE);
+    expect(await undoViewOf(db, "kemar", (await ask(askId)).captureId, at(5))).toMatchObject({ may: true });
+    const undone = await undoSave(as("kemar", 5), { commandId: "undo-asks" });
+    expect(undone).toMatchObject({ kind: "job", job: { state: "undone" } });
+    expect((await ask(askId)).state).toBe("withdrawn");
+    expect(await live("jodian")).not.toContain(`owner_ask:${askId}`);
+    expect((await work("wi-160")).state).toBe("in_progress");
+  });
+
+  it("W2-D1: an Ask already answered stays as the owner decided; undo has nothing left to take back", async () => {
+    const { askId } = await kemarSays(JODIAN_DONE);
+    await acceptOwnerAsk(as("jodian", 2), askId);
+    expect(await undoSave(as("kemar", 5), { commandId: "undo-answered" })).toEqual({ kind: "nothing" });
+    expect(await ask(askId)).toMatchObject({ state: "applied" });
+    expect((await work("wi-160")).state).toBe("done");
   });
 
   it("OA1: a forecast on Alicia's milestone asks Alicia, and her accept moves it", async () => {

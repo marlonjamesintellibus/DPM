@@ -2,7 +2,7 @@
 
 **Goes with:** `atlas-conversational-plan.md` (phases B, C and L) and `01-update-to-plan-machines.md` sections 15 to 20
 **Branch:** `atlas-conv/wave-2`, from main at `4719833` (section 20's U5 to U8 included). Not merged into main. Nothing pushed.
-**Status:** built and checked, waiting for review.
+**Status:** built, checked and decided; merged into main.
 
 ## 1. What was built
 
@@ -25,15 +25,15 @@
 - C: a cancelled work item the asker can read was answered as if it did not exist (WY1); "Who approved …" and declined decisions found nothing (WY4); "Why was #145 moved to Friday?" answered about any field, not the one asked (WY6); the WY5 test tested nothing.
 - L: a refused correction was shared by everyone, so its clash could name a project the asker cannot read (UN9, P10). Refusals now belong to the asker.
 
-## 2. Decisions needed
+## 2. Decisions (settled 27 Oct 2026, the recommended answers)
 
-| # | Question | Recommended | What the code does now |
+| # | Question | Decided | Built |
 |---|---|---|---|
-| W2-D1 | Undoing a save that created Asks to the owner (section 20, M37): do they stay? | Withdraw the save's live Asks with a new M37 arrow, so the owner is not left deciding something taken back | They stay asked; a save made only of Asks reads as nothing to undo |
-| W2-D2 | "I approve Kemar's risk" with no answer open: should Atlas make a command at all? | No: commands only when an answer is open (tighten the prompt); the eval case stays as it is | The model makes one; the checks turn it into "There's no answer here to act on yet", so nothing is approved, but the eval counts it as a miss |
-| W2-D3 | A reminder (S18) bumps an entry's version, which refuses a chat command made before it. Should it? | No: reminders and other bookkeeping do not count as a change for AC3 | Any version bump refuses: "This changed at …, after your answer." |
-| W2-D4 | May a PM or Lead approve a correction they proposed for their own project? | Yes, as built (they hold the right, checked when they approve) | Allowed; they are told it waits in their own inbox |
-| W2-D5 | M31's third kind, "a person tied to a record" | Drop it for now: DPM ties people to projects, not records | Not built (alias and contact are) |
+| W2-D1 | Undoing a save that created Asks to the owner (M37) | The save's Asks still waiting are withdrawn through M37's own WITHDRAW arrow, as their author; an Ask already answered stays as the owner decided. A save made only of Asks can be undone | `withdrawAsksOfSave` in `commands/owner-ask.ts`, called by the undo job; `liveAsksOfSave` for the Undo button and "Undo that" |
+| W2-D2 | "I approve Kemar's risk" with no answer open | Not a command: commands only when an answer is open | Prompt `read-15`; the eval case and five phase B cases pass 3 of 3 runs |
+| W2-D3 | A reminder (S18) bumps an entry's version | Bookkeeping is not a change for AC3: when everything since the answer is a rule's REMIND, the command runs against the version now; any other change still refuses | `onlyBookkeepingSince` in `queries/acting.ts`, read by the chat command's guard |
+| W2-D4 | A PM or Lead approving a correction they proposed | Allowed, as built (the right is checked when they approve) | No change |
+| W2-D5 | M31's "a person tied to a record" | Dropped for now: DPM ties people to projects | No change; the plan's M31 lists aliases and contacts only |
 
 ## 3. Corrections for the plan
 

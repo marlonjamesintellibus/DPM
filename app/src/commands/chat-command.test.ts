@@ -15,7 +15,7 @@ import type { CheckContext, RawProposal } from "../domain/atlas-checks/types";
 import { getChatSummary } from "../queries/chat";
 import { at, seededDb } from "../test/seeded-db";
 import { readCapture } from "./atlas";
-import { decideBraidEntry, reportBraidEntry } from "./braid";
+import { decideBraidEntry, reportBraidEntry, runBraidReminders } from "./braid";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./capture";
 import { cancelCommand, confirmCommand, runChatCommandTimers, tapLine } from "./chat-command";
 import { CommandRefused, StaleVersion } from "./core";
@@ -155,6 +155,18 @@ describe("a button on an answer line (confirmed in the same tap)", () => {
     const ran = await tapLine(as("alicia", 2), captureId, line, "approve");
     expect(ran.message).toBe("You asked for more on this at 9:11am. Ask again for a fresh answer.");
     expect((await entry(risk)).state).toBe("more_info"); // as she left it, not approved
+  });
+
+  it("W2-D3: a reminder moved the entry's version, but changed nothing she decides on: the tap still approves", async () => {
+    const risk = await kemarRisk();
+    const { captureId, line } = await aliciaAsks(risk);
+    const before = (await db.select({ version: t.braidEntries.version }).from(t.braidEntries).where(eq(t.braidEntries.id, risk)))[0].version;
+    await runBraidReminders({ db, now: at(3 * 24 * 60) });
+    const after = (await db.select({ version: t.braidEntries.version }).from(t.braidEntries).where(eq(t.braidEntries.id, risk)))[0].version;
+    expect(after).toBeGreaterThan(before); // the reminder did move it
+    const ran = await tapLine(as("alicia", 3 * 24 * 60 + 1), captureId, line, "approve");
+    expect(ran.message).toBe("Approved.");
+    expect((await entry(risk)).state).toBe("open"); // an approved risk is on the log
   });
 
   it("AC5: a button on an answer from three days ago works when nothing changed, and the answer keeps its time", async () => {
