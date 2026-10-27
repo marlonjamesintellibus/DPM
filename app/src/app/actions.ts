@@ -38,7 +38,9 @@ import {
   type ExtractionDecision,
   type Rematch,
 } from "@/commands/capture";
+import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
+import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
 import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { approveLeave, declineLeave } from "@/commands/leave";
@@ -120,6 +122,36 @@ export async function acceptFromChat(captureId: string, itemId: string): Promise
     }
     await decideExtraction(ctx, itemId, { type: "accept" });
   }, "Accepted.");
+}
+
+// ---- Acting from an answer (phase B, M20) ----
+
+// A command that ran says what it did; one refused says why, and it is final (AC1 to AC3)
+async function command(work: (ctx: CommandCtx) => Promise<CommandRun>): Promise<ActionResult> {
+  let ran: CommandRun | null = null;
+  const r = await run(async (ctx) => {
+    ran = await work(ctx);
+  });
+  if (!r.ok || !ran) return r;
+  const { record, message } = ran as CommandRun;
+  return record.state === "refused" ? { ok: false, message } : { ok: true, message };
+}
+
+/**
+ * A button on an answer line: the same command its screen runs, confirmed in the same tap. The right and
+ * the version are checked now, so a button on an old answer still works only if nothing changed (AC5).
+ */
+export async function actOnLine(captureId: string, line: number, act: CommandAct, input?: CommandInput): Promise<ActionResult> {
+  return command((ctx) => tapLine(ctx, captureId, line, act, input ?? null));
+}
+
+/** The confirm card for a reply in words ("Approve the Kyle risk"): confirm it, with the words a decline needs. */
+export async function confirmChatCommand(commandId: string, input?: CommandInput): Promise<ActionResult> {
+  return command((ctx) => confirmCommand(ctx, commandId, input ?? null));
+}
+
+export async function cancelChatCommand(commandId: string): Promise<ActionResult> {
+  return command((ctx) => cancelCommand(ctx, commandId));
 }
 
 // ---- Learning from use (phase S) ----

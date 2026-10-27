@@ -4,7 +4,7 @@ import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { loadItems, loadWorld, orgTagsOf } from "../db/records";
 import * as t from "../db/schema";
-import type { CandidateProject, CandidateRecord, CheckContext, EarlierTurn, ProjectPerson } from "../domain/atlas-checks/types";
+import type { CandidateProject, CandidateRecord, CheckContext, EarlierTurn, OpenAnswer, ProjectPerson } from "../domain/atlas-checks/types";
 import { OPEN_ITEM_STATES, type ItemState } from "../domain/machines/extracted-item";
 import { LIVE_LEAVE } from "../domain/machines/leave";
 import { candidateProjects } from "../domain/machines/membership";
@@ -92,8 +92,10 @@ export async function loadCheckContext(
 
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, input.authorId));
   const earlier = input.captureId ? await loadEarlierTurns(conn, input.captureId) : [];
+  const openAnswer = input.captureId ? await loadOpenAnswer(conn, input.captureId) : null;
   return {
     ...(earlier.length ? { earlier } : {}),
+    ...(openAnswer ? { openAnswer } : {}),
     text: input.text,
     messageAt: input.messageAt,
     transcriptConfidence: input.transcriptConfidence,
@@ -143,4 +145,27 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
     });
   }
   return turns;
+}
+
+/**
+ * Phase B: the answer open in the conversation, whose lines a reply may act on. It is the newest earlier
+ * answer of the author's own in the same conversation, however old (AC5: it still says "as of" its time);
+ * small talk ("Thanks!") does not close it. Lines are numbered as the chat shows them, with the acts each
+ * offered the asker then; the commands check them again when they run.
+ */
+export async function loadOpenAnswer(conn: Conn, captureId: string): Promise<OpenAnswer | null> {
+  const [c] = await conn.select().from(t.captures).where(eq(t.captures.id, captureId));
+  if (!c?.conversationId) return null;
+  const rows = (await conn.select().from(t.captures).where(and(eq(t.captures.conversationId, c.conversationId), eq(t.captures.authorId, c.authorId), ne(t.captures.id, captureId))))
+    .filter((r) => r.answer && r.answer.topic !== "small_talk")
+    .filter((r) => r.messageAt < c.messageAt || (r.messageAt.getTime() === c.messageAt.getTime() && r.receivedAt < c.receivedAt))
+    .sort((a, b) => b.messageAt.getTime() - a.messageAt.getTime() || b.receivedAt.getTime() - a.receivedAt.getTime());
+  const open = rows[0];
+  if (!open?.answer) return null;
+  return {
+    captureId: open.id,
+    asked: open.question?.asked ?? open.text,
+    asOf: open.answer.asOf,
+    lines: open.answer.cards.map((card, i) => ({ line: i + 1, title: card.title, detail: card.detail, subject: card.subject ?? null, acts: (card.actions ?? []).map((a) => a.act) })),
+  };
 }

@@ -2,6 +2,7 @@
 // the model returns through its tool call (build plan 5.1 step 3), untrusted. A CheckContext is
 // what the caller reads from the database for the author: only projects they can file into.
 import type { IsoDate } from "../dates";
+import type { CommandAct, CommandSubject } from "../machines/chat-command";
 import type { LeaveState } from "../machines/leave";
 import type { BraidKind, ProjectRole } from "../rights";
 import type { Confidence, ExtractedItemDraft, ItemKind, TargetType } from "../shared";
@@ -114,7 +115,15 @@ export type CheckContext = {
   leave: { targetId: string; existing: readonly ExistingLeave[] };
   /** Section 16: the author's earlier messages in the same conversation, oldest first, for reading follow-ups. */
   earlier?: readonly EarlierTurn[];
+  /** Phase B: the answer open in this conversation, whose lines a reply may act on ("Approve the Kyle risk"). */
+  openAnswer?: OpenAnswer | null;
 };
+
+/** One line of the open answer as Atlas is shown it: what it is, and what the asker may do on it. */
+export type OpenLine = { line: number; title: string; detail: string | null; subject: CommandSubject | null; acts: readonly CommandAct[] };
+
+/** Phase B: the newest answer in the conversation, as given then (its own "as of"). */
+export type OpenAnswer = { captureId: string; asked: string; asOf: string; lines: readonly OpenLine[] };
 
 /** One earlier message in the conversation: the author's own words, what it asked, and what can still be corrected. */
 export type EarlierTurn = {

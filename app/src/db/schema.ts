@@ -19,8 +19,9 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
-import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome } from "../domain/machines/braid-entry";
+import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome, ResolveOutcome } from "../domain/machines/braid-entry";
 import type { CaptureState } from "../domain/machines/capture";
+import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy } from "../domain/machines/chat-command";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
@@ -417,6 +418,8 @@ export const captures = pgTable("captures", {
   /** Section 15: what it asked, after the checks, and DPM's answer as given then. */
   question: jsonb("question").$type<AskedQuestion>(),
   answer: jsonb("answer").$type<Answer>(),
+  /** Phase B: what Atlas said when a reply decided something but made no card (AC6, AC7, AC9), as said then. */
+  commandNote: text("command_note"),
   version: version(),
   createdAt: created(),
   updatedAt: updated(),
@@ -471,6 +474,42 @@ export const answerFeedback = pgTable(
     updatedAt: updated(),
   },
   (t) => [primaryKey({ columns: [t.captureId, t.personId] })],
+);
+
+/**
+ * M20. A command taken from an answer line in the chat (conversational plan, phase B): a button confirmed
+ * in the same tap, or a reply in words confirmed on a card. done ran the screen's own command, whose audit
+ * entries carry capture_id, so the trail shows it came from the chat.
+ */
+export const chatCommands = pgTable(
+  "chat_commands",
+  {
+    id: text("id").primaryKey(),
+    askerId: text("asker_id").notNull().references(() => people.id),
+    via: text("via").$type<"tap" | "words">().notNull(),
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    answerCaptureId: text("answer_capture_id").notNull().references(() => captures.id),
+    line: integer("line").notNull(),
+    act: text("act").$type<CommandAct>().notNull(),
+    subjectType: text("subject_type").$type<"braid_entry" | "work_item" | "project">().notNull(),
+    subjectId: text("subject_id").notNull(),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    proposal: text("proposal").$type<CommandProposal>(),
+    outcome: text("outcome").$type<ResolveOutcome>(),
+    about: jsonb("about").$type<CommandAbout>().notNull(),
+    seenVersion: integer("seen_version").notNull(),
+    input: jsonb("input").$type<CommandInput>(),
+    state: text("state").$type<ChatCommandState>().notNull(),
+    refusedWhy: text("refused_why").$type<RefusedWhy>(),
+    refusal: text("refusal"),
+    decidedAt: instant("decided_at"),
+    /** Once only (rule 6, AC4): "tap:<answer>:<line>:<act>" or "words:<reply>:<line>:<act>". */
+    dedupKey: text("dedup_key").notNull().unique(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("chat_commands_answer").on(t.answerCaptureId), index("chat_commands_capture").on(t.captureId), index("chat_commands_open").on(t.state)],
 );
 
 /** M36. A candidate for the eval set; the text only while logged and while the person allows it (LF1, LF2). */

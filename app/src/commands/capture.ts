@@ -48,6 +48,7 @@ import { applyWorkItem, workItemEventTo, type WorkItemEvent, type WorkItemRecord
 import { mayReport, mayResolve } from "../domain/rights";
 import { applyRouting, planRoutingAtSave, type Author, type Route, type RoutingEvent } from "../domain/routing";
 import { checkQuestion, type Answer, type RawQuestion } from "../domain/question";
+import { checkCommands, type RawCommand } from "../domain/acting";
 import { topicById } from "../domain/topics";
 import type { Confidence, ExtractedItemDraft, MatchState } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
@@ -56,6 +57,7 @@ import { loadCheckContext } from "../queries/check-context";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
+import { commandsFromWords } from "./chat-command";
 import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
@@ -367,6 +369,8 @@ export type ReadMeta = {
   question?: RawQuestion | null;
   /** Section 17: Atlas will word the answer next; until then it is pending. */
   wordWithAtlas?: boolean;
+  /** Phase B: what Atlas says the reply decides on the open answer; checked here like the question. */
+  commands?: readonly RawCommand[] | null;
 };
 
 /** The model failed, timed out or sent something unreadable: wait, then try again (E18, E19). */
@@ -411,7 +415,11 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     const capped = checked.dropped.filter((d) => d.check === "cap").length;
     const items = kept.map((draft) => startItem(`${captureId}-${draft.ordinal}`, draft, { maxConfidence: confidenceCap(record) }));
     const asked = checkQuestion(meta?.question, checkCtx);
-    step({ type: "PROPOSALS_READY", count: items.length + more + capped, asked: asked !== null });
+    // Phase B: a reply that decides something asked Atlas for something, so it is answered (by cards or a
+    // note), never "Nothing in this one changes a project"
+    const commands = checkCommands(meta?.commands, checkCtx.openAnswer);
+    const decides = commands.kept.length > 0 || commands.note !== null;
+    step({ type: "PROPOSALS_READY", count: items.length + more + capped, asked: asked !== null || decides });
 
     if (items.length) {
       await tx.insert(t.extractions).values(
@@ -461,6 +469,11 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
         detail: { because: "replaced", by: item.id },
       });
     }
+    // Phase B: one card per line it decides, each only on a line the asker may still read (AC6 to AC9)
+    if (decides) {
+      const { note } = await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer);
+      if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
+    }
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
     const found = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
@@ -474,7 +487,7 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     }
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)
-      const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped, ...meta, question: asked } : undefined;
+      const detail = m.event === "PROPOSALS_READY" ? { items: items.length, moreFound: record.moreFound, dropped: checked.dropped, ...meta, question: asked, commands: meta?.commands ? commands : undefined } : undefined;
       await auditCapture(tx, ctx.now, captureId, m, atlas, detail);
     }
     for (const item of items) {

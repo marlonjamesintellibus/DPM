@@ -2,9 +2,10 @@
 // call (forced where the model allows it) so the answer has a shape the server can check. The key is read by the caller and only ever
 // goes in the Authorization header; no message, log or error here contains it.
 import type { CheckContext, RawProposal } from "../domain/atlas-checks/types";
+import type { RawCommand } from "../domain/acting";
 import type { RawQuestion } from "../domain/question";
 import { AtlasReadFailed, type Drafter, type Extraction, type Extractor, type Malformed, type Usage } from "./extractor";
-import { proposalSchema, proposeItemsTool, questionSchema, SYSTEM_PROMPT, TOOL_NAME, userMessage } from "./prompt";
+import { commandSchema, proposalSchema, proposeItemsTool, questionSchema, SYSTEM_PROMPT, TOOL_NAME, userMessage } from "./prompt";
 
 export const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_MODEL = "openai/gpt-6.1-sol";
@@ -112,8 +113,8 @@ export function createOpenRouter(options: OpenRouterOptions): Extractor & Drafte
       if (choice?.finish_reason === "length") throw new AtlasReadFailed("bad_output", "the answer was cut off");
       const call = choice?.message?.tool_calls?.find((c) => c.function?.name === TOOL_NAME);
       if (!call?.function?.arguments) throw new AtlasReadFailed("bad_output", "the model did not call propose_items");
-      const { proposals, malformed, question } = parseItems(call.function.arguments);
-      return { proposals, question, malformed, model: completion.model ?? model, usage: usageOf(completion) };
+      const { proposals, malformed, question, commands } = parseItems(call.function.arguments);
+      return { proposals, question, commands, malformed, model: completion.model ?? model, usage: usageOf(completion) };
     },
 
     async draft(system: string, user: string, opts = {}) {
@@ -129,7 +130,7 @@ export function createOpenRouter(options: OpenRouterOptions): Extractor & Drafte
  * Reads the tool arguments. A broken envelope fails the read (it is retried); a single item with
  * the wrong shape is set aside and logged, so one bad item does not lose the rest.
  */
-export function parseItems(args: string): { proposals: RawProposal[]; malformed: Malformed[]; question: RawQuestion | null } {
+export function parseItems(args: string): { proposals: RawProposal[]; malformed: Malformed[]; question: RawQuestion | null; commands: RawCommand[] } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(args);
@@ -153,5 +154,15 @@ export function parseItems(args: string): { proposals: RawProposal[]; malformed:
     if (q.success) question = q.data;
     else malformed.push({ index: -1, issues: `question: ${q.error.issues.map((i) => `${i.path.join(".") || "question"}: ${i.message}`).join("; ")}` });
   }
-  return { proposals, malformed, question };
+  // Phase B: a command without the right shape is set aside like an item; a missing list decides nothing
+  const commands: RawCommand[] = [];
+  const said = (parsed as { commands?: unknown }).commands;
+  if (Array.isArray(said)) {
+    said.forEach((c, index) => {
+      const r = commandSchema.safeParse(c);
+      if (r.success) commands.push(r.data);
+      else malformed.push({ index: -2 - index, issues: `command: ${r.error.issues.map((i) => `${i.path.join(".") || "command"}: ${i.message}`).join("; ")}` });
+    });
+  }
+  return { proposals, malformed, question, commands };
 }

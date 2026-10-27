@@ -43,12 +43,16 @@ export type BraidCommandOpts = {
   seenVersion?: number;
   /** Overrides the project's decision policy (S11, S12); by default it is the project's own setting (D16). */
   policy?: Partial<DecisionPolicy>;
+  /** Phase B, M20: the chat message a command came from, on every audit entry, so the trail shows it came from the chat. */
+  captureId?: string;
 };
 
 export type DecideAct = { type: "approve"; note?: string } | { type: "decline"; reason: string } | { type: "request_info"; question: string };
 
 type Loaded = {
   projectId: string;
+  /** Phase B: the chat message the act came from, on its audit entries. */
+  captureId: string | null;
   policy: Partial<DecisionPolicy>;
   log: BraidLog;
   versions: Versions;
@@ -70,6 +74,7 @@ async function loadEntry(tx: Tx, ctx: CommandCtx, entryId: string, opts: BraidCo
   const role = members.find((m) => m.id === ctx.actorId)?.role ?? null;
   return {
     projectId: row.projectId,
+    captureId: opts.captureId ?? null,
     policy: { ...policyOf(project), ...opts.policy },
     log,
     versions,
@@ -119,6 +124,7 @@ async function commit(
     subjectId: id,
     fromState: outcome.from,
     toState: outcome.to,
+    captureId: loaded.captureId,
     detail: { projectId: loaded.projectId, role: loaded.actor.role, ...detail },
   });
   for (const other of changed.filter((c) => c !== id)) {
@@ -135,6 +141,7 @@ async function commit(
       subjectId: other,
       fromState: from,
       toState: to,
+      captureId: loaded.captureId,
       detail: { projectId: loaded.projectId, via: id },
     });
   }
@@ -157,27 +164,30 @@ function act(ctx: CommandCtx, entryId: string, event: BraidEvent, opts: BraidCom
  * one is left for a person (E88). The reporter learns of it from the entry and its audit trail.
  */
 export function decideBraidEntry(ctx: CommandCtx, entryId: string, decision: DecideAct, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
+  return runCommand(ctx, (tx) => decideBraidEntryIn(tx, ctx, entryId, decision, opts));
+}
+
+/** decideBraidEntry inside a transaction already open: the chat's commands run it in their own (phase B, M20). */
+export async function decideBraidEntryIn(tx: Tx, ctx: CommandCtx, entryId: string, decision: DecideAct, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
   const event: BraidEvent =
     decision.type === "approve"
       ? { type: "APPROVE", note: decision.note }
       : decision.type === "decline"
         ? { type: "DECLINE", reason: decision.reason }
         : { type: "REQUEST_INFO", question: decision.question };
-  return runCommand(ctx, async (tx) => {
-    const loaded = await loadEntry(tx, ctx, entryId, opts);
-    const r = applyToLog(loaded.log, entryId, event, braidCtx(ctx, loaded.actor, loaded.policy));
-    const outcome = moved(r.outcome);
-    const answer = r.log[entryId].answers.at(-1);
-    const result = await commit(tx, ctx, loaded, r.log, outcome, {
-      note: answer?.note ?? null,
-      round: answer?.round,
-      selfApproved: r.log[entryId].selfApproved,
-    });
-    // D15: the reporters hear once it is decided; one approval of two decides nothing yet
-    if (decision.type === "approve" && outcome.to !== "proposed") await noticeReporters(tx, ctx.now, r.log[entryId], ctx.actorId, { act: "approved", note: decision.note });
-    if (decision.type === "decline") await noticeReporters(tx, ctx.now, r.log[entryId], ctx.actorId, { act: "declined", reason: decision.reason });
-    return result;
+  const loaded = await loadEntry(tx, ctx, entryId, opts);
+  const r = applyToLog(loaded.log, entryId, event, braidCtx(ctx, loaded.actor, loaded.policy));
+  const outcome = moved(r.outcome);
+  const answer = r.log[entryId].answers.at(-1);
+  const result = await commit(tx, ctx, loaded, r.log, outcome, {
+    note: answer?.note ?? null,
+    round: answer?.round,
+    selfApproved: r.log[entryId].selfApproved,
   });
+  // D15: the reporters hear once it is decided; one approval of two decides nothing yet
+  if (decision.type === "approve" && outcome.to !== "proposed") await noticeReporters(tx, ctx.now, r.log[entryId], ctx.actorId, { act: "approved", note: decision.note });
+  if (decision.type === "decline") await noticeReporters(tx, ctx.now, r.log[entryId], ctx.actorId, { act: "declined", reason: decision.reason });
+  return result;
 }
 
 /** The reporter answers a request for more information; the entry goes back to the deciders. */
@@ -196,22 +206,25 @@ export function withdrawEntry(ctx: CommandCtx, entryId: string, opts: BraidComma
  * proposal to the owner of the blocked work and the PM or Lead, who confirm it by resolving (E93).
  */
 export function resolveBraidEntry(ctx: CommandCtx, entryId: string, outcome?: ResolveOutcome, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
-  return runCommand(ctx, async (tx) => {
-    const loaded = await loadEntry(tx, ctx, entryId, opts);
-    const { entry, actor } = loaded;
-    const isOwner = entry.kind === "blocker" ? (actor.ownsBlockedWork ?? false) : entry.ownerId === actor.id;
-    const may = actor.role !== null && mayResolve({ role: actor.role, isOwner }, entry.kind);
-    const proposeInstead = !may && (entry.kind === "blocker" || entry.kind === "issue");
-    const event: BraidEvent = proposeInstead ? { type: "PROPOSE_RESOLVE" } : { type: "RESOLVE", outcome };
-    const r = applyToLog(loaded.log, entryId, event, braidCtx(ctx, actor, loaded.policy));
-    const result = moved(r.outcome);
-    let next = r.log;
-    // D10: what follows is drafted for a PM or Lead to confirm in one step, never put on the log by the rule
-    if (event.type === "RESOLVE") next = withFollowUp(next, entryId);
-    const committed = await commit(tx, ctx, loaded, next, result, event.type === "RESOLVE" ? { outcome: outcome ?? null } : {});
-    if (event.type === "RESOLVE") await noticeReporters(tx, ctx.now, next[entryId], ctx.actorId, { act: "resolved" });
-    return committed;
-  });
+  return runCommand(ctx, (tx) => resolveBraidEntryIn(tx, ctx, entryId, outcome, opts));
+}
+
+/** resolveBraidEntry inside a transaction already open (phase B, M20). */
+export async function resolveBraidEntryIn(tx: Tx, ctx: CommandCtx, entryId: string, outcome?: ResolveOutcome, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
+  const loaded = await loadEntry(tx, ctx, entryId, opts);
+  const { entry, actor } = loaded;
+  const isOwner = entry.kind === "blocker" ? (actor.ownsBlockedWork ?? false) : entry.ownerId === actor.id;
+  const may = actor.role !== null && mayResolve({ role: actor.role, isOwner }, entry.kind);
+  const proposeInstead = !may && (entry.kind === "blocker" || entry.kind === "issue");
+  const event: BraidEvent = proposeInstead ? { type: "PROPOSE_RESOLVE" } : { type: "RESOLVE", outcome };
+  const r = applyToLog(loaded.log, entryId, event, braidCtx(ctx, actor, loaded.policy));
+  const result = moved(r.outcome);
+  let next = r.log;
+  // D10: what follows is drafted for a PM or Lead to confirm in one step, never put on the log by the rule
+  if (event.type === "RESOLVE") next = withFollowUp(next, entryId);
+  const committed = await commit(tx, ctx, loaded, next, result, event.type === "RESOLVE" ? { outcome: outcome ?? null } : {});
+  if (event.type === "RESOLVE") await noticeReporters(tx, ctx.now, next[entryId], ctx.actorId, { act: "resolved" });
+  return committed;
 }
 
 /**
@@ -219,15 +232,18 @@ export function resolveBraidEntry(ctx: CommandCtx, entryId: string, outcome?: Re
  * Section 20, U3: a PM or Lead keeps a risk, assumption or dependency open, and whoever said it ended is told (OC2).
  */
 export function keepOpen(ctx: CommandCtx, entryId: string, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
-  return runCommand(ctx, async (tx) => {
-    const loaded = await loadEntry(tx, ctx, entryId, opts);
-    const said = loaded.entry.outcomesProposed.map((x) => x.by);
-    const r = applyToLog(loaded.log, entryId, { type: "KEEP_OPEN" }, braidCtx(ctx, loaded.actor, loaded.policy));
-    const committed = await commit(tx, ctx, loaded, r.log, moved(r.outcome));
-    const by = (await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, ctx.actorId)))[0]?.name.split(" ")[0] ?? "A PM or Lead";
-    await notice(tx, ctx.now, said, `${by} kept "${loaded.entry.title}" open.`, { type: "braid_entry", id: entryId, projectId: loaded.projectId, act: "kept_open" });
-    return committed;
-  });
+  return runCommand(ctx, (tx) => keepOpenIn(tx, ctx, entryId, opts));
+}
+
+/** keepOpen inside a transaction already open (phase B, M20). */
+export async function keepOpenIn(tx: Tx, ctx: CommandCtx, entryId: string, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
+  const loaded = await loadEntry(tx, ctx, entryId, opts);
+  const said = loaded.entry.outcomesProposed.map((x) => x.by);
+  const r = applyToLog(loaded.log, entryId, { type: "KEEP_OPEN" }, braidCtx(ctx, loaded.actor, loaded.policy));
+  const committed = await commit(tx, ctx, loaded, r.log, moved(r.outcome));
+  const by = (await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, ctx.actorId)))[0]?.name.split(" ")[0] ?? "A PM or Lead";
+  await notice(tx, ctx.now, said, `${by} kept "${loaded.entry.title}" open.`, { type: "braid_entry", id: entryId, projectId: loaded.projectId, act: "kept_open" });
+  return committed;
 }
 
 /** The PM has seen the "New blocker" item. */
@@ -285,7 +301,7 @@ export function reportBraidEntry(ctx: CommandCtx, projectId: string, input: { ki
     const id = `br-${randomUUID().slice(0, 8)}`;
     const start = { ...log, [id]: draftEntry({ id, projectId, kind: input.kind, title }) };
     const source = { id: `src-${id}`, personId: ctx.actorId, captureId: null, span: null, at: ctx.now.toISOString() };
-    const loaded: Loaded = { projectId, policy: policyOf(project), log: start, versions, entry: start[id], members, actor: { id: ctx.actorId, role } };
+    const loaded: Loaded = { projectId, captureId: null, policy: policyOf(project), log: start, versions, entry: start[id], members, actor: { id: ctx.actorId, role } };
     const r = applyToLog(start, id, { type: "REPORT", source }, braidCtx(ctx, loaded.actor, loaded.policy));
     return commit(tx, ctx, { ...loaded, log }, r.log, moved(r.outcome), { reportedDirectly: true });
   });

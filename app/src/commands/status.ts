@@ -43,6 +43,8 @@ async function move(
   calculated: Status | null,
   event: SetStatusEvent,
   detail: Record<string, unknown> = {},
+  /** Phase B, M20: the chat message the act came from. */
+  captureId: string | null = null,
 ): Promise<StatusCommandResult> {
   const before = setStatusRecordOf(project);
   const r = applySetStatus(before, calculated, event);
@@ -57,6 +59,7 @@ async function move(
     subjectId: project.id,
     fromState: outcome.from,
     toState: outcome.to,
+    captureId,
     detail: { calculated, setStatus: r.record.setStatus, previousSetStatus: before.setStatus, ...detail },
   });
   const evaluation = await evaluateProject(tx, project.id, ctx.now, { actorId: ctx.actorId });
@@ -99,39 +102,42 @@ export type ReasonInput = { text: string; entryIds: readonly string[]; draftedBy
  * finds the reason, not because this command closes it (M10).
  */
 export function saveReason(ctx: CommandCtx, projectId: string, input: ReasonInput): Promise<StatusCommandResult & { reasonId: string }> {
-  return runCommand(ctx, async (tx) => {
-    const text = input.text.trim();
-    if (!text) throw new CommandRefused("write the reason first");
-    const { project, calculated } = await loadAt(tx, ctx, projectId);
-    const { log } = await loadBraidLog(tx, projectId);
-    const entryIds = [...new Set(input.entryIds)];
-    for (const id of entryIds) {
-      const entry = log[id];
-      if (!entry) throw new CommandRefused(`entry ${id} is not on this project's BRAID log`);
-      if (!isOnLog(entry)) throw new CommandRefused(`"${entry.title}" is ${entry.state}, not on the log; approve it before linking it`);
-    }
-    if (!entryIds.length) throw new CommandRefused("link at least one BRAID entry on the log, or add one to the log first");
+  return runCommand(ctx, (tx) => saveReasonIn(tx, ctx, projectId, input));
+}
 
-    // The reason is stored before evaluate runs, so the rules see it in the same transaction
-    const reasonId = `reason-${projectId}-${randomUUID()}`;
-    await tx.insert(t.statusReasons).values({
-      id: reasonId,
-      projectId,
-      text,
-      draftedByAtlas: input.draftedByAtlas,
-      edited: input.edited,
-      savedBy: ctx.actorId,
-      savedAt: ctx.now,
-    });
-    await tx.insert(t.statusReasonLinks).values(entryIds.map((braidEntryId) => ({ reasonId, braidEntryId })));
-    const result = await move(tx, ctx, project, calculated, { type: "GIVE_REASON", linksOnLog: entryIds.length }, {
-      reasonId,
-      links: entryIds,
-      draftedByAtlas: input.draftedByAtlas,
-      edited: input.edited,
-    });
-    return { ...result, reasonId };
+/** saveReason inside a transaction already open: the chat's Give a reason runs it in its own (phase B, M20). */
+export async function saveReasonIn(tx: Tx, ctx: CommandCtx, projectId: string, input: ReasonInput, opts: { captureId?: string } = {}): Promise<StatusCommandResult & { reasonId: string }> {
+  const text = input.text.trim();
+  if (!text) throw new CommandRefused("write the reason first");
+  const { project, calculated } = await loadAt(tx, ctx, projectId);
+  const { log } = await loadBraidLog(tx, projectId);
+  const entryIds = [...new Set(input.entryIds)];
+  for (const id of entryIds) {
+    const entry = log[id];
+    if (!entry) throw new CommandRefused(`entry ${id} is not on this project's BRAID log`);
+    if (!isOnLog(entry)) throw new CommandRefused(`"${entry.title}" is ${entry.state}, not on the log; approve it before linking it`);
+  }
+  if (!entryIds.length) throw new CommandRefused("link at least one BRAID entry on the log, or add one to the log first");
+
+  // The reason is stored before evaluate runs, so the rules see it in the same transaction
+  const reasonId = `reason-${projectId}-${randomUUID()}`;
+  await tx.insert(t.statusReasons).values({
+    id: reasonId,
+    projectId,
+    text,
+    draftedByAtlas: input.draftedByAtlas,
+    edited: input.edited,
+    savedBy: ctx.actorId,
+    savedAt: ctx.now,
   });
+  await tx.insert(t.statusReasonLinks).values(entryIds.map((braidEntryId) => ({ reasonId, braidEntryId })));
+  const result = await move(tx, ctx, project, calculated, { type: "GIVE_REASON", linksOnLog: entryIds.length }, {
+    reasonId,
+    links: entryIds,
+    draftedByAtlas: input.draftedByAtlas,
+    edited: input.edited,
+  }, opts.captureId ?? null);
+  return { ...result, reasonId };
 }
 
 // ---- Reason draft (M11) ----

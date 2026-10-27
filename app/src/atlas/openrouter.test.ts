@@ -70,7 +70,8 @@ describe("the request", () => {
   });
 
   it("the topics come from domain/topics in read-11's words and order; a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-11");
+    // Phase B changed the prompt (acting on the open answer); the topics are still read-11's
+    expect(PROMPT_VERSION).toBe("read-wave2-b");
     expect(SYSTEM_PROMPT).toContain(
       "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
     );
@@ -112,6 +113,30 @@ describe("the request", () => {
     expect(msg).not.toContain("UWI");
   });
 
+  it("phase B: the open answer's lines go between <answer> tags, numbered, with what the author may do on each", () => {
+    const msg = userMessage({
+      ...KEMAR_CONTEXT,
+      openAnswer: {
+        captureId: "cap-q",
+        asked: "What needs me?",
+        asOf: "2026-10-20T14:10:00.000Z",
+        lines: [{ line: 1, title: "Kemar raised a risk: Trend model may slip to 24 Oct", detail: "Why: risks go on the log only when a PM or Lead approves", subject: { type: "braid_entry", id: "br-1", projectId: "forager" }, acts: ["approve", "decline"] }],
+      },
+    });
+    const answer = msg.slice(msg.indexOf("<answer>\n") + 9, msg.indexOf("\n</answer>\n\n<update>"));
+    expect(JSON.parse(answer)).toEqual({
+      asked: "What needs me?",
+      lines: [{ line: 1, title: "Kemar raised a risk: Trend model may slip to 24 Oct", detail: "Why: risks go on the log only when a PM or Lead approves", record: { type: "braid_entry", id: "br-1" }, actions: ["approve", "decline"] }],
+    });
+    // No answer open: no tags at all
+    expect(userMessage(KEMAR_CONTEXT)).not.toContain("<answer>");
+    const section = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("Acting on the last answer\n"), SYSTEM_PROMPT.indexOf("\nWhich project\n"));
+    expect(section).toContain("act is approve, decline, resolve, give_reason, and only one the line lists in actions");
+    expect(section).toContain("never pick one"); // AC7
+    expect(section).toContain('"Approve all of them": one command for each line'); // AC8
+    expect(section).toContain('"Mark the second one done"'); // a record change stays a proposal
+  });
+
   it("describes every proposal field the checks read", () => {
     const schema = proposeItemsTool.function.parameters as unknown as { properties: { items: { items: { required: string[] } } } };
     expect(schema.properties.items.items.required).toEqual(expect.arrayContaining(["kind", "projectId", "routingReason", "quote", "confidence", "rationale"]));
@@ -134,16 +159,25 @@ describe("reading the answer", () => {
   });
 
   it("an empty list is a real answer: nothing to update (E4)", () => {
-    expect(parseItems('{"items":[]}')).toEqual({ proposals: [], malformed: [], question: null });
+    expect(parseItems('{"items":[]}')).toEqual({ proposals: [], malformed: [], question: null, commands: [] });
   });
 
   it("section 15: reads what the message asks; a question without the right shape is set aside (QA7)", () => {
     const asked = { asked: "What needs me today?", topic: "needs_me", projectId: null };
-    expect(parseItems(JSON.stringify({ items: [], question: asked }))).toEqual({ proposals: [], malformed: [], question: asked });
+    expect(parseItems(JSON.stringify({ items: [], question: asked }))).toEqual({ proposals: [], malformed: [], question: asked, commands: [] });
     const bad = parseItems(JSON.stringify({ items: [], question: { asked: 3, topic: "gossip" } }));
     expect(bad.question).toBeNull();
     expect(bad.malformed).toHaveLength(1);
     expect(bad.malformed[0].issues).toMatch(/^question:/);
+  });
+
+  it("phase B: reads what a reply decides on the open answer; a command without the right shape is set aside", () => {
+    const said = { act: "approve", lines: [2], reason: null };
+    const out = parseItems(JSON.stringify({ items: [], question: null, commands: [said, { act: "delete", lines: ["x"] }] }));
+    expect(out.commands).toEqual([said]);
+    expect(out.malformed).toEqual([{ index: -3, issues: expect.stringMatching(/^command:/) }]);
+    // A model that leaves the list out decides nothing
+    expect(parseItems('{"items":[]}').commands).toEqual([]);
   });
 
   it.each([

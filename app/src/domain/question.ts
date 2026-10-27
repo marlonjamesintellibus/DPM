@@ -5,6 +5,7 @@
 // read from the asker's own data (queries/answer.ts).
 import { namesProject, numbersOf } from "./atlas-checks/checks";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
+import type { CommandSubject, LineAction } from "./machines/chat-command";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { GREETING, smallTalk } from "./topics/small-talk";
 
@@ -127,6 +128,12 @@ export type AnswerCard = {
   tag: string | null;
   href: string;
   accept?: { captureId: string; itemId: string };
+  /** Phase B: the record the line is about, so a reply can refer to it ("the second one"). */
+  subject?: CommandSubject;
+  /** Phase B: what the asker may do on it now, as its screen offers it, with the version they saw (AC3, AC5). */
+  actions?: LineAction[];
+  /** Phase B: an update waiting for review opens it, as the chat's Review button does. */
+  review?: { captureId: string };
 };
 
 /**

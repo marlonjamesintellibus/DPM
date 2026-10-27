@@ -153,10 +153,24 @@ test("6. Alicia's Today: she approves Kemar's risk, then saves the reason linked
   await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
 });
 
-test("7. Andre approves Kemar's decision; it is on the Store Insights log with Andre as approver", async () => {
-  await viewAs("andre", "/?view=inbox");
-  await page.getByRole("link", { name: /Kemar proposed a decision: move the daily refresh to 6am/ }).first().click();
-  await page.getByRole("button", { name: "Approve" }).click();
+test("7. Andre approves Kemar's decision from the chat (phase B); it is on the Store Insights log with Andre as approver", async () => {
+  await viewAs("andre", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What needs me today?");
+  await box.press("Enter");
+  // The line carries its screen's own buttons
+  const line = page.getByRole("listitem").filter({ hasText: "Kemar proposed a decision: move the daily refresh to 6am" });
+  await expect(line.getByRole("button", { name: "Approve" })).toBeVisible();
+  await expect(line.getByRole("button", { name: "Decline" })).toBeVisible();
+  // Acting in words: a typed command makes one confirm card; nothing changes until Andre confirms it
+  await box.fill("Approve the refresh decision");
+  await box.press("Enter");
+  const confirm = page.getByRole("group", { name: 'Approve decision "Move the daily refresh to 6am" on Store Insights?' });
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await confirm.getByRole("button", { name: "Approve" }).click();
+  await expect(confirm.getByText("Approved.")).toBeVisible();
+  // The inbox item closed, as if he had approved it there
+  await page.goto("/?view=inbox");
   await expect(page.getByRole("link", { name: /Kemar proposed a decision/ })).toHaveCount(0);
   await page.goto("/projects/insights?view=table");
   const decision = page.locator("details").filter({ hasText: "Move the daily refresh to 6am" });
@@ -216,4 +230,19 @@ test("P11. Empty sections stay and say why; a wrong address says so", async () =
   await expect(page.getByRole("heading", { name: "Not found, or not yours to see" })).toBeVisible();
   await page.getByRole("link", { name: "Back to Today" }).click();
   await expect(page).toHaveURL(/\/$/);
+});
+
+test("Phase B. Kemar marks his own work done from an answer line, in one tap", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What am I working on?");
+  await box.press("Enter");
+  const line = page.getByRole("listitem").filter({ hasText: "#152 Store feed connector" });
+  await line.getByRole("button", { name: "Mark done" }).click();
+  await expect(line.getByText("Marked done.")).toBeVisible();
+  // A fresh answer no longer lists it; the first answer stays as it was given
+  await box.fill("What am I working on?");
+  await box.press("Enter");
+  await expect(page.getByRole("button", { name: "Copy" })).toHaveCount(2);
+  await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveCount(1);
 });

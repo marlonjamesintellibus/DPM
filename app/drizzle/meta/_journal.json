@@ -71,6 +71,13 @@
       "when": 1793130083454,
       "tag": "0009_learning_from_use",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793132857094,
+      "tag": "0010_chat_commands",
+      "breakpoints": true
     }
   ]
 }

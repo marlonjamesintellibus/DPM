@@ -14,6 +14,7 @@ import { getConversationList, getThread, type ChatCapture, type ConversationRow,
 import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions } from "./reply-tools";
+import { CommandCard, LineActions } from "./command-cards";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
@@ -158,7 +159,8 @@ function YourMessage({ capture }: { capture: ChatCapture }) {
 
 /**
  * Sections 15 and 17: the reply to a question. Atlas's words (or DPM's own) over cards drawn from the
- * asker's data, then the time it was given, Copy, and on the latest reply one or two follow-ups.
+ * asker's data, then the time it was given, Copy, and on the latest reply one or two follow-ups. Phase B:
+ * a line the asker can act on carries its screen's buttons; an update waiting for review opens it.
  */
 function AnswerBlock({ capture, answer, last, helpOn }: { capture: ChatCapture; answer: Answer; last: boolean; helpOn: boolean }) {
   const copy = [answer.text, ...answer.cards.map((c) => `- ${c.title}${c.detail ? `: ${c.detail}` : ""}`), ...(answer.more ? [answer.more.label] : [])].join("\n");
@@ -167,8 +169,8 @@ function AnswerBlock({ capture, answer, last, helpOn }: { capture: ChatCapture; 
       <span>{answer.text}</span>
       {answer.cards.length > 0 && (
         <ul className="flex flex-col overflow-hidden rounded-panel border border-line">
-          {answer.cards.map((c) => (
-            // The whole card is the target and lights up as one, like a button; Accept sits above it
+          {answer.cards.map((c, i) => (
+            // The whole card is the target and lights up as one, like a button; Accept and the line's actions sit above it
             <li
               key={`${c.href}|${c.title}|${c.accept?.itemId ?? ""}`}
               className="group relative flex items-center gap-3 border-b border-line px-3 py-2.5 transition-colors last:border-b-0 hover:bg-hover has-[a:focus-visible]:bg-hover has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-accent has-[a:focus-visible]:ring-inset"
@@ -182,6 +184,16 @@ function AnswerBlock({ capture, answer, last, helpOn }: { capture: ChatCapture; 
                 <span className="relative z-10 flex shrink-0 items-start gap-2">
                   <AcceptItem captureId={c.accept.captureId} itemId={c.accept.itemId} />
                 </span>
+              ) : c.actions?.length && c.subject ? (
+                <span className="relative z-10 flex shrink-0 items-start gap-2">
+                  <LineActions captureId={capture.id} line={i + 1} projectId={c.subject.projectId} actions={c.actions} tapped={capture.taps.findLast((t) => t.line === i + 1) ?? null} />
+                </span>
+              ) : c.review ? (
+                <form action={startReview.bind(null, c.review.captureId)} className="relative z-10 shrink-0">
+                  <button type="submit" className="rounded-control border border-line-strong bg-panel px-2.5 py-1 type-label text-fg-1 hover:bg-hover">
+                    Open review
+                  </button>
+                </form>
               ) : (
                 <span className="shrink-0 transition-transform group-hover:translate-x-0.5">
                   <Icon name="chevron-right-12" tone="text-fg-3" />
@@ -228,11 +240,12 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
       </>
     );
   }
-  if (capture.state === "answered" && capture.answer) {
+  if (capture.state === "answered") {
     return (
       <>
         <YourMessage capture={capture} />
-        <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />
+        {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
+        <CommandsBlock capture={capture} />
       </>
     );
   }
@@ -277,6 +290,20 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
         )}
       </AtlasLine>
       {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
+      <CommandsBlock capture={capture} />
     </>
+  );
+}
+
+/** Phase B: what a reply in words decided: a confirm card per line (AC8), or why it made none (AC6, AC7, AC9). */
+function CommandsBlock({ capture }: { capture: ChatCapture }) {
+  if (!capture.commands.length && !capture.commandNote) return null;
+  return (
+    <AtlasLine>
+      {capture.commandNote && <span>{capture.commandNote}</span>}
+      {capture.commands.map((c) => (
+        <CommandCard key={c.id} view={c} />
+      ))}
+    </AtlasLine>
   );
 }

@@ -40,6 +40,10 @@ export const config = {
   // Section 18, CQ8 to CQ11 (conversational plan, section 23): "Who has mentioned me?" looks this far back
   mentionsDays: 14,
 
+  // Phase B, M20 and CD2 (conversational plan, section 23): a confirm card for a command said in words
+  // ("Approve the Kyle risk") expires unanswered after this many minutes, and nothing changes (AC10)
+  commandExpiryMinutes: 30,
+
   // Phase S, M36 (conversational plan, section 23): a candidate for the eval set nobody accepts or
   // dismisses is deleted after this many days, with the person's words in it
   evalCandidateDays: 30,
