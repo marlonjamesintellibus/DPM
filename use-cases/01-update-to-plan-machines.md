@@ -209,11 +209,12 @@ open -> snoozed -> open     (until a time)
 - **Acted is checked against the cause.** "Save reason" closes the item only because the rule re-runs and finds a reason. The button does not close it directly.
 - Content is computed at read time from the cause ("but the plan says At risk"), so the title is never stale when the calculated status moves.
 - New kinds in this slice (cause key in brackets):
-  - "Kemar raised a risk. Add to the risk log?" for the PM or Lead [`braid_approval:entry`]. Closes when the entry is approved, declined or withdrawn.
-  - "Kemar proposed a decision" for the approvers [`decision_pending:entry`]. Same closing rule.
-  - "New blocker on Forager 2.0" for the PM [`blocker_new:entry`]. Only for a new entry, never for an added source.
-  - "Andre asked for more on your risk" for the reporter [`more_info:entry`].
-  - "No one can approve risks on Store Insights" for the project owner [`no_decider:project`] (E91).
+  - "Kemar raised a risk. Add to the risk log?" (or "Kemar proposed a decision") for the PM or Lead [`approve:<entry>`]. Closes when the entry is approved, declined or withdrawn.
+  - "New blocker on Forager 2.0" for the PM [`blocker_new:<entry>`]. Only for a new entry, never for an added source.
+  - "Andre asked for more on your risk" for the reporter [`more_info:<entry>`].
+  - "No one can approve this on Store Insights" for the project owner [`no_decider:<entry>`] (E91).
+  - "Jodian says the store feed is cleared" for the blocked-work owner and the PM or Lead [`clear:<entry>`] (S13).
+  - Cause keys as built in phase 1b (`app/src/domain/machines/braid-entry.ts`, `braidEntryCauses`).
 
 ### M11. Reason draft (Ask). C5 shape, simplified
 
@@ -493,3 +494,46 @@ The transition tables can also generate the machine map entries, so `dpm-machine
 | S16 | Save with items not filed | Allowed; they stay private to the author |
 | S17 | Standard project roles | PM, Lead, Member |
 | S18 | Reminders for unanswered proposals | 2 working days, then weekly; never auto-decide |
+
+## 8. Found while building phase 1b (26 Oct 2026)
+
+The domain code (`app/src/domain`, 387 tests) follows this doc and the checked models. Building it surfaced the points below. **Decided** items are in the code; **Needs a decision** items run on the default shown until answered.
+
+### Arrows and events added to make drawn moves possible
+
+| Machine | Added | Why |
+|---|---|---|
+| M3 | `ALREADY_TRUE`: ready item to no_change | M4 says an item whose record already has the new value is no_change; M3 had no arrow for it |
+| M5 | `UPDATE_BLOCKED_NOTE`: blocked to blocked | Section 6 item 3 refreshes the note on an already blocked issue |
+| M15 | `PROGRESS` (open to mitigating, open to waiting), `RESOLVE` with an outcome (closed or realised, confirmed or broken, met or late), `PROPOSE_RESOLVE` and `KEEP_OPEN` (S13), `ACKNOWLEDGE` (the PM saw "New blocker"), `REMIND` (S18), `SUPERSEDE` (internal), and a `none` state before REPORT | The drawn states had no events that reach them |
+| M15 | `ADD_SOURCE` on a declined entry puts it back to proposed (E85); on a resolved blocker or issue, back to reported (S14) | E85 and S14 |
+| M10 | Cause keys `approve:`, `no_decider:`, `more_info:`, `blocker_new:`, `clear:` per entry | Matches the models; M10 above is updated |
+
+### Decided while building
+
+| # | Point | Decision in the code |
+|---|---|---|
+| G1 | The SAVE guard (M2) says refuse when the author left a project; E77 and the Routing model say withdraw those items and save the rest | Withdraw and save the rest (model checked). The guard refuses only when an item still to be filed points at a project the author is not in, or the author's account is inactive (E29) |
+| G2 | Check 14 read literally sends an item to "choose a project" even when its target pins the project | An explicit target wins (M14): an update to #151 stays in Forager and the server states "#151" |
+| G3 | E13 calls "Monday the 26th" relative, which would make Kemar's leave Medium, against the story table | Only dateless words ("yesterday", "Monday", "a day") lower confidence; a stated day number is explicit unless its weekday disagrees, in which case the day number wins and it needs an OK |
+| G4 | Check 9 on a project the author is not in: the acceptance criteria say "dropped" | The item is kept as not filed, private to the author, and the unknown project id is never echoed |
+| G5 | Routing candidates and org tags | Candidates span every org the author's account is linked to; the reader's org applies only when reading (E76). One org tag per group for now; the briefing allows several (meeting D2) |
+| G6 | Who may PROGRESS an entry, keep a blocker open, or acknowledge a new blocker | The resolve right, the resolve right, PM only |
+| G7 | Merging | PM only, held in the rights table (`mayMerge`); unmerge in reverse order (model finding) |
+| G8 | Value formats the schema must match | Leave dates as `start/end` (`start/..` when open-ended); handover state as not_done, in_progress, handed_over |
+
+### Needs a decision
+
+| # | Question | Default in the code |
+|---|---|---|
+| D1 | A voice note that cannot be transcribed has no way out of `transcribing` (rule 3) | Add `transcribing` to retry, then failed, like reading (not yet in the code) |
+| D2 | A target cancelled before save: withdraw the item (E26) or show a conflict (M4's example)? | Withdrawn when the command sees it cancelled first; otherwise compare and set shows a conflict |
+| D3 | A failed apply (E27, E31): the capture machine has no retry arrow for it | The capture stays in saving and re-plans with the same item IDs |
+| D4 | Invited and requested memberships have no way out, and leaving cannot be undone (rule 3). Who approves joins and role changes? | Roles are seeded in this slice; add decline, expiry and rejoin when roles move to Atlas (B9) |
+| D5 | A planned milestone whose target passes stays planned and reads On track | Only in progress milestones become missed; proposed: planned ones too |
+| D6 | Leave that matches a pending (not yet approved) request creates a second request | Matches approved leave only |
+| D7 | "Kyle sent the feed" (E93) resolves a blocker from a message, but check 12 lets a capture only report or add a source | Not supported yet; proposed: an item kind that resolves, allowed only for someone with the resolve right (S13), otherwise a proposal to them |
+| D8 | A closed, realised, met, late or superseded entry reported again: reopen it? (S14 covers only blockers and issues) | The source is added; the state stays |
+| D9 | A duplicate merged into a resolved entry: reopen the target? | The target's state is unchanged |
+| D10 | "Realised becomes an Issue", "broken raises a Risk", "late raises a Risk" | Not automatic: a person confirms the new entry (P5); the `raised_from` link exists |
+| D11 | Can a reporter withdraw a reported blocker? | Only while every source is theirs and nobody said it is cleared |

@@ -22,6 +22,7 @@ pnpm lint
 | Styling | Tailwind 4 with the DPM / Precision tokens (light and dark) and the D/ text styles as `type-*` utilities | `src/app/globals.css` |
 | Font | Geist via `next/font` | `src/app/layout.tsx` |
 | Shell | Sidebar, Header, inset panel, page head (Figma L16) | `src/components/shell` |
+| Domain | Pure rules, no database or UI: transition engine, status rules, rights, config, the M2 to M16 machines, routing, and the server checks on Atlas output | `src/domain` |
 | Database | Drizzle ORM. PGlite in `app/.data/pglite` by default; Postgres when `DATABASE_URL` is set | `src/db` |
 | Migrations | `pnpm db:generate` writes SQL to `drizzle/`; the app applies it on first use | `drizzle.config.ts` |
 | Tests | Vitest. Node by default; component tests add `// @vitest-environment jsdom` | `vitest.config.mts` |

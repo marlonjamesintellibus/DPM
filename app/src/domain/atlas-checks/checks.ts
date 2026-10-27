@@ -1,0 +1,645 @@
+// Server checks on Atlas output (machines doc, section 4, checks 1 to 14). Atlas proposes; these
+// rules decide which proposals become extracted items, in which project, with what confidence
+// and mark. They are rules over the candidate data the caller read from the database (P6):
+// nothing here asks a model, and nothing the model says about current values or states is used.
+import { config } from "../config";
+import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind } from "../rights";
+import { CONFIDENCES, lowerTo, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type RoutingState, type SourceSpan } from "../shared";
+
+export { lowerTo };
+import { readDateValue, readLeaveRange, type LeaveRange, type ResolvedDate } from "./resolve-dates";
+import type {
+  ApprovedLeave,
+  CandidateProject,
+  CandidateRecord,
+  CheckContext,
+  CheckId,
+  CheckOptions,
+  CheckResult,
+  DroppedProposal,
+  OpenBraidEntry,
+  RawProposal,
+} from "./types";
+
+
+/** Words that make a value a guess (E12). */
+export const HEDGES = ["i think", "maybe", "probably", "should", "might", "perhaps", "i guess", "not sure"];
+
+// Check 13 and E17. A floor, not a classifier: phase 4 evaluation measures what it misses.
+const HEALTH = [
+  "sick", "ill", "illness", "unwell", "not feeling well", "not well", "doctor", "hospital", "surgery", "burnt out",
+  "burned out", "burnout", "exhausted", "stressed", "anxious", "anxiety", "depressed", "depression", "migraine",
+  "flu", "covid", "fever", "therapy", "therapist", "mental health", "medical", "medication", "pregnant", "injured",
+];
+const JUDGEMENTS = [
+  "keeps missing", "keeps forgetting", "always late", "never on time", "never shows up", "never replies",
+  "never responds", "lazy", "useless", "incompetent", "unreliable", "careless", "sloppy", "rude", "hopeless",
+  "doesn't care", "does not care", "can't be trusted", "cannot be trusted", "not pulling his weight",
+  "not pulling her weight", "not pulling their weight", "slacking", "bad at", "terrible at", "difficult to work with",
+];
+
+type FieldRule = { who: "owner" | "owner_or_lead"; values?: readonly string[]; date?: true };
+
+// Check 3: what an author may change from a message, per target type (machines doc, section 4)
+const FIELDS: Record<CandidateRecord["type"], Record<string, FieldRule>> = {
+  work_item: {
+    state: { who: "owner_or_lead", values: ["to_do", "in_progress", "blocked", "done"] },
+    blocked_note: { who: "owner_or_lead" },
+  },
+  // S5: only the owner moves a forecast. The target never moves from a capture (M6).
+  milestone: { forecast: { who: "owner", date: true } },
+  handover: { state: { who: "owner", values: ["not_done", "in_progress", "handed_over"] } },
+};
+
+type Target =
+  | { type: "record"; project: CandidateProject; record: CandidateRecord }
+  | { type: "entry"; project: CandidateProject; entry: OpenBraidEntry }
+  | { type: "project"; project: CandidateProject }
+  | { type: "leave" };
+
+/** One proposal on its way through the checks (several, once check 6 merges them). */
+type Work = {
+  /** The proposal whose values the item carries: the later one said, after a merge. */
+  p: RawProposal;
+  all: RawProposal[];
+  kind: ItemKind;
+  target: Target | null;
+  field: string;
+  newValue: string | null;
+  oldValue: string | null;
+  match: { project: CandidateProject; entry: OpenBraidEntry } | null;
+  matchState: MatchState;
+  braidKind: string | null;
+  spans: SourceSpan[];
+  confidence: Confidence;
+  date: ResolvedDate | null;
+  leave: LeaveRange | null;
+  needsOk: boolean;
+  mark: Mark;
+  scope: "project" | "personal";
+  routing: RoutingState;
+  projectId: string | null;
+  routingReason: string;
+  /** For choose_project: the projects offered to the author (E71). */
+  options: string[] | null;
+};
+
+type Scope = ReturnType<typeof scopeOf>;
+type Check = [CheckId, (w: Work, s: Scope) => string | null];
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Whole words or phrases, ignoring case; "#151" counts as a word. */
+function mentions(haystack: string, needle: string): boolean {
+  const n = needle.trim();
+  if (!n) return false;
+  return new RegExp(`(?<![\\w#])${escapeRegex(n).replace(/\s+/g, "\\s+")}(?!\\w)`, "i").test(haystack);
+}
+
+const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+function scopeOf(ctx: CheckContext, options: CheckOptions) {
+  const mayReport = options.mayReport ?? rightsMayReport;
+  const project = (id: string | null) => ctx.projects.find((p) => p.id === id) ?? null;
+  const nameOf = (personId: string | null) => {
+    if (personId === ctx.author.id) return ctx.author.name;
+    for (const p of ctx.projects) for (const person of p.people) if (person.personId === personId) return person.name;
+    return "its owner";
+  };
+  const leadOf = (p: CandidateProject) => p.people.find((x) => x.role === "pm")?.name ?? p.people.find((x) => x.role === "lead")?.name ?? "the PM";
+  return {
+    ctx,
+    mayReport,
+    project,
+    nameOf,
+    leadOf,
+    findTarget(id: string): Target | null {
+      for (const p of ctx.projects) {
+        const record = p.records.find((r) => r.id === id);
+        if (record) return { type: "record", project: p, record };
+      }
+      for (const p of ctx.projects) {
+        const entry = p.braid.find((e) => e.id === id);
+        if (entry) return { type: "entry", project: p, entry };
+      }
+      const p = project(id);
+      if (p) return { type: "project", project: p };
+      return id === ctx.leave.targetId ? { type: "leave" } : null;
+    },
+    findEntry(id: string) {
+      for (const p of ctx.projects) {
+        const entry = p.braid.find((e) => e.id === id);
+        if (entry) return { project: p, entry };
+      }
+      return null;
+    },
+    quoteText: (w: Work) => w.spans.map((sp) => ctx.text.slice(sp.start, sp.end)).join(" … "),
+    /** The quotes and the sentences they sit in: a leading "On Store Insights," covers its sentence. */
+    nearText(w: Work) {
+      return w.spans.map((sp) => {
+        let a = sp.start;
+        while (a > 0 && !/[.!?\n]/.test(ctx.text[a - 1])) a--;
+        let b = sp.end;
+        if (!/[.!?\n]/.test(ctx.text[b - 1] ?? "")) while (b < ctx.text.length && !/[.!?\n]/.test(ctx.text[b])) b++;
+        return ctx.text.slice(a, b);
+      }).join("\n");
+    },
+  };
+}
+
+function describe(t: Target): string {
+  if (t.type === "record") return t.record.number ? `${t.record.number} ${t.record.title}` : t.record.title;
+  if (t.type === "entry") return `"${t.entry.title}"`;
+  if (t.type === "project") return t.project.name;
+  return "your leave";
+}
+
+/** Find the quote in the capture: exact first, then ignoring case. Its position becomes the span. */
+export function locateQuote(text: string, quote: string): SourceSpan | null {
+  const q = quote.trim();
+  if (!q) return null;
+  const at = text.indexOf(q);
+  if (at >= 0) return { start: at, end: at + q.length };
+  const m = new RegExp(escapeRegex(q), "i").exec(text);
+  return m ? { start: m.index, end: m.index + m[0].length } : null;
+}
+
+function isDateField(w: Work): boolean {
+  if (w.target?.type === "leave") return true;
+  return w.target?.type === "record" && FIELDS[w.target.record.type][w.field]?.date === true;
+}
+
+const leaveValue = (start: string, end: string | null) => `${start}/${end ?? ".."}`;
+
+function matchLeave(range: LeaveRange | null, approved: readonly ApprovedLeave[]): ApprovedLeave | null {
+  if (!range) return null;
+  // "From Monday the 26th" must start an approved leave; a stated day or range must sit inside one
+  return range.end === null
+    ? approved.find((l) => l.start === range.start) ?? null
+    : approved.find((l) => l.start <= range.start && range.end! <= l.end) ?? null;
+}
+
+// ---- Checks 1 to 5: one proposal at a time ----
+
+const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same"];
+
+// Kind is tested before anything else because every later check depends on it (check 11 owns it)
+const knownKind: Check = [11, (w) => (ITEM_KINDS.includes(w.kind) ? null : `"${w.kind}" is not something Atlas may propose`)];
+
+const targetInScope: Check = [
+  1,
+  (w, s) => {
+    const p = w.p;
+    if (w.kind === "update") {
+      if (!p.targetId) return null; // nothing named: at most a private note (check 9)
+      const t = s.findTarget(p.targetId);
+      if (!t) return `"${p.targetId}" is not one of your records`;
+      w.target = t;
+      return null;
+    }
+    if (!p.matchEntryId) return w.kind === "braid_same" ? "a same-as report needs the entry it joins" : null;
+    const m = s.findEntry(p.matchEntryId);
+    if (!m) return `BRAID entry "${p.matchEntryId}" is not in your projects`;
+    w.match = m;
+    return null;
+  },
+];
+
+const quoteIsReal: Check = [
+  2,
+  (w, s) => {
+    const span = locateQuote(s.ctx.text, w.p.quote ?? "");
+    if (!span) return "the quoted words are not in the message";
+    w.spans = [span];
+    return null;
+  },
+];
+
+const fieldAllowed: Check = [
+  3,
+  (w, s) => {
+    const t = w.target;
+    if (w.kind !== "update" || !t || t.type === "entry") return null; // BRAID entries: check 12
+    if (t.type === "project") return `${t.project.name}'s status is set by ${s.leadOf(t.project)} on the project, not from a message`;
+    if (t.type === "leave") return w.field === "dates" ? null : `only leave dates can be read from a message`;
+    const rule = FIELDS[t.record.type][w.field];
+    if (!rule) {
+      if (t.record.type === "milestone" && w.field === "target")
+        return `moving ${t.record.title}'s target is a decision for ${s.leadOf(t.project)}`;
+      return `${w.field || "that field"} on ${describe(t)} cannot change from a message`;
+    }
+    const isOwner = t.record.ownerId === s.ctx.author.id;
+    const isLead = t.project.role === "pm" || t.project.role === "lead";
+    if (!isOwner && !(rule.who === "owner_or_lead" && isLead))
+      return `${describe(t)} belongs to ${s.nameOf(t.record.ownerId)}; ask them to change its ${w.field}`;
+    if (rule.date) return null; // the value comes from check 5
+    const value = w.newValue?.trim() ?? "";
+    if (!value) return `no new ${w.field} for ${describe(t)}`;
+    if (rule.values && !rule.values.includes(value)) return `"${value}" is not a ${w.field} of a ${t.record.type.replace("_", " ")}`;
+    w.newValue = value;
+    return null;
+  },
+];
+
+// Date fields are read here once; check 4 needs to know if the date was relative, check 5 uses it
+function readDates(w: Work, s: Scope): void {
+  if (!isDateField(w)) return;
+  const span = w.spans[0];
+  const quote = s.ctx.text.slice(span.start, span.end);
+  if (w.target?.type === "leave") {
+    const r = readLeaveRange(quote, s.ctx.messageAt);
+    w.leave = r && { ...r, span: { start: span.start + r.span.start, end: span.start + r.span.end } };
+  } else if (w.target?.type === "record") {
+    w.date = readDateValue(quote, s.ctx.messageAt, w.target.record.values[w.field] ?? null);
+  }
+}
+
+const confidenceFloor: Check = [
+  4,
+  (w, s) => {
+    // Anything the model sends outside the three levels counts as the lowest
+    let c: Confidence = (CONFIDENCES as readonly string[]).includes(w.p.confidence) ? w.p.confidence : "low";
+    const quote = s.quoteText(w);
+    if (HEDGES.some((h) => mentions(quote, h))) c = lowerTo(c, "medium");
+    if (s.ctx.transcriptConfidence === "low") c = lowerTo(c, "medium"); // E5
+    readDates(w, s);
+    const d = w.leave ?? w.date;
+    if (d && (d.relative || d.weekdayMismatch)) c = lowerTo(c, "medium"); // E13
+    w.confidence = c;
+    return null;
+  },
+];
+
+const datesResolve: Check = [
+  5,
+  (w) => {
+    if (!isDateField(w)) return null;
+    if (w.target?.type === "leave") {
+      if (!w.leave) return "no leave dates found in what you said";
+      w.newValue = leaveValue(w.leave.start, w.leave.end);
+      if (w.leave.weekdayMismatch) w.needsOk = true;
+      return null;
+    }
+    if (!w.date) return "no date found in what you said";
+    w.newValue = w.date.date;
+    if (w.date.weekdayMismatch) w.needsOk = true;
+    return null;
+  },
+];
+
+// ---- Check 6: one card per target and field ----
+
+function mergeKey(w: Work): string | null {
+  if (w.kind === "update" && w.target) {
+    const t = w.target;
+    const id = t.type === "record" ? t.record.id : t.type === "entry" ? t.entry.id : t.type === "project" ? t.project.id : "leave";
+    return `${id}|${w.field}`;
+  }
+  if (w.kind === "braid_same" && w.match) return `entry|${w.match.entry.id}`;
+  return null;
+}
+
+/** E14: the later value wins, every quote is kept, and the author confirms it. */
+function mergeSameField(works: Work[]): Work[] {
+  const out: Work[] = [];
+  const byKey = new Map<string, Work[]>();
+  for (const w of works) {
+    const key = mergeKey(w);
+    if (key === null) out.push(w);
+    else if (byKey.has(key)) byKey.get(key)!.push(w);
+    else {
+      byKey.set(key, [w]);
+      out.push(w);
+    }
+  }
+  return out.map((w) => {
+    const group = byKey.get(mergeKey(w) ?? "");
+    if (!group || group.length === 1) return w;
+    const later = [...group].sort((a, b) => a.spans[0].start - b.spans[0].start).at(-1)!;
+    const spans = [...new Map(group.flatMap((g) => g.spans).map((sp) => [`${sp.start}:${sp.end}`, sp])).values()].sort(
+      (a, b) => a.start - b.start,
+    );
+    const values = new Set(group.map((g) => g.newValue));
+    return {
+      ...later,
+      all: group.flatMap((g) => g.all),
+      spans,
+      confidence: group.map((g) => g.confidence).reduce(lowerTo),
+      // Exact repeats collapse quietly; two different quotes or values need the author's OK
+      needsOk: group.some((g) => g.needsOk) || spans.length > 1 || values.size > 1,
+    };
+  });
+}
+
+// ---- Checks 7 to 13: one item at a time ----
+
+const oldValueFromDatabase: Check = [
+  7,
+  (w) => {
+    const t = w.target;
+    w.oldValue = t?.type === "record" ? (t.record.values[w.field] ?? null) : t?.type === "entry" ? t.entry.state : null;
+    return null;
+  },
+];
+
+const mark: Check = [
+  8,
+  (w, s) => {
+    if (w.target?.type === "leave") {
+      // M8: leave is read only here; it can match approved leave, or become a request the author confirms
+      const approved = matchLeave(w.leave, s.ctx.leave.approved);
+      if (approved) w.newValue = leaveValue(approved.start, approved.end);
+      w.mark = approved ? "matches_leave" : "needs_ok";
+    } else if (w.target?.type === "record" && w.newValue !== null && w.oldValue !== null && norm(w.newValue) === norm(w.oldValue)) {
+      w.mark = "no_change";
+    } else {
+      w.mark = !w.needsOk && w.confidence === "high" ? "pre_accepted" : "needs_ok";
+    }
+    return null;
+  },
+];
+
+const projectIsCandidate: Check = [
+  9,
+  (w, s) => {
+    const p = w.p;
+    const route = (routing: RoutingState, projectId: string | null, reason: string) => {
+      w.routing = routing;
+      w.projectId = projectId;
+      w.routingReason = reason;
+    };
+    w.scope = "project";
+    if (w.target?.type === "leave") {
+      // E80: leave goes to "You" whatever project the model named
+      w.scope = "personal";
+      route("routed", null, "Personal");
+    } else if (w.kind === "update" && !w.target) route("not_filed", null, "Not filed: no record to update");
+    else if (p.routingReason?.basis === "ambiguous") {
+      route("choose_project", null, "Choose a project");
+      // Offer the model's options that are candidates, or every candidate when it named none that fit
+      const fit = (p.options ?? []).filter((id) => s.project(id));
+      w.options = fit.length ? fit : s.ctx.projects.map((x) => x.id);
+    }
+    else if (!p.projectId) route("not_filed", null, "Not filed: none of your projects fits");
+    else if (!s.project(p.projectId)) {
+      // E75: naming a project the author is in leaks nothing; any other id is never echoed (E78)
+      const off = s.ctx.notConnected.find((x) => x.id === p.projectId);
+      route("not_filed", null, off ? `Not filed: ${off.name} isn't connected to DPM yet` : "Not filed: not one of your projects");
+    } else route("routed", p.projectId, p.routingReason.label.trim() || p.routingReason.evidence);
+    return null;
+  },
+];
+
+const targetBelongs: Check = [
+  10,
+  (w) => {
+    const t = w.target;
+    if (w.kind === "update" && t && t.type !== "leave") {
+      const home = t.type === "record" || t.type === "entry" || t.type === "project" ? t.project : null;
+      if (home && (w.routing !== "routed" || w.projectId !== home.id)) return `${describe(t)} is in ${home.name}; it can only be updated there`;
+    }
+    if (!w.match) return null;
+    const { project, entry } = w.match;
+    const sameProject = w.routing === "routed" && w.projectId === project.id;
+    if (w.kind === "braid_same") {
+      if (!sameProject) return `"${entry.title}" is on ${project.name}'s log; a report can only join it there`;
+      // M16: kinds never merge. A report about the same subject in another kind is new, and linked.
+      if (w.braidKind && w.braidKind !== entry.kind) {
+        w.kind = "braid_new";
+        w.matchState = "related_to";
+      } else {
+        w.braidKind = entry.kind;
+        w.matchState = "same_as";
+      }
+    } else if (sameProject && w.braidKind !== entry.kind) {
+      w.matchState = "related_to";
+    } else {
+      w.match = null; // a link only within the project and across kinds; the author can match on review
+    }
+    return null;
+  },
+];
+
+const kindAllowed: Check = [
+  11,
+  (w, s) => {
+    if (w.kind === "update") return null;
+    const kind = w.braidKind as BraidKind;
+    if (!BRAID_KINDS.includes(kind)) return `"${w.braidKind ?? ""}" is not a BRAID kind`;
+    const project = s.project(w.projectId);
+    if (!project || s.mayReport(project.role, kind)) return null;
+    const who = PROJECT_ROLES.filter((r) => s.mayReport(r, kind)).join(" or ") || "no one";
+    return `on ${project.name}, a ${kind} is reported by: ${who}`;
+  },
+];
+
+const proposalsStayProposals: Check = [
+  12,
+  (w) => {
+    // A capture only reports (braid_new) or adds a source (braid_same). Any state the model gave a
+    // BRAID item is never read, so "we agreed" or "approved" still lands as a proposal (E96).
+    if (w.kind === "update" && w.target?.type === "entry") {
+      const deciders = BRAID_RIGHTS[w.target.entry.kind].decide;
+      const who = deciders ? deciders.join(" or ") : "its owner";
+      return `a message cannot change ${describe(w.target)} (${w.field} to ${w.newValue ?? "?"}); only a ${who} decides it`;
+    }
+    return null;
+  },
+];
+
+const noHealthNoJudgement: Check = [
+  13,
+  (w, s) => {
+    const quote = s.quoteText(w);
+    if (w.target?.type === "leave") {
+      // E17: leave dates may be kept; the health words never travel with them
+      if (w.leave && HEALTH.some((h) => mentions(quote, h))) {
+        const from = w.spans[0].start;
+        const upTo = s.ctx.text.slice(from, w.leave.span.end);
+        w.spans = [HEALTH.some((h) => mentions(upTo, h)) ? w.leave.span : { start: from, end: w.leave.span.end }];
+      }
+      return null;
+    }
+    if (w.kind === "update") return null;
+    const said = `${quote}\n${w.p.braidTitle ?? ""}`;
+    if (HEALTH.some((h) => mentions(said, h))) return "Atlas keeps health out of project logs; the private care route is there if you want it";
+    if (JUDGEMENTS.some((j) => mentions(said, j))) {
+      const named = s.ctx.projects.flatMap((p) => p.people).find((person) => mentions(said, person.name) || mentions(said, person.name.split(" ")[0]));
+      if (named) return `Atlas left out what you said about ${named.name}`;
+    }
+    return null;
+  },
+];
+
+// ---- Check 14: the routing reason is real ----
+
+function reasonHolds(w: Work, s: Scope): boolean {
+  const reason = w.p.routingReason;
+  const project = s.project(w.projectId);
+  if (!project || !reason) return false;
+  const near = s.nearText(w);
+  const others = s.ctx.projects.filter((p) => p.id !== project.id);
+  switch (reason.basis) {
+    case "target": {
+      const t = w.target;
+      if (t?.type === "record" && t.project.id === project.id) {
+        // E82: a title shared with another project's record does not decide; the number does
+        const shared = others.some((p) => p.records.some((r) => norm(r.title) === norm(t.record.title)));
+        return !shared || (!!t.record.number && mentions(near, t.record.number));
+      }
+      return !!w.match && w.match.project.id === project.id;
+    }
+    case "reference": {
+      const names = (p: CandidateProject) =>
+        [p.name, ...p.aliases].some((n) => norm(n) === norm(reason.evidence)) ||
+        p.records.some((r) => !!r.number && norm(r.number) === norm(reason.evidence));
+      return mentions(near, reason.evidence) && names(project) && !others.some(names);
+    }
+    case "owned_record":
+      return w.target?.type === "record" && w.target.record.ownerId === s.ctx.author.id;
+    case "tied_person": {
+      const isNamed = (n: string) => norm(n) === norm(reason.evidence) || norm(n.split(" ")[0]) === norm(reason.evidence);
+      const person = project.people.find((x) => isNamed(x.name));
+      if (!person || !mentions(near, reason.evidence)) return false;
+      // A person tied to two of the author's projects does not decide between them
+      return !others.some((p) => p.people.some((x) => x.personId === person.personId));
+    }
+    default:
+      return false;
+  }
+}
+
+function checkRoutingReasons(works: Work[], s: Scope): void {
+  const routed = (w: Work) => w.routing === "routed" && w.scope === "project";
+  const downgrade = (w: Work) => {
+    w.routingReason = `Choose a project: Atlas could not confirm "${w.routingReason}"`;
+    w.routing = "choose_project";
+    w.options = s.ctx.projects.map((x) => x.id);
+    w.projectId = null;
+  };
+  // An explicit reference is the strongest routing signal (M14): when the target record alone pins
+  // the project, the item stays filed there and the server states the reason, whatever Atlas said.
+  const pinnedByTarget = (w: Work): string | null => {
+    const t = w.target;
+    if (w.kind !== "update" || t?.type !== "record" || t.project.id !== w.projectId) return null;
+    const asTarget: Work = { ...w, p: { ...w.p, routingReason: { basis: "target", evidence: "", label: "" } } };
+    return reasonHolds(asTarget, s) ? (t.record.number ?? `${t.record.title} is in ${t.project.name}`) : null;
+  };
+  const sameQuote = works.filter((w) => routed(w) && w.p.routingReason.basis === "same_quote");
+  for (const w of works) {
+    if (!routed(w) || sameQuote.includes(w) || reasonHolds(w, s)) continue;
+    const pinned = pinnedByTarget(w);
+    if (pinned) w.routingReason = pinned;
+    else downgrade(w);
+  }
+  // "Same quote as #4" holds when an item from overlapping words is filed in that project for its own reason
+  for (const w of sameQuote) {
+    const overlaps = (o: Work) => o.spans.some((a) => w.spans.some((b) => a.start < b.end && b.start < a.end));
+    const anchor = works.find((o) => o !== w && !sameQuote.includes(o) && routed(o) && o.projectId === w.projectId && overlaps(o));
+    if (!anchor) downgrade(w);
+  }
+}
+
+// ---- Putting it together ----
+
+function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
+  const t = w.target;
+  const draft: ExtractedItemDraft = {
+    ordinal,
+    kind: w.kind,
+    scope: w.scope,
+    projectId: w.projectId,
+    routing: w.routing,
+    routingReason: w.routingReason,
+    ...(w.routing === "choose_project" && w.options ? { options: w.options } : {}),
+    spans: w.spans,
+    confidence: w.confidence,
+    mark: w.mark,
+    // Leave rationale is the server's own words, so nothing said around the dates is stored (E17)
+    rationale: t?.type === "leave" ? "Leave dates you mentioned" : w.p.rationale,
+  };
+  if (w.kind === "update" && t) {
+    if (t.type === "record") {
+      draft.target = { type: t.record.type, id: t.record.id, field: w.field, oldValue: w.oldValue, newValue: w.newValue ?? "" };
+      // A blocked work item carries what it waits on (M5), from the model's note
+      const note = w.p.note?.trim();
+      if (note && w.newValue === "blocked") draft.target.note = note;
+    }
+    else if (t.type === "leave") draft.target = { type: "leave", id: s.ctx.leave.targetId, field: "dates", oldValue: null, newValue: w.newValue ?? "" };
+    // Checks 3 and 12 drop every other target; reaching here means one of them was skipped
+    else throw new Error(`check ${t.type === "entry" ? 12 : 3} let through an update to ${describe(t)}`);
+  }
+  if (w.kind !== "update") {
+    const title = w.match && w.matchState === "same_as" ? w.match.entry.title : w.p.braidTitle?.trim() || s.quoteText(w);
+    draft.braid = { kind: w.braidKind as BraidKind, title, match: w.matchState, matchEntryId: w.match?.entry.id ?? null };
+    if (w.match) draft.braid.seenState = w.match.entry.state; // compared again at save (E83)
+  }
+  return draft;
+}
+
+function start(p: RawProposal): Work {
+  return {
+    p,
+    all: [p],
+    kind: p.kind,
+    target: null,
+    field: p.field?.trim() ?? "",
+    newValue: p.newValue ?? null,
+    oldValue: null,
+    match: null,
+    matchState: "new",
+    braidKind: p.braidKind ?? null,
+    spans: [],
+    confidence: "low",
+    date: null,
+    leave: null,
+    needsOk: false,
+    mark: "needs_ok",
+    scope: "project",
+    routing: "not_filed",
+    projectId: null,
+    routingReason: "",
+    options: null,
+  };
+}
+
+const PER_PROPOSAL: Check[] = [knownKind, targetInScope, quoteIsReal, fieldAllowed, confidenceFloor, datesResolve];
+const PER_ITEM: Check[] = [
+  oldValueFromDatabase,
+  mark,
+  projectIsCandidate,
+  targetBelongs,
+  kindAllowed,
+  proposalsStayProposals,
+  noHealthNoJudgement,
+];
+
+/**
+ * Applies checks 1 to 14 in the documented order to what Atlas returned for one capture.
+ * Items keep the model's order; a merged item (check 6) takes the place of its first proposal.
+ */
+export function runChecks(proposals: readonly RawProposal[], ctx: CheckContext, options: CheckOptions = {}): CheckResult {
+  const s = scopeOf(ctx, options);
+  const dropped: DroppedProposal[] = [];
+  const pass = (w: Work, checks: Check[]) => {
+    for (const [check, run] of checks) {
+      const reason = run(w, s);
+      if (reason !== null) {
+        for (const proposal of w.all) dropped.push({ proposal, check, reason });
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const read = proposals.map(start).filter((w) => pass(w, PER_PROPOSAL));
+  const kept = mergeSameField(read).filter((w) => pass(w, PER_ITEM));
+  checkRoutingReasons(kept, s);
+
+  // S8, E7: past the cap, Atlas says "I found more; review these first"
+  const limit = config.maxProposalsPerCapture;
+  for (const w of kept.slice(limit)) for (const proposal of w.all) dropped.push({ proposal, check: "cap", reason: "I found more; review these first" });
+  return { items: kept.slice(0, limit).map((w, i) => toDraft(w, i + 1, s)), dropped };
+}
