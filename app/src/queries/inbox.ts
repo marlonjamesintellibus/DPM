@@ -45,7 +45,9 @@ export type InboxCause =
   /** Section 20, U3: a member said a risk, assumption or dependency ended; a PM or Lead decides, or keeps it open. */
   | "confirm_outcome"
   /** Section 20, U5 and U7 (M37): someone's update changes the viewer's record, or proposes new work to a PM or Lead. */
-  | "owner_ask";
+  | "owner_ask"
+  /** Phase L, M31: a correction to the project's vocabulary waits for a PM or Lead. */
+  | "vocab_change";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -58,7 +60,8 @@ export type InboxSubject =
   | { type: "leave"; id: string; projectId: string }
   | { type: "work_item"; id: string; projectId: string }
   | { type: "kind_request"; id: string; entryId: string; projectId: string }
-  | { type: "owner_ask"; id: string; projectId: string };
+  | { type: "owner_ask"; id: string; projectId: string }
+  | { type: "vocabulary_change"; id: string; projectId: string };
 
 export type InboxEntry = {
   id: string;
@@ -92,7 +95,7 @@ export type Inbox = {
 
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
 const WORK_CAUSES: readonly string[] = ["done_no_change", "blocked_without_blocker"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -147,6 +150,8 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
   const doneWork = workIds.length ? await conn.select().from(t.workItems).where(inArray(t.workItems.id, workIds)) : [];
   const requestIds = parsed.filter((p) => p.cause === "kind_change").map((p) => p.subjectId);
   const requests = requestIds.length ? await conn.select().from(t.braidKindRequests).where(inArray(t.braidKindRequests.id, requestIds)) : [];
+  const changeIds = parsed.filter((p) => p.cause === "vocab_change").map((p) => p.subjectId);
+  const changes = changeIds.length ? await conn.select().from(t.vocabularyChanges).where(inArray(t.vocabularyChanges.id, changeIds)) : [];
   const projectOf = (p: (typeof parsed)[number]) =>
     STATUS_CAUSES.includes(p.cause)
       ? p.subjectId
@@ -154,7 +159,9 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
         ? doneWork.find((w) => w.id === p.subjectId)?.projectId
         : p.cause === "kind_change"
           ? requests.find((r) => r.id === p.subjectId)?.projectId
-          : entryProjects.find((e) => e.id === p.subjectId)?.projectId;
+          : p.cause === "vocab_change"
+            ? changes.find((c) => c.id === p.subjectId)?.projectId
+            : entryProjects.find((e) => e.id === p.subjectId)?.projectId;
   const projectIds = [...new Set(parsed.map(projectOf).filter((id): id is string => !!id && reader.mayRead(id)))];
   const today = todayIn(now);
   const projects = new Map<string, { row: typeof t.projects.$inferSelect; calculated: ReturnType<typeof calculatePlan>["project"]; log: Record<string, BraidEntryRecord> }>();
@@ -171,7 +178,11 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
 
   const people = await peopleById(
     conn,
-    [...[...projects.values()].flatMap((p) => Object.values(p.log).flatMap((e) => [e.reportedBy, e.resolveProposedBy, ...e.answers.map((a) => a.by), ...e.outcomesProposed.map((o) => o.by)])), ...requests.map((r) => r.askedBy)],
+    [
+      ...[...projects.values()].flatMap((p) => Object.values(p.log).flatMap((e) => [e.reportedBy, e.resolveProposedBy, ...e.answers.map((a) => a.by), ...e.outcomesProposed.map((o) => o.by)])),
+      ...requests.map((r) => r.askedBy),
+      ...changes.flatMap((c) => [c.forId, c.personId]),
+    ],
   );
   const nameOf = (id: string | null) => (id ? firstName(people.get(id)?.name ?? id) : "Someone");
 
@@ -347,6 +358,33 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
         action: "Decide",
         group: r.remindersSent > 0 ? "do_now" : "today",
         subject: { type: "kind_request", id: r.id, entryId: r.entryId, projectId: project.row.id },
+      });
+      continue;
+    }
+
+    if (p.cause === "vocab_change") {
+      // Phase L, M31: who said it (or whose moves in review, CD14), and what it changes
+      const c = changes.find((x) => x.id === p.subjectId)!;
+      const who = nameOf(c.forId);
+      const person = c.personId ? (people.get(c.personId)?.name ?? "them") : null;
+      const what =
+        c.kind === "alias"
+          ? c.remove
+            ? `stop reading "${c.word}" as ${project.row.name}`
+            : `read "${c.word}" as ${project.row.name}`
+          : c.remove
+            ? `take ${person} off ${project.row.name}'s contacts`
+            : `add ${person} as a contact on ${project.row.name}`;
+      make({
+        title: c.proposedBy ? `${who} asked Atlas to ${what}` : `Atlas suggests: ${what.charAt(0).toUpperCase()}${what.slice(1)}`,
+        why: c.proposedBy
+          ? "a correction changes how Atlas files everyone's updates on this project, so a PM or Lead decides it"
+          : `${who} moved updates with "${c.word ?? person}" to ${project.row.name} twice in review; a PM or Lead decides whether Atlas should`,
+        source: c.proposedBy ? `${who}'s correction` : "Atlas",
+        fromWords: !!c.proposedBy,
+        action: "Decide",
+        group: c.remindersSent > 0 ? "do_now" : "this_week",
+        subject: { type: "vocabulary_change", id: c.id, projectId: project.row.id },
       });
       continue;
     }

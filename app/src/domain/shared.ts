@@ -70,6 +70,11 @@ export type ExtractedItemDraft = {
   };
   /** Leave items (D6): it matches live leave, changes it, or is a new request. */
   leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
+  /**
+   * Phase L, CD14: the word that decided the project, when it was a name (reference) or a person tied to it
+   * (tied_person) and check 14 confirmed it. Moving items routed by the same word twice proposes a correction.
+   */
+  routedBy?: { basis: "reference" | "tied_person"; word: string; personId: string | null };
   /** Section 16: the earlier unsaved item this one corrects; it is withdrawn as replaced when this one is proposed. */
   replaces?: string;
   /** Section 20, U5: the record is someone else's; saving asks its owner (M37) instead of changing it. */

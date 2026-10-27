@@ -36,6 +36,8 @@ import type { OverrideState } from "../domain/machines/set-status";
 import type { BraidKind, ProjectRole } from "../domain/rights";
 import type { Confidence, ExtractedItemDraft, ItemKind, RoutingState } from "../domain/shared";
 import type { SettableStatus } from "../domain/status/status";
+import type { UndoRefusal, UndoState } from "../domain/machines/undo";
+import type { VocabularyKind, VocabularyState } from "../domain/machines/vocabulary-change";
 import type { MilestoneState, WorkItemState } from "../domain/status/rules";
 
 const created = () => timestamp("created_at", { withTimezone: true }).notNull().defaultNow();
@@ -576,6 +578,58 @@ export const ownerAsks = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("owner_asks_project_state").on(t.projectId, t.state)],
+);
+
+// ---- Undo and corrections (phase L) ----
+
+/**
+ * M30. One undo of one save. The id is the command's (the Undo button's, or the "Undo that" message's), so a
+ * repeat changes nothing; one per save, so "Undo that" twice undoes it once (UN5). What the save wrote is its
+ * receipt in the audit log (action UNDO_RECEIPT), read from there as set-aside reasons are (UD6).
+ */
+export const undos = pgTable(
+  "undos",
+  {
+    id: text("id").primaryKey(),
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    ownerId: text("owner_id").notNull().references(() => people.id),
+    state: text("state").$type<UndoState>().notNull(),
+    refusal: jsonb("refusal").$type<UndoRefusal>(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [uniqueIndex("undos_capture").on(t.captureId)],
+);
+
+/** M31. A proposed change to one project's vocabulary: an alias, or a contact tied to it. One per change (rule 6). */
+export const vocabularyChanges = pgTable(
+  "vocabulary_changes",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    kind: text("kind").$type<VocabularyKind>().notNull(),
+    word: text("word"),
+    personId: text("person_id").references(() => people.id),
+    tie: text("tie"),
+    remove: boolean("remove").notNull().default(false),
+    /** Null when Atlas proposed it from moves in review (CD14); forId is whose moves, or who said it. */
+    proposedBy: text("proposed_by").references(() => people.id),
+    forId: text("for_id").notNull().references(() => people.id),
+    captureId: text("capture_id").references(() => captures.id),
+    dedupKey: text("dedup_key").notNull().unique(),
+    state: text("state").$type<VocabularyState>().notNull(),
+    proposedOn: day("proposed_on").notNull(),
+    remindersSent: integer("reminders_sent").notNull().default(0),
+    lastRemindedOn: day("last_reminded_on"),
+    decidedBy: text("decided_by").references(() => people.id),
+    decidedOn: day("decided_on"),
+    clashesWith: text("clashes_with").array().notNull().default(sql`'{}'::text[]`),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("vocabulary_changes_project").on(t.projectId, t.state)],
 );
 
 // ---- Notices (D15) ----

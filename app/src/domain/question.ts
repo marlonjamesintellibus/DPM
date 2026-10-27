@@ -7,14 +7,16 @@ import { namesProject, numbersOf } from "./atlas-checks/checks";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
+import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
 import { GREETING, smallTalk } from "./topics/small-talk";
 import { subjectById, subjectIn, type WhySubject } from "./topics/why";
+import { undo } from "./topics/undo";
 
 // Each topic is defined in domain/topics, its answer in queries/answers
 export { QUESTION_TOPICS, type QuestionTopic };
 
 /** What Atlas said was asked, before the checks. Phase C: subjectId, what a why question is about. */
-export type RawQuestion = { asked: string; topic: string; projectId: string | null; subjectId?: string | null };
+export type RawQuestion = { asked: string; topic: string; projectId: string | null; subjectId?: string | null; correction?: RawCorrection | null };
 
 /** A question that passed the checks: safe to answer from the asker's data. */
 export type AskedQuestion = {
@@ -25,6 +27,10 @@ export type AskedQuestion = {
   follows?: string[];
   /** Phase C: what a why question is about, in a project the asker can read (WY1); only on topic why. */
   subject?: WhySubject;
+  /** Phase L, M31: what a correction proposes, after the checks; missing when nothing in it could be checked. */
+  correction?: Correction;
+  /** Phase L: what the asker's command made while their message was read (the undo job of "Undo that"). */
+  made?: string[];
 };
 
 /**
@@ -35,12 +41,15 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
   if (!raw) return null;
   const topic = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
   if (topic === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
+  // Phase L: "Undo that" is the asker's command only as the whole message, whatever Atlas read
+  if (topic === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
   const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
   const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
   // Phase C, WY1: a subject outside the asker's lists is no subject, never a sign that it exists
   const subject = topic === "why" ? subjectById(raw.subjectId, ctx.projects) : null;
-  return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(subject ? { subject } : {}) };
+  const correction = topic === "correction" ? checkCorrection(raw.correction, ctx) : null;
+  return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(subject ? { subject } : {}), ...(correction ? { correction } : {}) };
 }
 
 /**
@@ -51,7 +60,7 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
  * as the rule skips them.
  */
 function followed(text: string, asked: string, topic: QuestionTopic, earlier: readonly EarlierTurn[]): string[] {
-  if (topic === "other" || topic === "unclear" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
+  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
   const words: string[] = [];
   for (const turn of [...earlier].reverse()) {
     if (!turn.asked || turn.asked.topic === "small_talk") continue;
@@ -98,6 +107,10 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   const text = ctx.text.trim();
   // CQ12, CQ13: small talk is the whole message or nothing ("Morning! Finished #145." is an update)
   if (smallTalk.rule.test(text.toLowerCase())) return { asked: text, topic: "small_talk", projectId: null };
+  // Phase L: "Undo that" and a correction are whole-message commands
+  if (undo.rule.test(text.toLowerCase())) return { asked: text, topic: "undo", projectId: null };
+  const correction = ruleCorrection(ctx);
+  if (correction) return { asked: text, topic: "correction", projectId: correction.projectId, correction };
   // CV8, CV9: "and on Store Insights?" takes its topic from the question before it in this conversation
   if (FOLLOW_UP.test(text) && !ASKS_FOR_A_CHANGE.test(text) && (text.endsWith("?") || text.split(/\s+/).length <= 6) && !/[.!]\s/.test(text)) {
     // Section 18: small talk is no question to follow, so "Thanks!" in between changes nothing

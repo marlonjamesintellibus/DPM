@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
-import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems } from "../db/records";
+import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
 import { runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
@@ -38,7 +38,7 @@ import {
   type WithdrawReason,
 } from "../domain/machines/extracted-item";
 import { applyConversationEvent, autoTitle, draftConversation, type ConversationRecord, type ConversationState } from "../domain/machines/conversation";
-import { applyHandover, type HandoverRecord } from "../domain/machines/handover";
+import { applyHandover, applyStep, STEP_STATES, type HandoverRecord, type StepState } from "../domain/machines/handover";
 import { evaluateCause } from "../domain/machines/inbox-item";
 import { acceptExtractedLeave, changeLeave, fitLeave, type ExtractedLeave, type LeaveRecord } from "../domain/machines/leave";
 import { redirectReport, saveMatch, type MatchRecord } from "../domain/machines/match";
@@ -47,12 +47,13 @@ import { applyMilestone, type MilestoneRecord } from "../domain/machines/milesto
 import { applyWorkItem, workItemEventTo, type WorkItemEvent, type WorkItemRecord } from "../domain/machines/work-item";
 import { mayReport, mayResolve } from "../domain/rights";
 import { applyRouting, planRoutingAtSave, type Author, type Route, type RoutingEvent } from "../domain/routing";
-import { checkQuestion, type Answer, type RawQuestion } from "../domain/question";
+import { checkQuestion, type Answer, type AskedQuestion, type RawQuestion } from "../domain/question";
 import { checkCommands, type RawCommand } from "../domain/acting";
 import { topicById } from "../domain/topics";
 import type { Confidence, ExtractedItemDraft, MatchState } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { answerFor } from "../queries/answer";
+import { correctionParts } from "../queries/answers/correction";
 import { loadCheckContext } from "../queries/check-context";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
@@ -62,6 +63,8 @@ import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 import { createOwnerAsks } from "./owner-ask";
+import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
+import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
 
 type CaptureRow = typeof t.captures.$inferSelect;
 type Actor = { type: "person" | "atlas" | "rule" | "system"; id: string | null };
@@ -475,11 +478,13 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       const { note } = await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer);
       if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
     }
+    // Phase L: "Undo that" and a correction are the asker's own commands; they run now, as the asker
+    const question = asked ? await actOn(tx, ctx.now, row.authorId, captureId, asked) : null;
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
-    const found = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
+    const found = question ? await answerFor(tx, row.authorId, question, ctx.now) : null;
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
     const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
-    if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
+    if (question) await tx.update(t.captures).set({ question, answer }).where(eq(t.captures.id, captureId));
     // Phase S: an answer DPM could not give is a candidate for the eval set, with the asker's OK (LF1).
     // The words are the asker's; Atlas's job found it, so the audit says Atlas
     if (asked && answer && (asked.topic === "other" || asked.topic === "unclear")) {
@@ -507,6 +512,28 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     }
     return { state: record.state, items, dropped: checked.dropped, moreFound: record.moreFound, answer };
   });
+}
+
+/**
+ * Phase L. "Undo that" (M30) runs the undo job on the asker's last save; its id goes with the question, so
+ * the answer says what it did. A correction (M31) proposes each change it names to that project's PM or
+ * Lead; one that cannot be proposed is left out, and the answer says how each part stands.
+ */
+async function actOn(tx: Tx, now: Date, authorId: string, captureId: string, asked: AskedQuestion): Promise<AskedQuestion> {
+  if (asked.topic === "undo") {
+    const r = await undoInTx(tx, now, authorId, { commandId: `undo-${captureId}` });
+    return { ...asked, made: r.kind === "job" ? [r.job.id] : [] };
+  }
+  if (asked.topic === "correction" && asked.correction) {
+    for (const part of correctionParts(asked.correction)) {
+      try {
+        await tx.transaction((sp) => proposeVocabularyChange(sp, now, { ...part, proposedBy: authorId, forId: authorId, captureId }));
+      } catch (e) {
+        if (!(e instanceof CommandRefused)) throw e;
+      }
+    }
+  }
+  return asked;
 }
 
 // ---- openReview and discardCapture (M2) ----
@@ -580,7 +607,6 @@ export function decideExtraction(ctx: CommandCtx, extractionId: string, decision
   });
 }
 
-const STEP_ORDER = ["not_done", "in_progress", "handed_over"] as const;
 const SETTABLE_WORK_STATES: readonly string[] = ["to_do", "in_progress", "blocked", "done"];
 
 function parseLeave(value: string | null, personId: string): ExtractedLeave | null {
@@ -639,9 +665,9 @@ async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<
       const [step] = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, target.id));
       if (!step) return () => "this handover step no longer exists";
       return (value) => {
-        const to = STEP_ORDER.indexOf(value as (typeof STEP_ORDER)[number]);
-        if (to < 0) return `"${value}" is not a handover step state (${STEP_ORDER.join(", ")})`;
-        return to < STEP_ORDER.indexOf(step.state) ? `${step.title} is already ${step.state}; steps only move forward` : null;
+        const to = STEP_STATES.indexOf(value as (typeof STEP_STATES)[number]);
+        if (to < 0) return `"${value}" is not a handover step state (${STEP_STATES.join(", ")})`;
+        return to < STEP_STATES.indexOf(step.state) ? `${step.title} is already ${step.state}; steps only move forward` : null;
       };
     }
     case "leave": {
@@ -805,12 +831,17 @@ export function routeExtraction(ctx: CommandCtx, extractionId: string, to: Route
       toState: outcome.to,
       captureId: row.captureId,
       extractionId: item.id,
-      detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason },
+      // Phase L, CD14: the word Atlas routed it by, so moves of the same word can be counted
+      detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason, ...(draft.routedBy ? { word: draft.routedBy.word } : {}) },
     });
     // Phase S: Atlas put it in the wrong project, so the update is a candidate for the eval set (LF1)
     if (outcome.event === "MOVE") {
       const detail = { kind: draft.kind, fromProject: draft.projectId, toProject: next.projectId };
       await logCandidate(tx, ctx.now, ctx.actorId, { cause: "moved", captureId: row.captureId, extractionId: item.id, text: capture.row.text, detail });
+      // UN10, CD14: the second move of the same word to the same project proposes it as a correction
+      if (draft.routedBy && next.projectId) {
+        await proposeFromMoves(tx, ctx.now, ctx.actorId, { ...draft.routedBy, toProject: next.projectId, captureId: row.captureId });
+      }
     }
     return after;
   });
@@ -852,6 +883,8 @@ export type SaveScope = {
   byId: Map<string, ExtractedItem>;
   /** Blocked work and the blockers reported in the same words (M5): item id to entry ids. */
   blockLinks: Map<string, string[]>;
+  /** Phase L, M30: what this save writes, with each record as it was, so "Undo that" can take it back. */
+  receipt: Receipt;
 };
 
 /**
@@ -941,6 +974,7 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       if (!event) throw new CommandRefused(`${label} cannot go from ${row.state} to ${w.value}`);
       const r = applyWorkItem(workItemRecordOf(row), event, actorIn(s.authorId, row.projectId, s.world.memberships));
       if (!r.outcome.ok) throw new CommandRefused(`${label}: ${r.outcome.reason}`);
+      noteBefore(s.receipt, { type: "work_item", id: row.id, projectId: row.projectId, version: 0, before: { state: row.state, blockedNote: row.blockedNote, blockedLinks: [...row.blockedLinks], forecastDate: row.forecastDate } });
       const rows = await tx
         .update(t.workItems)
         .set({ state: r.record.state, blockedNote: r.record.blockedNote, blockedLinks: [...r.record.blockedLinks], forecastDate: r.record.forecastDate, version: nextVersion(t.workItems.version), updatedAt: now })
@@ -962,6 +996,7 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       const [row] = await tx.select().from(t.milestones).where(eq(t.milestones.id, w.target.id));
       const r = applyMilestone(milestoneRecordOf(row), { type: "FORECAST_CHANGED", forecast: w.value }, actorIn(s.authorId, row.projectId, s.world.memberships));
       if (!r.outcome.ok) throw new CommandRefused(`${row.name}: ${r.outcome.reason}`);
+      noteBefore(s.receipt, { type: "milestone", id: row.id, projectId: row.projectId, version: 0, before: { forecastDate: row.forecastDate } });
       const rows = await tx
         .update(t.milestones)
         .set({ state: r.record.state, forecastDate: r.record.forecastDate, version: nextVersion(t.milestones.version), updatedAt: now })
@@ -983,21 +1018,24 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       const [step] = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, w.target.id));
       const [handover] = await tx.select().from(t.handovers).where(eq(t.handovers.id, step.handoverId));
       const steps = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.handoverId, handover.id));
-      const to = STEP_ORDER.indexOf(w.value as (typeof STEP_ORDER)[number]);
-      if (to < 0 || to < STEP_ORDER.indexOf(step.state)) throw new CommandRefused(`${step.title} cannot go from ${step.state} to ${w.value}`);
+      // Phase L, rule 2: the step moves along its own arrows (handoverStepMachine), so an undo can take it back
+      const stepMove = applyStep(step.state, { type: "MOVE", to: w.value as StepState });
+      if (!stepMove.ok) throw new CommandRefused(`${step.title} cannot go from ${step.state} to ${w.value}`);
+      noteBefore(s.receipt, { type: "handover_step", id: step.id, projectId: handover.projectId, version: 0, before: { state: step.state } });
       const rows = await tx
         .update(t.handoverSteps)
-        .set({ state: STEP_ORDER[to], version: nextVersion(t.handoverSteps.version), updatedAt: now })
+        .set({ state: stepMove.to, version: nextVersion(t.handoverSteps.version), updatedAt: now })
         .where(and(eq(t.handoverSteps.id, step.id), eq(t.handoverSteps.version, step.version)))
         .returning({ id: t.handoverSteps.id });
       expectOne(rows, `handover step ${step.id}`);
-      await recordAudit(s, item.id, { action: "STEP_CHANGED", machine: "handover_step", subjectType: "handover_step", subjectId: step.id, fromState: step.state, toState: STEP_ORDER[to] });
+      await recordAudit(s, item.id, { action: "STEP_CHANGED", machine: "handover_step", subjectType: "handover_step", subjectId: step.id, fromState: step.state, toState: stepMove.to });
       // "k of m" is the steps handed over, so only handing a step over moves the handover itself
-      if (STEP_ORDER[to] === "handed_over" && step.state !== "handed_over") {
+      if (stepMove.to === "handed_over" && step.state !== "handed_over") {
         const done = steps.filter((x) => x.state === "handed_over").length;
         const record: HandoverRecord = { ...handover, stepsDone: done, stepsTotal: steps.length };
         const r = applyHandover(record, { type: "STEPS_DONE", done: done + 1 });
         if (!r.outcome.ok) throw new CommandRefused(`${handover.title}: ${r.outcome.reason}`);
+        noteBefore(s.receipt, { type: "handover", id: handover.id, projectId: handover.projectId, version: 0, before: { state: handover.state, stepsDone: done } });
         const moved = await tx
           .update(t.handovers)
           .set({ state: r.record.state, version: nextVersion(t.handovers.version), updatedAt: now })
@@ -1028,10 +1066,13 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
         leaveId = `lv-${item.id}`;
         await tx.insert(t.leave).values({ id: leaveId, personId: r.request.personId, startDate: r.request.start, endDate: r.request.end, state: r.request.state, createdAt: now, updatedAt: now });
         await recordAudit(s, item.id, { action: "REQUESTED", machine: "leave", subjectType: "leave", subjectId: leaveId, toState: "requested", detail: { start: r.request.start, end: r.request.end } });
+        noteBefore(s.receipt, { type: "leave", id: leaveId, projectId: null, version: 0, before: null });
       } else if (r.kind === "change") {
         // D6: a request just moves; approved leave keeps its dates while the change waits for an admin
         const row = rows.find((x) => x.id === r.leaveId)!;
         const next = changeLeave(leaveRecordOf(row), r.to);
+        const change = row.changeStart && row.changeEnd ? { start: row.changeStart, end: row.changeEnd } : null;
+        noteBefore(s.receipt, { type: "leave", id: row.id, projectId: null, version: 0, before: { start: row.startDate, end: row.endDate, change } });
         const updated = await tx
           .update(t.leave)
           .set({ startDate: next.start, endDate: next.end, changeStart: next.change?.start ?? null, changeEnd: next.change?.end ?? null, version: nextVersion(t.leave.version), updatedAt: now })
@@ -1041,7 +1082,8 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
         leaveId = row.id;
         await recordAudit(s, item.id, { action: "CHANGE_ASKED", machine: "leave", subjectType: "leave", subjectId: row.id, fromState: row.state, toState: row.state, detail: { from: { start: row.startDate, end: row.endDate }, to: r.to } });
       }
-      if (leaveId) await syncLeaveImpact(tx, now, leaveId, { actorId: s.authorId });
+      // Phase L, M30: the leads shown its impact hear "Kemar undid this." if it is undone
+      if (leaveId) s.receipt.told.push(...toldOfLeave((await syncLeaveImpact(tx, now, leaveId, { actorId: s.authorId })).opened, s.authorId, leaveId));
       return null; // personal: no project is touched
     }
   }
@@ -1115,9 +1157,12 @@ async function applyBraid(s: SaveScope, projectId: string, intents: readonly Bra
     sourceItems.set(source.id, item.id);
     audits.push(auditOf(item, b.event, r.entryId, from, raisedAgainFrom ? { raisedAgainFrom } : r.entryId !== braid.matchEntryId && b.event === "ADD_SOURCE" ? { redirectedFrom: braid.matchEntryId } : {}));
   }
-  await persistBraidLog(s.tx, before, log, versions, s.now, { extractionIdBySource: sourceItems });
+  const changed = await persistBraidLog(s.tx, before, log, versions, s.now, { extractionIdBySource: sourceItems });
+  for (const id of changed) noteBefore(s.receipt, { type: "braid_entry", id, projectId, version: 0, before: before[id] ?? null });
   for (const a of audits) await recordAudit(...a);
-  for (const id of resolved) await noticeReporters(s.tx, s.now, log[id], s.authorId, { act: "resolved" });
+  for (const id of resolved) {
+    for (const personId of await noticeReporters(s.tx, s.now, log[id], s.authorId, { act: "resolved" })) s.receipt.told.push({ personId, projectId, subjectType: "braid_entry", subjectId: id });
+  }
 }
 
 export type SaveOptions = {
@@ -1233,6 +1278,7 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
     const finished = moveCapture(saving.record, finish);
     captureMoves.push(finished.outcome);
 
+    const receipt: Receipt = { records: new Map(), told: [] };
     const writeAll = async (extra: (s: SaveScope) => Promise<void>) => {
       const s: SaveScope = {
         tx,
@@ -1242,6 +1288,7 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
         world,
         byId: new Map(items.map((i) => [i.id, i])),
         blockLinks: plan.outcome === "apply" ? blockLinksOf(items, plan) : new Map(),
+        receipt,
       };
       await extra(s);
       const final = settled.map((i) => {
@@ -1289,8 +1336,18 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       for (const a of plan.asks) touched.add(a.projectId);
     });
     await syncReminder(tx, ctx.now, authorId, captureId, false, true);
+    // Phase L: a set status the rules move after this save is part of it, and goes back with an undo
+    const statusBefore = new Map<string, typeof t.projects.$inferSelect>();
+    for (const id of touched) statusBefore.set(id, (await tx.select().from(t.projects).where(eq(t.projects.id, id)))[0]);
     // Rules run after the change, as the author, so items their own save resolved close as acted
     const evaluations = await evaluateProjects(tx, touched, ctx.now, { actorId: authorId });
+    for (const [id, was] of statusBefore) {
+      const [moved_] = await tx.select({ version: t.projects.version }).from(t.projects).where(eq(t.projects.id, id));
+      if (moved_.version === was.version) continue;
+      noteBefore(receipt, { type: "set_status", id, projectId: id, version: 0, before: { ...setStatusRecordOf(was), setBy: was.setBy, setAt: was.setAt?.toISOString() ?? null } });
+    }
+    receipt.told.push(...(await toldBy(tx, evaluations, authorId)));
+    await writeReceipt(tx, ctx.now, captureId, authorId, receipt);
     return {
       outcome: "saved",
       applied: settled.filter((i) => i.state === "applied" && loaded.find((l) => l.id === i.id)?.state !== "applied").map((i) => i.id),

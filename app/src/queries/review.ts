@@ -107,6 +107,8 @@ export type Review = {
   /** Section 20, U1: what the checks refused and what fed nothing. The author only, like the capture. */
   setAside: SetAside;
   canSave: boolean;
+  /** Phase L, M30: when the author undid this save; its items stay as they were saved, but nothing stands. */
+  undoneAt: Date | null;
 };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -508,5 +510,12 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     chatLine: `Got it. ${withSetAside(countsLine(counts, "; "), aside)}`,
     setAside: aside,
     canSave: (capture.state === "proposed" || capture.state === "reviewing") && counts.needsOk === 0 && counts.needsProject === 0,
+    undoneAt: await undoneAt(conn, capture.id),
   };
+}
+
+/** Phase L, M30: when the save of this capture was undone, or null. The capture is the author's (M1). */
+export async function undoneAt(conn: Conn, captureId: string): Promise<Date | null> {
+  const [job] = await conn.select({ at: t.undos.updatedAt }).from(t.undos).where(and(eq(t.undos.captureId, captureId), eq(t.undos.state, "undone")));
+  return job?.at ?? null;
 }

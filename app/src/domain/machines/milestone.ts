@@ -24,7 +24,9 @@ export type MilestoneEvent =
   | { type: "FINISH" }
   // The daily timer at 00:00 in the org time zone; `at` is when it ran
   | { type: "TARGET_PASSED"; at: Date }
-  | { type: "FORECAST_CHANGED"; forecast: IsoDate };
+  | { type: "FORECAST_CHANGED"; forecast: IsoDate }
+  // Phase L, M30: the owner's own save is undone; the forecast goes back to what it was (null: the target)
+  | { type: "UNDO"; forecast: IsoDate | null };
 
 type Ctx = { record: MilestoneRecord; actor: Actor | null; timeZone: string };
 
@@ -32,6 +34,13 @@ export const ASK_THE_OWNER = "only the milestone owner changes its forecast; ask
 
 function forecastGuard({ record, actor }: Ctx, { forecast }: { forecast: IsoDate }): string | null {
   if (!isIsoDate(forecast)) return `${forecast} is not a date`;
+  if (actor?.personId !== record.ownerId) return ASK_THE_OWNER;
+  return forecast === record.forecastDate ? "already the forecast" : null;
+}
+
+// Rule 4: only the owner sets the forecast, so only the owner, still the owner now, takes it back
+function undoGuard({ record, actor }: Ctx, { forecast }: { forecast: IsoDate | null }): string | null {
+  if (forecast !== null && !isIsoDate(forecast)) return `${forecast} is not a date`;
   if (actor?.personId !== record.ownerId) return ASK_THE_OWNER;
   return forecast === record.forecastDate ? "already the forecast" : null;
 }
@@ -55,6 +64,8 @@ export const milestoneMachine = defineMachine<MilestoneState, MilestoneEvent, Ct
     { from: ["planned"], on: "FORECAST_CHANGED", to: "planned", guard: forecastGuard },
     { from: ["in_progress"], on: "FORECAST_CHANGED", to: "in_progress", guard: forecastGuard },
     { from: ["missed"], on: "FORECAST_CHANGED", to: "missed", guard: forecastGuard },
+    // Phase L, M30: the forecast is a field, so its UNDO arrow keeps the state, like FORECAST_CHANGED
+    ...(["planned", "in_progress", "missed"] as const).map((s) => ({ from: [s], on: "UNDO" as const, to: s, guard: undoGuard })),
   ],
 });
 
@@ -69,7 +80,7 @@ export function applyMilestone(
 ): MilestoneResult {
   const outcome = transition(milestoneMachine, record.state, event, { record, actor, timeZone });
   if (!outcome.ok) return { outcome, record };
-  const forecastDate = event.type === "FORECAST_CHANGED" ? event.forecast : record.forecastDate;
+  const forecastDate = event.type === "FORECAST_CHANGED" || event.type === "UNDO" ? event.forecast : record.forecastDate;
   return { outcome, record: { ...record, state: outcome.to, forecastDate } };
 }
 

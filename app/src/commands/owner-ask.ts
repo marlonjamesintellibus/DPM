@@ -136,7 +136,9 @@ export function acceptOwnerAsk(ctx: CommandCtx, askId: string, value?: string): 
     const { items } = await loadItems(tx, after.captureId);
     const item = items.find((i) => i.id === after.extractionId);
     if (!capture || !item || !after.target) throw new CommandRefused("the update this came from is gone");
-    const scope: SaveScope = { tx, now: ctx.now, authorId: ctx.actorId, capture: capture.row, world: await loadWorld(tx), byId: new Map([[item.id, item]]), blockLinks: new Map() };
+    // Phase L, M30: an accepted ask is the owner's decision, not a save of theirs, so its receipt is not kept
+    const receipt = { records: new Map(), told: [] };
+    const scope: SaveScope = { tx, now: ctx.now, authorId: ctx.actorId, capture: capture.row, world: await loadWorld(tx), byId: new Map([[item.id, item]]), blockLinks: new Map(), receipt };
     await applyWrite(scope, { itemId: item.id, target: after.target, key: `${after.target.type}:${after.target.id}:${after.target.field}`, expected: before.saw, value: after.appliedValue! });
     await notice(tx, ctx.now, [after.authorId], `${by} accepted your update.`, { type: "owner_ask", id: after.id, projectId: after.projectId, act: "applied" });
   });

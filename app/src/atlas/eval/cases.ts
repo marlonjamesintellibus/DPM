@@ -17,9 +17,11 @@
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
 // commands (phase B): what a reply decides on the open answer, after the checks: "<act>@<line>" per card,
 //   or "note:<kind>[@<lines>]" when it made none ("note:which@1,2"). A case without it must decide nothing.
+// correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
 import type { EarlierTurn, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
+import type { Correction } from "../../domain/topics/correction";
 
 export type EvalAuthor = "kemar" | "alicia" | "andre";
 
@@ -49,6 +51,8 @@ export type EvalCase = {
   earlier?: EarlierTurn[];
   /** Section 16: the earlier item a correction must name in replacesItemId. */
   replaces?: string;
+  /** Phase L, M31: the correction it must propose, after the checks (a word is matched in any case). */
+  correct?: Omit<Correction, "word" | "personId" | "notProjectId"> & Partial<Pick<Correction, "word" | "personId" | "notProjectId">>;
   /** BRAID entries this case adds to its author's data only (section 20, U4: an approved decision to reverse). */
   braid?: { projectId: string; id: string; kind: BraidKind; title: string; state: string }[];
   /** Phase B: the answer open in the conversation, whose lines a reply may decide. */
@@ -1023,5 +1027,32 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
     ask: { topic: "why", projectId: [null, "forager"], subject: ["ms-trend", "wi-147"] },
+  },
+  // Phase L: undo, why did you file that, and corrections that teach Atlas (conversational plan, section 14)
+  { id: "undo-that", about: "M30 'Undo that' is the undo command, nothing proposed", text: "Undo that", expect: [], forbid: ["*"], ask: { topic: "undo", projectId: null } },
+  { id: "why-filed", about: "why Atlas filed the last update", text: "Why did you file that?", expect: [], forbid: ["*"], ask: { topic: "why_filed", projectId: null } },
+  {
+    id: "correction-alias",
+    about: "M31 another name for a project the author is in",
+    text: "GQ also means the Guild.",
+    expect: [],
+    forbid: ["*"],
+    correct: { kind: "alias", projectId: "gq", word: "Guild" },
+  },
+  {
+    id: "correction-contact",
+    about: "M31 a person tied to one project, not another",
+    text: "Kyle is Store Insights, not Forager.",
+    expect: [],
+    forbid: ["*"],
+    correct: { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" },
+  },
+  {
+    id: "correction-patois",
+    about: "M31 the same correction in Patois",
+    text: "Kyle a fi Store Insights, him nuh deh pon Forager.",
+    expect: [],
+    forbid: ["*"],
+    correct: { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" },
   },
 ];

@@ -13,7 +13,7 @@ import { suggestionsAfter } from "@/domain/topics";
 import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
 import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
-import { AcceptItem, AnswerFeedback, CopyReply, Suggestions } from "./reply-tools";
+import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
@@ -284,9 +284,15 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
           </div>
         )}
         {capture.state === "saved" && (
-          <Link href={`/review/${capture.id}`} className="type-caption text-accent hover:underline">
-            See what was saved
-          </Link>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link href={`/review/${capture.id}`} className="type-caption text-accent hover:underline">
+              {capture.undo?.state === "undone" ? "See what was taken back" : "See what was saved"}
+            </Link>
+            {/* Phase L, M30: Undo while it may still work; once undone, when */}
+            {capture.undo?.may && <UndoSave captureId={capture.id} />}
+            {capture.undo?.state === "undone" && capture.undo.at && <span className="type-caption text-fg-3">You undid this at {clockTime(capture.undo.at)}.</span>}
+            {capture.undo?.state === "refused" && capture.undo.note && <span className="type-caption text-fg-3">{capture.undo.note}</span>}
+          </div>
         )}
       </AtlasLine>
       {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}

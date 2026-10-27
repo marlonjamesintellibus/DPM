@@ -29,12 +29,13 @@ async function Review({ params }: { params: PageProps<"/review/[captureId]">["pa
   const time = new Intl.DateTimeFormat("en-US", { timeZone: "America/Jamaica", hour: "numeric", minute: "2-digit" }).format(review.capture.messageAt).replace(" ", "").toLowerCase();
   const from = review.capture.kind === "voice" ? `your voice note at ${time}` : `your message at ${time}`;
   const state = review.capture.state;
+  // Phase L, M30: an undone save keeps its items as saved; the page says none of it stands
   return (
     <ViewerShell breadcrumb={["Today", "Review my update"]} activeHref="/">
       <PageHead title="Review my update">
         <span className="px-2.5 py-1 type-body text-fg-2">
           From {from}. {review.footer.split(". ")[0].replace(/\.$/, "")}.{" "}
-          {state === "saved" ? "Saved." : state === "rejected" ? "Discarded." : state === "expired" ? "Expired: nothing was saved." : "Nothing is saved until you confirm."}
+          {state === "saved" ? (review.undoneAt ? "Saved, then undone: none of it stands now." : "Saved.") : state === "rejected" ? "Discarded." : state === "expired" ? "Expired: nothing was saved." : "Nothing is saved until you confirm."}
         </span>
       </PageHead>
       <div className="flex flex-1 flex-col gap-4 overflow-auto px-7 pt-5 pb-7">

@@ -247,7 +247,12 @@ export type BraidEvent =
   /** The new entry a switch makes, with the old entry's reports and owner. */
   | { type: "SWITCH_IN"; from: BraidEntryRecord }
   /** Switching back: the original reopens as it was, with the reports of the entry it became. */
-  | { type: "RESTORE"; from: BraidEntryRecord };
+  | { type: "RESTORE"; from: BraidEntryRecord }
+  /**
+   * Phase L, M30: the reporter's own save is undone. `before` is the entry as it was before that save, or
+   * null when the save reported it: then it goes back to none. Only the undo command fires it.
+   */
+  | { type: "UNDO"; before: BraidEntryRecord | null };
 
 type EventOf<K extends BraidEvent["type"]> = Extract<BraidEvent, { type: K }>;
 
@@ -432,6 +437,36 @@ function supersedeGuard(c: Ctx, { by }: EventOf<"SUPERSEDE">): string | null {
   return linked ? null : "not linked as conflicting";
 }
 
+/**
+ * Phase L, M30: one UNDO arrow back for each move a save makes, as [from, the states it goes back to]. A
+ * report goes back to none (it was never on the log); an added source back to the state it reopened or
+ * re-proposed (S14, E85); a resolve or outcome back to where it was; a proposed outcome or "it's cleared"
+ * keeps the state. D11: only the save's own sources leave; an entry others reported stays (UN6).
+ */
+export const UNDO_BACK: readonly (readonly [BraidEntryState, readonly BraidEntryState[]])[] = [
+  ["none", ["none"]], // a D10 follow up the save drafted
+  ["reported", ["none", "resolved", "reported"]],
+  ["proposed", ["none", "declined", "proposed"]],
+  ["open", ["none", "open"]],
+  ["holding", ["none", "holding"]],
+  ["resolved", ["reported", "resolved"]],
+  ["closed", ["open", "mitigating", "closed"]],
+  ["realised", ["open", "mitigating", "realised"]],
+  ["confirmed", ["holding", "confirmed"]],
+  ["broken", ["holding", "broken"]],
+  ["met", ["open", "waiting", "met"]],
+  ["late", ["open", "waiting", "late"]],
+  ...(["more_info", "declined", "mitigating", "waiting", "approved", "superseded"] as const).map((s) => [s, [s]] as const),
+];
+
+// Rule 4: the right is read when the arrow runs. An entry goes back to none only when nobody else reported it (UN6)
+function undoGuard(c: Ctx, e: EventOf<"UNDO">, to: BraidEntryState): string | null {
+  if (!c.actor?.role) return NOT_MEMBER;
+  if ((e.before?.state ?? "none") !== to) return `was ${e.before?.state ?? "none"} before`;
+  if (e.before === null && c.record.sources.some((s) => s.personId !== c.actor?.id)) return "others reported it too";
+  return null;
+}
+
 /** S18: first reminder after 2 working days, then weekly. Reminders only remind. */
 export function braidReminderDue(entry: BraidEntryRecord, today: IsoDate): boolean {
   if (entry.state !== "proposed" || entry.proposedOn === null) return false;
@@ -544,6 +579,7 @@ export const braidEntryMachine = defineMachine<BraidEntryState, BraidEvent, Ctx>
     { from: ["none"], on: "SWITCH_IN", to: "open", guard: (c) => switchInGuard(c, "on_log") ?? onlyKinds(c, ["risk", "dependency"]) },
     { from: ["none"], on: "SWITCH_IN", to: "holding", guard: (c) => switchInGuard(c, "on_log") ?? onlyKinds(c, ["assumption"]) },
     ...SWITCH_ENDS.flatMap(([end, back]) => back.map((s): BraidArrow => ({ from: [end], on: "RESTORE", to: s, guard: (c, e) => restoreGuard(c, e, s) }))),
+    ...UNDO_BACK.flatMap(([from, back]) => back.map((s): BraidArrow => ({ from: [from], on: "UNDO", to: s, guard: (c, e) => undoGuard(c, e, s) }))),
   ],
 });
 
@@ -630,6 +666,9 @@ function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: st
       };
     case "SET_EXPECTED":
       return { ...r, expectedOn: e.date };
+    case "UNDO":
+      // As it was before the save: the save's sources, links and alerts go with it; answers are kept for good
+      return e.before ? { ...e.before, answers: r.answers } : draftEntry({ id: r.id, projectId: r.projectId, kind: r.kind, title: r.title });
     case "PROGRESS":
     case "SUPERSEDE":
       return r;
@@ -665,6 +704,7 @@ export function applyToLog(log: BraidLog, entryId: string, event: BraidEvent, ct
     return { outcome: refused(event.type, entry.state, "merging moves sources between entries; use mergeEntries or unmergeEntry"), log };
   }
   if (event.type === "SUPERSEDE") return { outcome: refused(event.type, entry.state, "only approving a conflicting decision supersedes one"), log };
+  if (event.type === "UNDO") return { outcome: refused(event.type, entry.state, "an undo runs only from the undo job"), log };
   if (event.type === "SWITCH_KIND" || event.type === "SWITCH_IN" || event.type === "RESTORE") {
     return { outcome: refused(event.type, entry.state, "a switch makes or reopens another entry; use switchKind"), log };
   }

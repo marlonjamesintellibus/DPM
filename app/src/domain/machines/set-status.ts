@@ -21,11 +21,21 @@ export type SetStatusEvent =
   | { type: "OWNER_SETS"; status: Status }
   | { type: "GIVE_REASON"; linksOnLog: number }
   | { type: "KEEP" }
-  | { type: "CALCULATED_CHANGED"; previous: Status | null; next: Status | null };
+  | { type: "CALCULATED_CHANGED"; previous: Status | null; next: Status | null }
+  // Phase L, M30: a save moved the plan and the rule moved the set status; undoing the save puts it back
+  | { type: "UNDO"; before: SetStatusRecord };
 
 type Ctx = { record: SetStatusRecord; calculated: Status | null };
 
 const ANY = OVERRIDE_STATES;
+
+/** Phase L, M30: what a save's CALCULATED_CHANGED can leave, and the states its UNDO goes back to. */
+export const UNDO_BACK: readonly (readonly [OverrideState, OverrideState])[] = [
+  ["calculated_only", "reason_required"],
+  ["calculated_only", "explained"],
+  ["calculated_only", "reason_stale"],
+  ["reason_stale", "explained"],
+];
 const HAS_SET = ["reason_required", "explained", "reason_stale"] as const;
 
 // The set status ends when the plan agrees with it again, or the work is Done (policy "when_done").
@@ -78,6 +88,12 @@ export const setStatusMachine = defineMachine<OverrideState, SetStatusEvent, Ctx
       to: "reason_stale",
       guard: (_, { previous, next }) => (config.reasonStale && next !== previous ? null : "the plan did not move"),
     },
+    ...UNDO_BACK.map(([from, to]) => ({
+      from: [from],
+      on: "UNDO" as const,
+      to,
+      guard: (_: Ctx, { before }: { before: SetStatusRecord }) => (before.override === to ? null : `was ${before.override} before`),
+    })),
   ],
 });
 
@@ -87,6 +103,7 @@ export type SetStatusResult = { outcome: Outcome<OverrideState>; record: SetStat
 export function applySetStatus(record: SetStatusRecord, calculated: Status | null, event: SetStatusEvent): SetStatusResult {
   const outcome = transition(setStatusMachine, record.override, event, { record, calculated });
   if (!outcome.ok) return { outcome, record };
+  if (event.type === "UNDO") return { outcome, record: { override: outcome.to, setStatus: event.before.setStatus, reasonGivenAt: event.before.reasonGivenAt } };
   if (outcome.to === "calculated_only") return { outcome, record: NO_SET_STATUS };
   switch (event.type) {
     case "OWNER_SETS":

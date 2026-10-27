@@ -9,7 +9,10 @@
 //        be approved (AliasClearForEveryReader); and refusing a clash with a project Kemar cannot open
 //        tells him it exists (NamesOnlyReadable, P10)
 // The "with the fixes" rows add what the findings suggest; every plant runs against them.
+// UndoArrows (added after phase L was built): the UNDO arrows drawn on each record machine an undo touches,
+// as the app draws them, checked against every move one save can make on that record.
 import { Undo, VocabularyChange } from '../models/undoAndVocabulary.mjs';
+import { MACHINES, UndoArrows } from '../models/undoArrows.mjs';
 
 // expectFail lists the properties expected to fail; everything else should pass
 export const ROWS = [
@@ -17,12 +20,13 @@ export const ROWS = [
   { spec: 'Undo', setting: 'with the fixes (recheck when the UNDO arrows run, undoing -> refused, name only what the reader can open)', model: Undo({ Recheck: true }), expectFail: [] },
   { spec: 'VocabularyChange', setting: 'as written', model: VocabularyChange(), expectFail: ['AliasClearForEveryReader', 'NamesOnlyReadable'] },
   { spec: 'VocabularyChange', setting: 'with the fixes (clash checked against what the person told can open, again at APPROVE)', model: VocabularyChange({ Recheck: true }), expectFail: [] },
+  ...Object.keys(MACHINES).map((Machine) => ({ spec: 'UndoArrows', setting: `${Machine}, as built in phase L`, model: UndoArrows({ Machine }), expectFail: [] })),
 ];
 
 // Planted bugs: each one must make a full check fail
 export const PLANTS = [
   { spec: 'Undo', setting: 'bug: the job goes from requested straight to undone', model: Undo({ Recheck: true, Bug: 'skipCheck' }), expectFail: ['OnlyDrawnArrows'] },
-  // Undoing an approved risk takes it from open to withdrawn, an arrow nobody drew
+  // Undoing an approved risk takes it from open to none, an arrow nobody drew
   { spec: 'Undo', setting: 'bug: versions are not compared (UN2)', model: Undo({ Recheck: true, Bug: 'noVersionCheck' }), expectFail: ['OnlyDrawnArrows', 'NeverUndoOthersWork'] },
   { spec: 'Undo', setting: 'bug: the records that still match are undone, the rest skipped', model: Undo({ Recheck: true, Bug: 'partial' }), expectFail: ['AllOrNothing'] },
   { spec: 'Undo', setting: 'bug: "Undo that" twice makes two jobs (UN5)', model: Undo({ Recheck: true, Bug: 'noDedup' }), expectFail: ['OneJobPerCommand'] },
@@ -45,4 +49,12 @@ export const PLANTS = [
   { spec: 'VocabularyChange', setting: 'bug: expires without the reminders first', model: VocabularyChange({ Recheck: true, Bug: 'expireEarly' }), expectFail: ['ReminderBeforeExpiry'] },
   { spec: 'VocabularyChange', setting: 'bug: no clash recheck at APPROVE', model: VocabularyChange({ Recheck: true, Bug: 'noClashRecheck' }), expectFail: ['AliasClearForEveryReader'] },
   { spec: 'VocabularyChange', setting: 'bug: the clash is checked against the whole org (UN9 as written)', model: VocabularyChange({ Recheck: true, Bug: 'orgWideClash' }), expectFail: ['NamesOnlyReadable'] },
+  // Each machine's first UNDO arrow left undrawn: a save that took that move could never be undone
+  ...Object.keys(MACHINES).map((Machine) => ({ spec: 'UndoArrows', setting: `bug: ${Machine} misses an UNDO arrow`, model: UndoArrows({ Machine, Bug: 'missingArrow' }), expectFail: ['EveryMoveCanGoBack'] })),
+  { spec: 'UndoArrows', setting: 'bug: the undo skips the version check (work item)', model: UndoArrows({ Machine: 'WorkItem', Bug: 'noVersionCheck' }), expectFail: ['NeverUndoOthersWork'] },
+  // Wave 2: phase L as built before section 20, U6 met it; a save that only set #147's forecast had no way back
+  { spec: 'UndoArrows', setting: 'bug: the work item has no UNDO arrow that keeps its state (forecast only)', model: UndoArrows({ Machine: 'WorkItem', Bug: 'noSameStateUndo' }), expectFail: ['EveryMoveCanGoBack'] },
+  { spec: 'UndoArrows', setting: 'bug: the undo skips the version check (BRAID entry)', model: UndoArrows({ Machine: 'BraidEntry', Bug: 'noVersionCheck' }), expectFail: ['NeverUndoOthersWork'] },
+  // Why a step's MOVE is strictly forward: a save that "moved" it to where it was has no UNDO arrow back
+  { spec: 'UndoArrows', setting: 'bug: a save moves a handover step to the state it is in', model: UndoArrows({ Machine: 'HandoverStep', Bug: 'sameMove' }), expectFail: ['EveryMoveCanGoBack'] },
 ];

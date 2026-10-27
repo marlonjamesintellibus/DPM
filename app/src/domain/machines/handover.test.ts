@@ -1,6 +1,19 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { applyHandover, HANDOVER_STATES, type HandoverEvent, type HandoverRecord, type HandoverState } from "./handover";
+import { applyHandover, applyStep, HANDOVER_STATES, STEP_STATES, type HandoverEvent, type HandoverRecord, type HandoverState } from "./handover";
+
+describe("a handover step (phase L, rule 2)", () => {
+  it("moves only forward on a save, and each move has its UNDO back (undoArrows.mjs, HandoverStep)", () => {
+    for (const from of STEP_STATES) {
+      for (const to of STEP_STATES) {
+        const forward = STEP_STATES.indexOf(to) > STEP_STATES.indexOf(from);
+        expect(applyStep(from, { type: "MOVE", to }).ok, `${from} to ${to}`).toBe(forward);
+        expect(applyStep(to, { type: "UNDO", to: from }).ok, `back from ${to} to ${from}`).toBe(forward);
+      }
+    }
+    expect(applyStep("not_done", { type: "MOVE", to: "finished" as never })).toMatchObject({ ok: false, reason: '"finished" is not a handover step state (not_done, in_progress, handed_over)' });
+  });
+});
 
 // Kemar's runbook handover to Jodian before his leave
 const runbook = (state: HandoverState = "in_progress", stepsDone = 2): HandoverRecord => ({

@@ -18,7 +18,7 @@ import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } fr
 import { OUTCOME_ACT } from "@/queries/review";
 import { OUTCOMES, type ResolveOutcome } from "@/domain/machines/braid-entry";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
-import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, OwnerAskControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
+import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, OutcomeControls, OwnerAskControls, LeaveControls, LinkChangeForm, ReasonEditor, VocabularyControls } from "./inbox-actions";
 
 const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   status_set_with_no_reason: "Delivery check",
@@ -38,6 +38,7 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   dependency_due: "Dependency due",
   confirm_outcome: "Ended?",
   owner_ask: "Asked of you",
+  vocab_change: "Correction",
 };
 
 /** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
@@ -196,6 +197,14 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
       return <OwnerAskDetail item={item} label={label} askId={item.subject.id} />;
     case "kind_request":
       return <KindRequestDetail item={item} label={label} entryId={item.subject.entryId} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
+    case "vocabulary_change":
+      // Phase L, M31: what it changes, and that it changes how Atlas files everyone's updates; nothing applies until approved
+      return (
+        <DetailCard label={label} title={item.title}>
+          <Explain>Why it is here: {item.why}. Approving it changes how Atlas reads new updates from now on; nothing already filed moves.</Explain>
+          <VocabularyControls changeId={item.subject.id} />
+        </DetailCard>
+      );
     case "work_item":
       if (item.cause === "blocked_without_blocker") {
         return (

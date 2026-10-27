@@ -110,6 +110,8 @@ type Work = {
   supersedes: { project: CandidateProject; entry: OpenBraidEntry } | null;
   /** Section 20, U5: the owner to ask, when the author may not change the record themselves. */
   ask: string | null;
+  /** Phase L, CD14: the name or person check 14 confirmed as the reason for the project. */
+  routedBy: { basis: "reference" | "tied_person"; word: string; personId: string | null } | null;
 };
 
 type Scope = ReturnType<typeof scopeOf>;
@@ -663,6 +665,15 @@ function reasonHolds(w: Work, s: Scope): boolean {
   }
 }
 
+/** Phase L, CD14: the deciding word of a confirmed reference or tied person, and who that person is. */
+function routedByOf(w: Work, s: Scope): Work["routedBy"] {
+  const reason = w.p.routingReason;
+  if (reason.basis !== "reference" && reason.basis !== "tied_person") return null;
+  const word = reason.evidence.trim();
+  const person = reason.basis === "tied_person" ? s.project(w.projectId)?.people.find((x) => norm(x.name) === norm(word) || norm(x.name.split(" ")[0]) === norm(word)) : undefined;
+  return { basis: reason.basis, word, personId: person?.personId ?? null };
+}
+
 function checkRoutingReasons(works: Work[], s: Scope): void {
   const routed = (w: Work) => w.routing === "routed" && w.scope === "project";
   const downgrade = (w: Work) => {
@@ -681,7 +692,11 @@ function checkRoutingReasons(works: Work[], s: Scope): void {
   };
   const sameQuote = works.filter((w) => routed(w) && w.p.routingReason.basis === "same_quote");
   for (const w of works) {
-    if (!routed(w) || sameQuote.includes(w) || reasonHolds(w, s)) continue;
+    if (routed(w) && !sameQuote.includes(w) && reasonHolds(w, s)) {
+      w.routedBy = routedByOf(w, s);
+      continue;
+    }
+    if (!routed(w) || sameQuote.includes(w)) continue;
     const pinned = pinnedByTarget(w);
     if (pinned) w.routingReason = pinned;
     else downgrade(w);
@@ -712,6 +727,7 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     // Leave rationale is the server's own words, so nothing said around the dates is stored (E17)
     rationale: t?.type === "leave" ? "Leave dates you mentioned" : w.p.rationale,
   };
+  if (w.routedBy && w.routing === "routed") draft.routedBy = w.routedBy;
   // CV10, CV12: a correction replaces only an open item of an earlier message in this conversation
   const replaces = w.p.replacesItemId;
   if (replaces && s.ctx.earlier?.some((turn) => turn.openItems.some((i) => i.id === replaces))) draft.replaces = replaces;
@@ -775,6 +791,7 @@ function start(p: RawProposal): Work {
     outcome: null,
     supersedes: null,
     ask: null,
+    routedBy: null,
   };
 }
 

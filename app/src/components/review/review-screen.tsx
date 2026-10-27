@@ -217,7 +217,9 @@ function ChangesCard({
       ))}
       <div className={`flex items-center gap-2 pt-2 ${single && !saved ? "hidden" : ""}`}>
         <p className={`flex-1 type-caption ${counts.needsOk || counts.needsProject ? "text-warn" : "text-fg-3"}`}>
-          {saved
+          {saved && review.undoneAt
+            ? "You undid this save, so these changes were taken back."
+            : saved
             ? "Saved. Each project now shows its own lines."
             : counts.needsOk || counts.needsProject
               ? review.footer.split(". ").slice(1).join(". ").replace(/\.$/, "") + " before this is saved"

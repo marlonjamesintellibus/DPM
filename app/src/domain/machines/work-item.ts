@@ -32,11 +32,40 @@ export type WorkItemEvent =
   | { type: "REOPEN" }
   | { type: "CANCEL" }
   /** Section 20, U6: the owner says when it will be done (WorkForecast). The due date never moves from a message. */
-  | { type: "SET_FORECAST"; forecast: IsoDate };
+  | { type: "SET_FORECAST"; forecast: IsoDate }
+  // Phase L, M30: the author's own save is undone; back to the state, note, links and forecast it had before
+  | { type: "UNDO"; to: WorkItemState; note: string | null; links: readonly string[]; forecast: IsoDate | null };
 
 type Ctx = { record: WorkItemRecord; actor: Actor };
 
 const needsNote = (note: string) => (note.trim() ? null : "a blocked item says what it is waiting on");
+
+/**
+ * Phase L, M30: one UNDO arrow back for each move a save can make (START, FINISH, BLOCK, UPDATE_BLOCKED_NOTE,
+ * UNBLOCK, REOPEN, SET_FORECAST), as [from, to]. This is the only way back to To do, and only for the save that
+ * left it. Section 20, U6: the forecast is a field, so its UNDO keeps the state, as a milestone's does.
+ */
+export const UNDO_BACK: readonly (readonly [WorkItemState, WorkItemState])[] = [
+  ["in_progress", "to_do"],
+  ["done", "to_do"],
+  ["done", "in_progress"],
+  ["done", "blocked"],
+  ["blocked", "in_progress"],
+  ["blocked", "blocked"],
+  ["in_progress", "blocked"],
+  ["in_progress", "done"],
+  ["to_do", "to_do"],
+  ["in_progress", "in_progress"],
+];
+
+// Rule 4: the right is held when the arrow runs, not when "Undo that" was asked
+function undoGuard({ record, actor }: Ctx, e: Extract<WorkItemEvent, { type: "UNDO" }>, to: WorkItemState): string | null {
+  if (!actor.role) return "only a project member can undo this";
+  if (e.to !== to) return `goes back to ${e.to}`;
+  // ForecastOnlyByOwner: only its owner, still the owner now, takes a forecast back
+  if (e.forecast !== record.forecastDate && actor.personId !== record.ownerId) return "only its owner forecasts it";
+  return to === "blocked" ? needsNote(e.note ?? "") : null;
+}
 
 export const workItemMachine = defineMachine<WorkItemState, WorkItemEvent, Ctx>({
   name: "work_item",
@@ -64,6 +93,7 @@ export const workItemMachine = defineMachine<WorkItemState, WorkItemEvent, Ctx>(
       to: s,
       guard: ({ record, actor }: Ctx) => (actor.personId === record.ownerId ? null : "only its owner forecasts it"),
     })),
+    ...UNDO_BACK.map(([from, to]) => ({ from: [from], on: "UNDO" as const, to, guard: (c: Ctx, e: Extract<WorkItemEvent, { type: "UNDO" }>) => undoGuard(c, e, to) })),
   ],
 });
 
@@ -74,6 +104,7 @@ export function applyWorkItem(record: WorkItemRecord, event: WorkItemEvent, acto
   const outcome = transition(workItemMachine, record.state, event, { record, actor });
   if (!outcome.ok) return { outcome, record };
   if (event.type === "SET_FORECAST") return { outcome, record: { ...record, forecastDate: event.forecast } };
+  if (event.type === "UNDO") return { outcome, record: { ...record, state: outcome.to, blockedNote: event.note, blockedLinks: [...event.links], forecastDate: event.forecast } };
   // DoneHasNoForecast: finished work has nothing left to forecast
   if (outcome.to === "done") return { outcome, record: { ...record, state: outcome.to, blockedNote: null, forecastDate: null } };
   if (event.type === "BLOCK" || event.type === "UPDATE_BLOCKED_NOTE") {

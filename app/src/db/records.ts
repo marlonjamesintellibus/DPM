@@ -72,14 +72,15 @@ export function setStatusRecordOf(row: typeof t.projects.$inferSelect): SetStatu
   return { override: row.setOverride, setStatus: row.setStatus, reasonGivenAt: (row.reasonGivenAt as Status | null) ?? null };
 }
 
-export async function persistSetStatus(tx: Tx, projectId: string, version: number, record: SetStatusRecord, now: Date, setBy?: string): Promise<void> {
+/** setBy: the owner who set it now, or (phase L, an UNDO) who set it and when, as it was before. */
+export async function persistSetStatus(tx: Tx, projectId: string, version: number, record: SetStatusRecord, now: Date, setBy?: string | { by: string | null; at: Date | null }): Promise<void> {
   const rows = await tx
     .update(t.projects)
     .set({
       setOverride: record.override,
       setStatus: record.setStatus,
       reasonGivenAt: record.reasonGivenAt,
-      ...(setBy !== undefined ? { setBy, setAt: now } : {}),
+      ...(typeof setBy === "string" ? { setBy, setAt: now } : setBy ? { setBy: setBy.by, setAt: setBy.at } : {}),
       ...(record.override === "calculated_only" ? { setBy: null, setAt: null } : {}),
       version: nextVersion(t.projects.version),
       updatedAt: now,
