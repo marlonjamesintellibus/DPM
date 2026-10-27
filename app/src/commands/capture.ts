@@ -466,9 +466,11 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
     const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
     if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
-    // Phase S: an answer DPM could not give is a candidate for the eval set, with the asker's OK (LF1)
+    // Phase S: an answer DPM could not give is a candidate for the eval set, with the asker's OK (LF1).
+    // The words are the asker's; Atlas's job found it, so the audit says Atlas
     if (asked && answer && (asked.topic === "other" || asked.topic === "unclear")) {
-      await logCandidate(tx, ctx.now, row.authorId, { cause: asked.topic, captureId, text: row.text, detail: { topic: asked.topic, answer: answer.rulesText ?? answer.text } });
+      const detail = { topic: asked.topic, answer: answer.rulesText ?? answer.text };
+      await logCandidate(tx, ctx.now, row.authorId, { cause: asked.topic, captureId, text: row.text, detail }, { actorType: atlas.type, actorId: atlas.id });
     }
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)

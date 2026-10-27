@@ -41,13 +41,16 @@ export function Suggestions({ asks }: { asks: string[] }) {
 
 /**
  * Phase S: a thumbs up or down on the answer, next to Copy, which the asker can change (LF6). A thumbs
- * down asks "What was wrong?" (optional), and offers "Help improve Atlas" to someone who has it off.
+ * down asks "What was wrong?" (optional) while "Help improve Atlas" is on. With it off only the thumbs is
+ * kept (LF1), so instead of the box it offers the setting.
  */
 export function AnswerFeedback({ captureId, given, helpOn }: { captureId: string; given: { rating: "up" | "down"; wrong: string | null } | null; helpOn: boolean }) {
   const [rating, setRating] = useState(given?.rating ?? null);
   const [wrong, setWrong] = useState(given?.wrong ?? "");
+  const [turnedOn, setTurnedOn] = useState(false);
   const [pending, start] = useTransition();
   const [result, setResult] = useState<ActionResult | null>(null);
+  const on = helpOn || turnedOn;
   const rate = (to: "up" | "down", words?: string) =>
     start(async () => {
       const before = rating;
@@ -56,11 +59,13 @@ export function AnswerFeedback({ captureId, given, helpOn }: { captureId: string
       if (!r.ok) setRating(before);
       setResult(r);
     });
-  // Turned on from here, the thumbs down just given joins the candidates too: giving it again logs it
+  // Turned on from here, the thumbs down just given is given again so it joins the candidates, unless the
+  // team building DPM already decided on it. Only the thumbs: what was wrong goes when they press Send
   const turnOn = () =>
     start(async () => {
       const r = await setHelpImproveAtlasAction(true);
-      const again = r.ok ? await rateAnswer(captureId, "down", wrong) : r;
+      if (r.ok) setTurnedOn(true);
+      const again = r.ok ? await rateAnswer(captureId, "down") : r;
       setResult(again.ok ? r : again);
     });
   const thumb = (to: "up" | "down", label: string) => (
@@ -72,7 +77,15 @@ export function AnswerFeedback({ captureId, given, helpOn }: { captureId: string
     <>
       {thumb("up", "Good answer")}
       {thumb("down", "Not right")}
-      {rating === "down" && (
+      {rating === "down" && !on && (
+        <span className="flex w-full basis-full flex-wrap items-center gap-1.5 pt-1 type-caption text-fg-3">
+          Only your thumbs down is kept. To tell the team building DPM what was wrong, turn on
+          <Button variant="link" disabled={pending} onClick={turnOn}>
+            Help improve Atlas
+          </Button>
+        </span>
+      )}
+      {rating === "down" && on && (
         <span className="flex w-full basis-full flex-col gap-1.5 pt-1">
           <form
             className="flex items-center gap-1.5"
@@ -93,14 +106,6 @@ export function AnswerFeedback({ captureId, given, helpOn }: { captureId: string
               Send
             </Button>
           </form>
-          {!helpOn && (
-            <span className="flex flex-wrap items-center gap-1.5 type-caption text-fg-3">
-              Want the team building DPM to see this, so Atlas gets better?
-              <Button variant="link" disabled={pending} onClick={turnOn}>
-                Help improve Atlas
-              </Button>
-            </span>
-          )}
         </span>
       )}
       <ActionNote result={result} />

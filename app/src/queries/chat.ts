@@ -160,7 +160,8 @@ export async function getThread(conn: Conn, viewerId: string, conversationId: st
     .where(and(eq(t.captures.conversationId, conversationId), eq(t.captures.authorId, viewerId)))
     .orderBy(t.captures.messageAt, t.captures.receivedAt);
   const turns: ChatCapture[] = [];
-  for (const capture of captures) turns.push(await chatCaptureOf(conn, capture));
+  const feedback = await feedbackFor(conn, viewerId, captures);
+  for (const capture of captures) turns.push(await chatCaptureOf(conn, capture, feedback.get(capture.id) ?? null));
   const [newest] = await conn
     .select({ id: t.conversations.id })
     .from(t.conversations)
@@ -200,7 +201,8 @@ export async function getChatSummary(conn: Conn, viewerId: string, captureId?: s
     .limit(1);
   const notices = await noticesFor(conn, viewerId);
   if (!capture) return { viewerId, latest: null, notices };
-  return { viewerId, notices, latest: await chatCaptureOf(conn, capture) };
+  const feedback = await feedbackFor(conn, viewerId, [capture]);
+  return { viewerId, notices, latest: await chatCaptureOf(conn, capture, feedback.get(capture.id) ?? null) };
 }
 
 /** An answer kept before section 17 had lines, not cards; it reads as cards, in DPM's own words. */
@@ -224,17 +226,20 @@ export async function helpImproveAtlas(conn: Conn, viewerId: string): Promise<bo
   return p?.on ?? false;
 }
 
-/** Phase S: the author's own feedback on the answer; only ever theirs. */
-async function feedbackOf(conn: Conn, captureId: string, authorId: string): Promise<ChatCapture["feedback"]> {
-  const [f] = await conn
-    .select({ rating: t.answerFeedback.rating, wrong: t.answerFeedback.wrong })
-    .from(t.answerFeedback)
-    .where(and(eq(t.answerFeedback.captureId, captureId), eq(t.answerFeedback.personId, authorId)));
-  return f ?? null;
+/** Phase S: the viewer's own feedback on the answers among their messages, in one read; only ever theirs. */
+async function feedbackFor(conn: Conn, viewerId: string, captures: (typeof t.captures.$inferSelect)[]): Promise<Map<string, NonNullable<ChatCapture["feedback"]>>> {
+  const ids = captures.filter((c) => c.answer).map((c) => c.id);
+  const rows = ids.length
+    ? await conn
+        .select({ captureId: t.answerFeedback.captureId, rating: t.answerFeedback.rating, wrong: t.answerFeedback.wrong })
+        .from(t.answerFeedback)
+        .where(and(eq(t.answerFeedback.personId, viewerId), inArray(t.answerFeedback.captureId, ids)))
+    : [];
+  return new Map(rows.map((f) => [f.captureId, { rating: f.rating, wrong: f.wrong }]));
 }
 
-/** One message and what Atlas made of it, counted per project as the review counts them. */
-async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<ChatCapture> {
+/** One message and what Atlas made of it, counted per project as the review counts them, with the author's feedback on its answer. */
+async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect, feedback: ChatCapture["feedback"]): Promise<ChatCapture> {
   const items = (await conn.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id)).orderBy(t.extractions.ordinal)).map(itemOf);
   const counts = countItems(items);
   const ids = [...counts.perProject.keys()];
@@ -268,6 +273,6 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     needsProject: counts.needsProject,
     line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
     answer: answerOf(capture.answer),
-    feedback: capture.answer ? await feedbackOf(conn, capture.id, capture.authorId) : null,
+    feedback,
   };
 }

@@ -122,14 +122,26 @@ export async function acceptFromChat(captureId: string, itemId: string): Promise
 
 // ---- Learning from use (phase S) ----
 
-/** A thumbs up or down on an answer, with "What was wrong?"; giving it again changes it (LF6). */
+/**
+ * A thumbs up or down on an answer, with "What was wrong?"; giving it again changes it (LF6). What was
+ * wrong is kept only while "Help improve Atlas" is on, and the reply says when it was not (LF1).
+ */
 export async function rateAnswer(captureId: string, rating: "up" | "down", wrong?: string): Promise<ActionResult> {
-  return run((ctx) => giveFeedback(ctx, captureId, { rating, wrong }), wrong?.trim() ? "Thanks. That helps." : "Thanks.");
+  const kept = { wrong: null as string | null };
+  const r = await run(async (ctx) => {
+    kept.wrong = (await giveFeedback(ctx, captureId, { rating, wrong })).wrong;
+  });
+  if (!r.ok) return r;
+  const said = rating === "down" && !!wrong?.trim();
+  return { ok: true, message: !said ? "Thanks." : kept.wrong ? "Thanks. That helps." : "Thanks. Help improve Atlas is off, so only your thumbs down was kept." };
 }
 
-/** "Help improve Atlas": off deletes their candidates still waiting (LF2). */
+/** "Help improve Atlas": off deletes their candidates still waiting, and what they said was wrong (LF2). */
 export async function setHelpImproveAtlasAction(on: boolean): Promise<ActionResult> {
-  return run((ctx) => setHelpImproveAtlas(ctx, on), on ? "On. What Atlas gets wrong or cannot answer goes to the team building DPM." : "Off. Anything of yours they had not looked at yet is deleted.");
+  return run(
+    (ctx) => setHelpImproveAtlas(ctx, on),
+    on ? "On. What Atlas gets wrong or cannot answer goes to the team building DPM." : "Off. What you said was wrong, and anything of yours the team had not looked at yet, is deleted.",
+  );
 }
 
 // ---- Conversations (M18, section 16) ----

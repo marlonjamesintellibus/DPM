@@ -4,7 +4,9 @@
 // candidate for the eval set, so the team building DPM learns what to fix. The person's words are theirs
 // (M1): a candidate holds them only while "Help improve Atlas" is on (LF1), turning it off deletes their
 // logged candidates (LF2), and no final state keeps the original words. Counts are read from the answers,
-// feedback and reviews themselves, so they are kept for everyone without a candidate.
+// feedback and reviews themselves, so they are kept for everyone without a candidate. Two arrows are not
+// in the plan's table: OPTED_OUT (the model check's fix optOut) and WITHDRAWN (LF4: the person changed
+// their thumbs down to a thumbs up, so no complaint is left to judge).
 import { config } from "../config";
 import { DAY_MS } from "../dates";
 import { defineMachine, transition, type Outcome } from "../machine";
@@ -58,7 +60,9 @@ export type EvalCandidateEvent =
   /** Timer: evalCandidateDays after it was logged. */
   | { type: "EXPIRE" }
   /** LF2: the person turned "Help improve Atlas" off; runs with the setting, in the same transaction. */
-  | { type: "OPTED_OUT" };
+  | { type: "OPTED_OUT" }
+  /** LF4: the person took their thumbs down back (changed it to a thumbs up) before anyone decided it. */
+  | { type: "WITHDRAWN" };
 
 type Ctx = {
   record: EvalCandidateRecord;
@@ -68,6 +72,8 @@ type Ctx = {
   allows: boolean;
   /** The actor is a DPM maintainer now (rule 4). */
   maintainer: boolean;
+  /** LF3: names DPM holds that are not the seed's (people, projects, customers), read when ACCEPT runs. */
+  notSeed: readonly string[];
   now: Date;
 };
 
@@ -85,12 +91,28 @@ const loggedGuard = (c: Ctx) => (c.record.personId !== c.actorId ? "only the per
 // Rule 4, LF2: a maintainer decides, and the person still allows it when they do
 const deciderGuard = (c: Ctx) => (!c.maintainer ? "only a DPM maintainer decides a candidate" : c.allows ? null : "the person no longer allows it");
 
-// LF3: the case enters the eval set with seed names and ids, and says what Atlas should have done
+/** The same words, whatever the case, spacing or closing stop (LF3, LF5). */
+export const sameWords = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
+
+const asWords = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}&]+/gu, " ").trim();
+
+/** LF3: the first of these names in the words, matched as whole words whatever the case. */
+export function nameIn(words: string, names: readonly string[]): string | null {
+  const text = ` ${asWords(words)} `;
+  return names.find((name) => asWords(name) && text.includes(` ${asWords(name)} `)) ?? null;
+}
+
+// LF3: the case enters the eval set anonymised, with seed names and ids, and says what Atlas should have
+// done. The person's own words, or words naming someone or something DPM holds that the seed does not,
+// are refused (the model check's planted bug acceptRaw)
 function acceptGuard(c: Ctx, e: Extract<EvalCandidateEvent, { type: "ACCEPT" }>): string | null {
   const refused = deciderGuard(c);
   if (refused) return refused;
   if (!e.caseText.trim()) return "give the words with seed names and ids";
   if (e.caseText.length > CASE_TEXT_MAX) return `the words are at most ${CASE_TEXT_MAX} characters`;
+  if (c.record.text !== null && sameWords(e.caseText) === sameWords(c.record.text)) return "these are the person's own words: give them with seed names and ids";
+  const real = nameIn(e.caseText, c.notSeed);
+  if (real) return `"${real}" is not in the seed: use a seed name instead`;
   return e.expected.trim() ? null : "say what Atlas should have done";
 }
 
@@ -104,6 +126,8 @@ export const evalCandidateMachine = defineMachine<EvalCandidateState, EvalCandid
     { from: ["logged"], on: "EXPIRE", to: "deleted", guard: (c) => (candidateExpired(c.record, c.now) ? null : `kept for ${config.evalCandidateDays} days`) },
     // LF2: added by the model check (fix optOut); the plan's table had no way out for it
     { from: ["logged"], on: "OPTED_OUT", to: "deleted", guard: (c) => (c.actorId !== c.record.personId ? "only the person turns it off" : c.allows ? "Help improve Atlas is still on" : null) },
+    // LF4: not in the plan's table or the model check; a thumbs down taken back leaves nothing to judge
+    { from: ["logged"], on: "WITHDRAWN", to: "deleted", guard: (c) => (c.actorId !== c.record.personId ? "only the person takes it back" : null) },
   ],
 });
 

@@ -478,8 +478,12 @@ export const evalCandidates = pgTable(
     cause: text("cause").$type<EvalCause>().notNull(),
     captureId: text("capture_id").notNull().references(() => captures.id),
     extractionId: text("extraction_id"),
-    /** Rule 6: one candidate per cause per answer or item ("thumbs_down:cap-1", "moved:cap-1-8"). */
-    dedupKey: text("dedup_key").notNull().unique(),
+    /**
+     * Rule 6: one candidate per cause per answer or item ("thumbs_down:cap-1", "moved:cap-1-8"). A deleted
+     * one is not counted (LF2, LF4): given again after the person turned the setting back on, or took a
+     * thumbs down back and gave it again, it is logged anew. One a maintainer decided is never logged again.
+     */
+    dedupKey: text("dedup_key").notNull(),
     state: text("state").$type<EvalCandidateState>().notNull(),
     text: text("text"),
     detail: jsonb("detail").$type<EvalCandidateDetail>(),
@@ -493,7 +497,7 @@ export const evalCandidates = pgTable(
     createdAt: created(),
     updatedAt: updated(),
   },
-  (t) => [index("eval_candidates_person").on(t.personId, t.state)],
+  (t) => [index("eval_candidates_person").on(t.personId, t.state), uniqueIndex("eval_candidates_dedup_live").on(t.dedupKey).where(sql`${t.state} <> 'deleted'`)],
 );
 
 // ---- Notices (D15) ----

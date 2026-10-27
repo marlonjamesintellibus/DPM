@@ -10,7 +10,7 @@ import { startReview } from "@/app/actions";
 import { getDb } from "@/db/client";
 import type { Answer } from "@/domain/question";
 import { suggestionsAfter } from "@/domain/topics";
-import { getConversationList, getThread, helpImproveAtlas, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
+import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
 import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions } from "./reply-tools";
@@ -28,7 +28,8 @@ function wording(answer: Answer | null, at: Date): boolean {
   return !!answer && answer.wording === "pending" && at.getTime() - new Date(answer.asOf).getTime() < WORDING_MS;
 }
 
-export async function ChatToday({ viewerId, firstName, conversationId, ask = false, at }: { viewerId: string; firstName: string; conversationId?: string; ask?: boolean; at: Date }) {
+/** helpOn: the viewer's "Help improve Atlas" (phase S), read once by the page for the shell and the thumbs. */
+export async function ChatToday({ viewerId, firstName, conversationId, ask = false, at, helpOn }: { viewerId: string; firstName: string; conversationId?: string; ask?: boolean; at: Date; helpOn: boolean }) {
   const db = await getDb();
   const list = await getConversationList(db, viewerId, at);
   // A new conversation is only a screen until its first message (CV1); otherwise the newest one opens
@@ -37,7 +38,6 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
   if (thread && !thread.found) notFound();
   const open = thread?.found ? thread : null;
   const reading = !!open?.turns.some((c) => READING.has(c.state) || wording(c.answer, at));
-  const helpOn = await helpImproveAtlas(db, viewerId);
   return (
     <div className="flex min-h-0 flex-1">
       <RefreshWhile active={reading} />

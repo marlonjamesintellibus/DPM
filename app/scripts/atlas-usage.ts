@@ -2,24 +2,25 @@
 // eval candidates, read from the app's database. There is no maintainer role or screen yet (CD21), so
 // whoever runs this is the maintainer. Stop `pnpm dev` first when the database is the local PGlite.
 //
-//   pnpm atlas:usage [--weeks 4]                     numbers per week and topic, then the candidates
+//   pnpm atlas:usage [--weeks 4]                     each org's numbers per week and topic, then the candidates
 //   pnpm atlas:usage --org intellibus                one org's counts only, never words (LF7)
 //   pnpm atlas:usage --accept <id> --as <name> --case "<words with seed names and ids>" --expected "<what Atlas should do>"
 //   pnpm atlas:usage --dismiss <id> --as <name> [--note "<why>"]
 //
-// A number from fewer than 5 people shows as "-" (LF8, CD28).
+// A number from fewer than 5 people, or one the numbers beside it would give by subtraction, shows as
+// "-" (LF8, CD28). There is no total across orgs, so one org's numbers cannot be taken from it (LF7).
 import { acceptCandidate, dismissCandidate } from "../src/commands/learning";
 import { CommandRefused } from "../src/commands/core";
 import { openPglite, openPostgres, pgliteDir } from "../src/db/client";
 import { config } from "../src/domain/config";
-import { evalCandidateList, usageNumbers, type Shown, type UsageWeek } from "../src/queries/usage";
+import { evalCandidateList, usageNumbers, usageOrgs, type Shown, type UsageWeek } from "../src/queries/usage";
 
 function arg(name: string): string | null {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? (process.argv[i + 1] ?? "") : null;
 }
 
-const pct = (n: number) => `${Math.round(n * 100)}%`;
+const pct = (n: number | null) => (n === null ? "-" : `${Math.round(n * 100)}%`);
 const cell = <T extends object>(s: Shown<T>, f: (n: T & { people: number }) => string) => (s.shown ? f(s) : "-");
 
 function printWeek(w: UsageWeek) {
@@ -31,7 +32,7 @@ function printWeek(w: UsageWeek) {
     if (numbers.shown) console.log(`    ${topic.padEnd(15)} ${numbers.asked} asked, up ${numbers.thumbsUp}, down ${numbers.thumbsDown}`);
   }
   const hidden = w.topics.filter((t) => !t.numbers.shown).length;
-  if (hidden) console.log(`    ${hidden} topics asked by fewer than ${config.metricMinimumCount} people (or none): not shown`);
+  if (hidden) console.log(`    ${hidden} topics not shown on their own, together: ${cell(w.rest, (r) => `${r.asked} asked, up ${r.thumbsUp}, down ${r.thumbsDown}`)}`);
   console.log(`  Updates: ${cell(w.updates, (u) => `${u.updates} from ${u.people} people, ${u.items} items; ${u.corrections} corrected, ${u.moved} moved in review`)}`);
 }
 
@@ -57,13 +58,17 @@ async function main() {
       return;
     }
 
-    const orgId = arg("org") ?? undefined;
+    const orgId = arg("org");
     const weeks = Number(arg("weeks") ?? 4);
-    const numbers = await usageNumbers(opened.db, { now: ctx.now, weeks: Number.isInteger(weeks) && weeks > 0 ? weeks : 4, orgId });
-    console.log(`Atlas usage${orgId ? ` for ${orgId}` : ""}, by week (a number from fewer than ${config.metricMinimumCount} people shows as "-")`);
-    numbers.forEach(printWeek);
+    const orgs = (await usageOrgs(opened.db)).filter((o) => orgId === null || o.id === orgId);
+    if (!orgs.length) console.log(`No org ${orgId}.`);
+    for (const org of orgs) {
+      const numbers = await usageNumbers(opened.db, { now: ctx.now, weeks: Number.isInteger(weeks) && weeks > 0 ? weeks : 4, orgId: org.id });
+      console.log(`\nAtlas usage for ${org.name}, by week (a number from fewer than ${config.metricMinimumCount} people shows as "-")`);
+      numbers.forEach(printWeek);
+    }
     // LF7: an org's executives see its counts, never anyone's words
-    if (orgId) return;
+    if (orgId !== null) return;
 
     const list = await evalCandidateList(opened.db);
     console.log("\nEval candidates by state and cause:", JSON.stringify(list.counts));
