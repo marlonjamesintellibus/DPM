@@ -14,7 +14,7 @@ import * as t from "../db/schema";
 import type { RawProposal } from "../domain/atlas-checks/types";
 import type { RawQuestion } from "../domain/question";
 import { at, seededDb } from "../test/seeded-db";
-import { dueWindow } from "./answers/due";
+import { dueWindow, dueWords } from "./answers/due";
 
 let db: Db;
 let n = 0;
@@ -111,7 +111,7 @@ describe("my_work: what am I working on?", () => {
   it("a follow-up 'and on Store Insights?' is his work there (section 16)", async () => {
     const first = await ask("kemar", "What am I working on?");
     const { row, answer } = await ask("kemar", "and on Store Insights?", { when: at(31), conversationId: first.conversationId });
-    expect(row.question).toEqual({ asked: "and on Store Insights?", topic: "my_work", projectId: "insights" });
+    expect(row.question).toEqual({ asked: "and on Store Insights?", topic: "my_work", projectId: "insights", follows: ["What am I working on?"] });
     expect(answer.text).toBe("You have 1 open work item on Store Insights.");
   });
 });
@@ -167,6 +167,25 @@ describe("due: what's due, and the next milestone", () => {
     expect((await ask("kemar", "When's the next milestone?", { when: at(31) })).answer.text).toBe("The next milestone on Forager 2.0 is Trend model, forecast Fri 23 Oct.");
   });
 
+  it("CV8, CQ14 a follow-up keeps what the question before it asked: milestones, or the window", async () => {
+    const first = await ask("kemar", "When's the next milestone?");
+    const { row, answer } = await ask("kemar", "and on Store Insights?", { when: at(31), conversationId: first.conversationId });
+    expect(row.question).toEqual({ asked: "and on Store Insights?", topic: "due", projectId: "insights", follows: ["When's the next milestone?"] });
+    expect(answer).toMatchObject({ text: "No milestones left on Store Insights.", cards: [] });
+
+    const tomorrow = await ask("kemar", "What's due tomorrow?", { when: at(32) });
+    expect((await ask("kemar", "and on Forager?", { when: at(33), conversationId: tomorrow.conversationId })).answer.text).toMatch(/^1 work item on Forager 2\.0 is due tomorrow\./);
+    // Its own words win: "and next week?" after "What's due tomorrow?" is next week
+    expect((await ask("kemar", "and next week?", { when: at(34), conversationId: tomorrow.conversationId })).answer.text).toMatch(/due next week/);
+  });
+
+  it("dueWords: the follow-up's own words when they say what they want, else the newest question it follows that does", () => {
+    expect(dueWords("and on Forager?", ["What's due tomorrow?"])).toBe("What's due tomorrow?");
+    expect(dueWords("and on GQ?", ["and on Forager?", "When's the next milestone?"])).toBe("When's the next milestone?");
+    expect(dueWords("and today?", ["What's due tomorrow?"])).toBe("and today?");
+    expect(dueWords("and on Forager?", ["What's due?"])).toBe("and on Forager?");
+  });
+
   it("CQ19 a forecast that differs from the target says both, and which is later", async () => {
     await db.update(t.milestones).set({ forecastDate: "2026-10-24" }).where(eq(t.milestones.id, "ms-trend"));
     const { answer } = await ask("kemar", "When's the next milestone on Forager?");
@@ -189,6 +208,32 @@ describe("updates: what's new since you last asked", () => {
   it("CQ5 asked twice in a minute: nothing new since the first answer", async () => {
     await ask("kemar", "Any updates?");
     expect((await ask("kemar", "Any updates?", { when: at(31) })).answer).toMatchObject({ text: "Nothing new since 9:40am.", cards: [] });
+  });
+
+  it("CQ5 a risk reported before he asked, approved after: new when it went on the log, so the next ask has it", async () => {
+    await says("jodian", "On Forager, the vendor may change the API.", [risk("forager", "Vendor may change the API", "the vendor may change the API")], 20);
+    const proposed = (await db.select().from(t.braidEntries).where(eq(t.braidEntries.title, "Vendor may change the API")))[0];
+    expect(proposed.state).toBe("proposed");
+    expect(titles((await ask("kemar", "Any updates?")).answer)).not.toContain("Vendor may change the API");
+    await decideBraidEntry(as("alicia", 40), proposed.id, { type: "approve" });
+    const { answer } = await ask("kemar", "Any updates?", { when: at(50) });
+    expect(answer.text).toBe("Since 9:40am: 1 update on your projects.");
+    expect(answer.cards).toEqual([expect.objectContaining({ title: "Vendor may change the API", detail: "Forager 2.0: new risk from Jodian, 9:50am" })]);
+    // CQ6: Alicia put it on the log herself, so it is not news to her
+    expect(titles((await ask("alicia", "Any updates?", { when: at(51) })).answer)).not.toContain("Vendor may change the API");
+  });
+
+  it("CQ5 a report said before he asked and saved from review after: new when it was saved", async () => {
+    const said = at(20);
+    const blocker: RawProposal = { ...risk("forager", "Test data is missing", "the test data is missing"), braidKind: "blocker", rationale: "A blocker" };
+    const { captureId } = await createCapture(as("jodian", 20), { channel: "atlas", messageId: "atl-late-save", kind: "text", text: "On Forager, the test data is missing.", messageAt: said, receivedAt: said });
+    const { items } = await proposeItems(as("jodian", 20), captureId, [blocker]);
+    await ask("kemar", "Any updates?");
+    await openReview(as("jodian", 40), captureId);
+    for (const i of items) if (i.state === "needs_ok") await decideExtraction(as("jodian", 40), i.id, { type: "accept" });
+    expect((await saveCapture(as("jodian", 40), captureId)).outcome).toBe("saved");
+    const { answer } = await ask("kemar", "Any updates?", { when: at(50) });
+    expect(answer.cards).toEqual([expect.objectContaining({ title: "Test data is missing", detail: "Forager 2.0: new blocker from Jodian, 9:50am" })]);
   });
 
   it("CQ6, CQ7 Alicia sees Kemar's saved changes on Forager, told as review tells them, with no quote; never his Store Insights words", async () => {
@@ -345,6 +390,11 @@ describe("small talk", () => {
     const { row } = await ask("kemar", "Morning! Finished #145.", { when: at(31), extractor: model });
     expect(row.state).toBe("proposed");
     expect(row.answer).toBeNull();
+    // A model that calls the greeting small talk is not believed: the server checks the whole message (section 15)
+    const hello: RawQuestion = { asked: "Morning!", topic: "small_talk", projectId: null };
+    const wrong: Extractor = { name: "fake", extract: async () => ({ proposals: [done], question: hello, malformed: [], model: "fake", usage: null }) };
+    const again = await ask("kemar", "Morning! Finished #145.", { when: at(32), extractor: wrong });
+    expect(again.row).toMatchObject({ state: "proposed", question: null, answer: null });
   });
 
   it("small talk is not worded: DPM's reply stands, and the model is not called", async () => {

@@ -3,7 +3,7 @@
 // What Atlas says is untrusted, like a proposal: checkQuestion keeps only a known topic, a project the
 // asker is in, and words that are in the message. The answer itself is never written by Atlas; it is
 // read from the asker's own data (queries/answer.ts).
-import type { CheckContext } from "./atlas-checks/types";
+import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { smallTalk } from "./topics/small-talk";
 
@@ -14,15 +14,44 @@ export { QUESTION_TOPICS, type QuestionTopic };
 export type RawQuestion = { asked: string; topic: string; projectId: string | null };
 
 /** A question that passed the checks: safe to answer from the asker's data. */
-export type AskedQuestion = { asked: string; topic: QuestionTopic; projectId: string | null };
+export type AskedQuestion = {
+  asked: string;
+  topic: QuestionTopic;
+  projectId: string | null;
+  /** CV8, CQ14: the words of the earlier questions a follow-up follows, newest first, the asker's own. */
+  follows?: string[];
+};
 
-/** QA3, QA6: only the asker's own projects; QA5: an unknown topic is "other"; the words must be theirs. */
-export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<CheckContext, "text" | "projects">): AskedQuestion | null {
+/**
+ * QA3, QA6: only the asker's own projects; QA5: an unknown topic is "other"; the words must be theirs.
+ * CQ13: small talk only when the whole message is, so a greeting with an update is the update alone.
+ */
+export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<CheckContext, "text" | "projects" | "earlier">): AskedQuestion | null {
   if (!raw) return null;
   const topic = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
+  if (topic === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
   const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
-  return { asked, topic, projectId };
+  const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
+  return { asked, topic, projectId, ...(follows.length ? { follows } : {}) };
+}
+
+/**
+ * CV8, CQ14: what a follow-up follows, for the answers that read the words as well as the topic ("and
+ * on Store Insights?" after "When's the next milestone?" asks for milestones). A follow-up says so ("and
+ * ...", "what about ...") or names no topic of its own, and has the topic of the question before it;
+ * the run goes back while the questions keep that topic. Small talk and updates in between are skipped,
+ * as the rule skips them.
+ */
+function followed(text: string, asked: string, topic: QuestionTopic, earlier: readonly EarlierTurn[]): string[] {
+  if (topic === "other" || topic === "unclear" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
+  const words: string[] = [];
+  for (const turn of [...earlier].reverse()) {
+    if (!turn.asked || turn.asked.topic === "small_talk") continue;
+    if (turn.asked.topic !== topic) break;
+    words.push(turn.text);
+  }
+  return words;
 }
 
 const FOLLOW_UP = /^(and|what about|how about)\b/i;

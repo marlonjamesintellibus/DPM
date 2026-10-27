@@ -3,7 +3,8 @@ import type { Topic } from "./topic";
 
 export const mentions = {
   id: "mentions",
-  rule: /\b(mention|mentions|mentioned|mentioning|named me|talked about me|talking about me)\b/,
+  // Only about the asker: "Did Kemar mention the deadline?" asks about a person, which is not in this plan
+  rule: /\b(mention me|mentions me|mentioned me|mentioning me|my mentions|any mentions|mentions of me|mentions for me|(?:was|were|have|has) i (?:been )?(?:mentioned|named)|named me|talked about me|talking about me)\b/,
   prompt: "who mentioned them",
   suggest: ["Any updates?", "What needs me today?"],
 } as const satisfies Topic;

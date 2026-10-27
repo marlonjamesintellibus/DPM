@@ -105,6 +105,28 @@ describe("section 18: the new topics by the rule", () => {
     expect(ruleQuestion(ctx("Hi Atlas, what needs me?"))).toEqual({ asked: "Hi Atlas, what needs me?", topic: "needs_me", projectId: null });
   });
 
+  it.each(["What updates need my review?", "Which updates do I need to approve?", "Any updates waiting for me?", "What needs me today?", "What needs me to review it today?"])(
+    "QA1 %s is still needs me: updates leaves what waits for their review or OK",
+    (text) => {
+      expect(ruleQuestion(ctx(text))?.topic).toBe("needs_me");
+    },
+  );
+
+  it.each([
+    ["Who has mentioned me?", "mentions"],
+    ["Was I mentioned on Forager?", "mentions"],
+    ["Any mentions?", "mentions"],
+    ["Has anyone named me?", "mentions"],
+    // A question about another person is not in this plan (section 18): never answered as the asker's mentions
+    ["Did Kemar mention the vendor?", "other"],
+  ] as const)("mentions only about the asker: %s is %s", (text, topic) => {
+    expect(ruleQuestion(ctx(text))?.topic).toBe(topic);
+  });
+
+  it.each(["hithanks", "okthanks", "hi thanksatlas"])("CQ12 words run together are not small talk: %s", (text) => {
+    expect(ruleQuestion(ctx(text))?.topic).not.toBe("small_talk");
+  });
+
   it("the new topics go before needs me, whose 'today' would take them; mentions before blocked", () => {
     expect(topicOf("what's due today")).toBe("due");
     expect(topicOf("anything new today")).toBe("updates");
@@ -186,6 +208,33 @@ describe("the checks on what Atlas says was asked", () => {
   });
   it("no question is no question", () => {
     expect(checkQuestion(null, ctx(text))).toBeNull();
+  });
+  it("CQ13 small talk only when the whole message is: a greeting with an update asks nothing", () => {
+    const hello = { asked: "Morning!", topic: "small_talk", projectId: null };
+    expect(checkQuestion(hello, ctx("Morning! Finished #145."))).toBeNull();
+    expect(checkQuestion({ ...hello, asked: "Hi" }, ctx("Hi, what's blocked?"))).toBeNull();
+    expect(checkQuestion(hello, ctx("Morning!"))).toEqual({ asked: "Morning!", topic: "small_talk", projectId: null });
+  });
+});
+
+describe("CV8, CQ14: a follow-up keeps the words of the questions it follows", () => {
+  const turn = (text: string, topic: string | null) => ({ captureId: `c-${text}`, at: new Date(), text, asked: topic ? { topic, projectId: null } : null, openItems: [] });
+  const earlier = [turn("What's due tomorrow?", "due"), turn("Thanks!", "small_talk"), turn("#145 is done.", null), turn("and on Forager?", "due")];
+  it("newest first, back while the topic holds; small talk and updates in between are skipped", () => {
+    expect(checkQuestion({ asked: "and on GQ?", topic: "due", projectId: "gq" }, { ...ctx("and on GQ?"), earlier })).toEqual({
+      asked: "and on GQ?",
+      topic: "due",
+      projectId: "gq",
+      follows: ["and on Forager?", "What's due tomorrow?"],
+    });
+  });
+  it("the run stops at a question on another topic", () => {
+    const blockedFirst = [turn("When's the next milestone?", "due"), turn("What's blocked?", "blocked")];
+    expect(checkQuestion({ asked: "and on GQ?", topic: "blocked", projectId: "gq" }, { ...ctx("and on GQ?"), earlier: blockedFirst })?.follows).toEqual(["What's blocked?"]);
+    expect(checkQuestion({ asked: "and on GQ?", topic: "due", projectId: "gq" }, { ...ctx("and on GQ?"), earlier: blockedFirst })?.follows).toBeUndefined();
+  });
+  it("a whole question of its own follows nothing", () => {
+    expect(checkQuestion({ asked: "What's due on GQ?", topic: "due", projectId: "gq" }, { ...ctx("What's due on GQ?"), earlier })?.follows).toBeUndefined();
   });
 });
 

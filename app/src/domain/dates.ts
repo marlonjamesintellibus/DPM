@@ -4,7 +4,7 @@
 export type IsoDate = string;
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
-const DAY_MS = 86_400_000;
+export const DAY_MS = 86_400_000;
 
 function toUtcMs(date: IsoDate): number {
   if (!ISO.test(date)) throw new Error(`not an ISO date: ${date}`);

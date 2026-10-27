@@ -129,7 +129,7 @@ describe("follow-ups read with the conversation", () => {
   it("CV8 'and on GQ & Academy?' after a blocked question is answered as blocked, for GQ", async () => {
     const first = await send("alicia", "What's blocked on Forager?", null);
     const next = await send("alicia", "and on GQ & Academy?", first.conversationId);
-    expect(next.row.question).toEqual({ asked: "and on GQ & Academy?", topic: "blocked", projectId: "gq" });
+    expect(next.row.question).toEqual({ asked: "and on GQ & Academy?", topic: "blocked", projectId: "gq", follows: ["What's blocked on Forager?"] });
     expect(next.row.answer?.text).toBe("Nothing is blocked on GQ & Academy.");
   });
 

@@ -6,22 +6,33 @@
 import { and, eq, inArray } from "drizzle-orm";
 import * as t from "../../db/schema";
 import { config } from "../../domain/config";
+import { DAY_MS } from "../../domain/dates";
 import type { AnswerCard } from "../../domain/question";
 import { namesPerson } from "../../domain/topics/mentions";
 import { daysAgo, firstName, peopleById, projectReader, visibleQuotes, type PersonRef } from "../project";
 import { capped, counted, projectsAsked, type AnswerBuilder } from "./shared";
-
-const DAY_MS = 86_400_000;
 
 type Said = { who: PersonRef; at: Date; quote: string; tag: string; href: string };
 
 export const mentions: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
   const views = await projectsAsked(conn, viewerId, projectId, now);
   const named = views.length === 1 && projectId ? views[0] : null;
+  const ids = views.map((v) => v.project.id);
   const { world } = await projectReader(conn, viewerId);
   const from = new Date(now.getTime() - config.mentionsDays * DAY_MS);
   const inWindow = (at: Date) => at >= from && at <= now;
-  const people = await peopleById(conn, [viewerId, ...world.memberships.map((m) => m.personId)]);
+  // Changes saved into these projects from other people's words; each project's quotes pass rule 9 below
+  const applied = ids.length
+    ? (
+        await conn
+          .select({ row: t.extractions, authorId: t.captures.authorId, messageAt: t.captures.messageAt })
+          .from(t.extractions)
+          .innerJoin(t.captures, eq(t.captures.id, t.extractions.captureId))
+          .where(and(eq(t.extractions.state, "applied"), inArray(t.extractions.projectId, ids)))
+      ).filter(({ row, authorId, messageAt }) => row.kind === "update" && authorId !== viewerId && inWindow(messageAt))
+    : [];
+  const members = world.memberships.filter((m) => ids.includes(m.projectId) && m.state === "member");
+  const people = await peopleById(conn, [viewerId, ...members.map((m) => m.personId), ...applied.map((a) => a.authorId)]);
   const me = people.get(viewerId)?.name ?? viewerId;
   const found: { project: string; said: Said }[] = [];
 
@@ -33,24 +44,18 @@ export const mentions: AnswerBuilder = async (conn, viewerId, { projectId }, now
         if (s.quote && s.person.id !== viewerId && inWindow(s.at)) said.push({ who: s.person, at: s.at, quote: s.quote, tag: e.kindLabel, href: `/projects/${v.project.id}?view=table&log=${e.kind}` });
       }
     }
-    // Changes saved into this project from other people's words, by the same rule 9 check
-    const applied = (
-      await conn
-        .select({ row: t.extractions, authorId: t.captures.authorId, messageAt: t.captures.messageAt })
-        .from(t.extractions)
-        .innerJoin(t.captures, eq(t.captures.id, t.extractions.captureId))
-        .where(and(eq(t.extractions.state, "applied"), inArray(t.extractions.projectId, [v.project.id])))
-    ).filter(({ row, authorId, messageAt }) => row.kind === "update" && authorId !== viewerId && inWindow(messageAt));
-    const spans = applied.flatMap(({ row }) => row.draft.spans.map((span, i) => ({ id: `${row.id}:${i}`, captureId: row.captureId, extractionId: row.id, span })));
+    // Changes saved into this project, by the same rule 9 check
+    const here = applied.filter(({ row }) => row.projectId === v.project.id);
+    const spans = here.flatMap(({ row }) => row.draft.spans.map((span, i) => ({ id: `${row.id}:${i}`, captureId: row.captureId, extractionId: row.id, span })));
     const quotes = await visibleQuotes(conn, viewerId, v.project.id, world, spans);
-    for (const { row, authorId, messageAt } of applied) {
+    for (const { row, authorId, messageAt } of here) {
       for (let i = 0; i < row.draft.spans.length; i++) {
         const quote = quotes.get(`${row.id}:${i}`);
         if (quote) said.push({ who: people.get(authorId) ?? { id: authorId, name: authorId }, at: messageAt, quote, tag: "Update", href: `/projects/${v.project.id}` });
       }
     }
     // CQ9: a first name counts only where no other member of this project has it
-    const shared = world.memberships.some((m) => m.projectId === v.project.id && m.state === "member" && m.personId !== viewerId && firstName(people.get(m.personId)?.name ?? "") === firstName(me));
+    const shared = members.some((m) => m.projectId === v.project.id && m.personId !== viewerId && firstName(people.get(m.personId)?.name ?? "") === firstName(me));
     const seen = new Set<string>();
     for (const s of said) {
       // One quote feeds a report and a change alike; it is one mention

@@ -1,20 +1,21 @@
 // What is new (section 18, CQ4 to CQ7, CQ16): since the asker last asked, at most updatesMaxDays back,
 // their notices (D15), changes other people saved into their projects (told as review tells them),
-// project statuses set or cleared, and new entries on the BRAID logs. Newest first. Only projects they
-// can read now; their own saves are not news to them (CQ6), and no quote is shown, so words routed to
-// another project never reach them through a change they can see (CQ7, rule 9).
+// project statuses set or cleared, and new entries on the BRAID logs. Newest first, each dated by when
+// it reached the project, so the cursor never skips one that waited for approval or review (CQ5). Only
+// projects they can read now; their own saves are not news to them (CQ6), and no quote is shown, so
+// words routed to another project never reach them through a change they can see (CQ7, rule 9).
 import { and, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../../db/conn";
 import { itemOf } from "../../db/records";
 import * as t from "../../db/schema";
 import { config } from "../../domain/config";
+import { DAY_MS } from "../../domain/dates";
+import { ON_LOG_STATES } from "../../domain/machines/braid-entry";
 import type { AnswerCard } from "../../domain/question";
 import type { SettableStatus } from "../../domain/status/status";
 import { clockTime, daysAgo, firstName, peopleById, STATUS_LABEL, todayIn } from "../project";
 import { loadTargetRecords, targetChange, targetTitle } from "../review";
 import { capped, counted, dayDate, projectsAsked, type AnswerBuilder } from "./shared";
-
-const DAY_MS = 86_400_000;
 
 /**
  * The updates cursor (section 18): the time of the asker's latest answer about updates that covered
@@ -89,16 +90,30 @@ export const updates: AnswerBuilder = async (conn, viewerId, { projectId }, now)
     }
   }
 
-  // New entries on the BRAID logs, from the first report
-  for (const v of views) {
-    for (const e of v.braid.entries.filter((x) => x.onLog)) {
-      const first = e.sources[0];
-      if (!first || !fresh(first.at) || first.person.id === viewerId || e.reportedBy?.id === viewerId) continue;
-      news.push({
-        at: first.at,
-        card: { title: e.title, detail: `${v.project.name}: new ${e.kindLabel.toLowerCase()} from ${firstName(first.person.name)}, ${when(first.at, now)}`, tag: e.kindLabel, href: `/projects/${v.project.id}?view=table&log=${e.kind}` },
-      });
+  // New entries on the BRAID logs, dated by when they went on the log (CQ5): a risk approved at 9:50 is
+  // new at 9:50, though it was reported at 9:30. An entry with no such move on record (the seed) is
+  // dated by its first report.
+  const live = views.flatMap((v) => v.braid.entries.filter((e) => e.onLog).map((e) => ({ v, e })));
+  const wentOn = new Map<string, { at: Date; actorId: string | null }>();
+  const onLog = (state: string | null) => (ON_LOG_STATES as readonly (string | null)[]).includes(state);
+  if (live.length) {
+    const moves = await conn
+      .select()
+      .from(t.auditEntries)
+      .where(and(eq(t.auditEntries.machine, "braid_entry"), inArray(t.auditEntries.subjectId, live.map((x) => x.e.id))));
+    for (const a of moves.sort((x, y) => x.at.getTime() - y.at.getTime())) {
+      if (onLog(a.toState) && !onLog(a.fromState) && !wentOn.has(a.subjectId)) wentOn.set(a.subjectId, { at: a.at, actorId: a.actorId });
     }
+  }
+  for (const { v, e } of live) {
+    const first = e.sources[0];
+    const logged = wentOn.get(e.id) ?? (first ? { at: first.at, actorId: null } : null);
+    // CQ6: not news when they reported it, or put it on the log themselves
+    if (!first || !logged || !fresh(logged.at) || first.person.id === viewerId || e.reportedBy?.id === viewerId || logged.actorId === viewerId) continue;
+    news.push({
+      at: logged.at,
+      card: { title: e.title, detail: `${v.project.name}: new ${e.kindLabel.toLowerCase()} from ${firstName(first.person.name)}, ${when(logged.at, now)}`, tag: e.kindLabel, href: `/projects/${v.project.id}?view=table&log=${e.kind}` },
+    });
   }
 
   news.sort((a, b) => b.at.getTime() - a.at.getTime() || a.card.title.localeCompare(b.card.title));

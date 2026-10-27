@@ -18,7 +18,8 @@ export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, updates, me
 /**
  * In the order the rule tries their words; the first that matches wins ("anything blocked today?" is
  * blocked). Small talk matches only a whole message, so it never takes a question's words. Section 18:
- * the new topics go before needs me, whose "today" would take "What's due today?" and "Any updates today?".
+ * the new topics go before needs me, whose "today" would take "What's due today?" and "Any updates today?";
+ * updates leaves to needs me what asks for their review or OK (QA1).
  */
 export const BY_RULE = [smallTalk, mentions, blocked, due, updates, myWork, projectStatus, needsMe] as const;
 

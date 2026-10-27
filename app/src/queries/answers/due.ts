@@ -2,13 +2,27 @@
 // items due in the window that are not Done, and the next milestone by forecast on each of their
 // projects, with its status. A named project gives its due work whoever owns it, still only what the
 // asker can read. The window comes from the asker's own words, never from Atlas: today, tomorrow, this
-// week (today to Sunday, in the org time zone) or next week; this week when they say none.
+// week (today to Sunday, in the org time zone) or next week; this week when they say none. A follow-up
+// that names none reads the question it follows (CV8, CQ14).
 import { addDays, weekday, WEEKDAYS, type IsoDate } from "../../domain/dates";
 import type { AnswerCard } from "../../domain/question";
 import { firstName, todayIn, type ProjectMilestone, type ProjectView } from "../project";
 import { capped, counted, dayDate, forecastText, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder } from "./shared";
 
 type Window = { from: IsoDate; to: IsoDate; label: string; late: boolean };
+
+const SAYS_WINDOW = /\b(today|tomorrow|this week|next week)\b/;
+const SAYS_MILESTONES = /\bmilestones?\b/;
+
+/**
+ * CV8, CQ14: the words that say what is asked. A follow-up's own, when they name a window or milestones
+ * ("and tomorrow?"); otherwise those of the newest question it follows that does, so "and on Store
+ * Insights?" after "When's the next milestone?" asks for milestones, and after "What's due tomorrow?"
+ * for tomorrow.
+ */
+export function dueWords(asked: string, follows: readonly string[] = []): string {
+  return [asked, ...follows].find((w) => SAYS_WINDOW.test(w.toLowerCase()) || SAYS_MILESTONES.test(w.toLowerCase())) ?? asked;
+}
 
 /** CQ17: the window the words ask about; one that starts today also takes what is past due and not Done. */
 export function dueWindow(asked: string, today: IsoDate): Window {
@@ -23,11 +37,12 @@ export function dueWindow(asked: string, today: IsoDate): Window {
 /** Not done, nor missed: a milestone that can still come. */
 const ahead = (m: ProjectMilestone) => m.state === "planned" || m.state === "in_progress";
 
-export const due: AnswerBuilder = async (conn, viewerId, { asked, projectId }, now) => {
+export const due: AnswerBuilder = async (conn, viewerId, { asked, projectId, follows }, now) => {
   const views = await projectsAsked(conn, viewerId, projectId, now);
   const named = views.length === 1 && projectId ? views[0] : null;
   const today = todayIn(now);
-  const window = dueWindow(asked, today);
+  const words = dueWords(asked, follows);
+  const window = dueWindow(words, today);
 
   // CQ18: the next milestone on each project asked about; never one from another project
   const next = views.flatMap((v) => {
@@ -42,7 +57,7 @@ export const due: AnswerBuilder = async (conn, viewerId, { asked, projectId }, n
   });
   const scope = named ? named.project.name : "your projects";
 
-  if (/\bmilestones?\b/.test(asked.toLowerCase())) {
+  if (SAYS_MILESTONES.test(words.toLowerCase())) {
     if (!next.length) return { text: `No milestones left on ${scope}.`, cards: [], more: null };
     const [first] = next;
     const text = next.length === 1 ? `The next milestone on ${first.v.project.name} is ${first.m.name}, ${forecastText(first.m)}.` : `Here is the next milestone on each of ${scope}.`;
