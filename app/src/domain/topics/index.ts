@@ -3,6 +3,7 @@
 import { blocked } from "./blocked";
 import { correction } from "./correction";
 import { due } from "./due";
+import { explainProject } from "./explain-project";
 import { mentions } from "./mentions";
 import { myWork } from "./my-work";
 import { needsMe } from "./needs-me";
@@ -17,7 +18,7 @@ import { why } from "./why";
 import { whyFiled } from "./why-filed";
 
 /** In the order Atlas is shown them: the tool's topic enum and the prompt's topic list. */
-export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, updates, mentions, why, whyFiled, correction, undo, smallTalk, other, unclear] as const;
+export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, explainProject, updates, mentions, why, whyFiled, correction, undo, smallTalk, other, unclear] as const;
 
 /**
  * In the order the rule tries their words; the first that matches wins ("anything blocked today?" is
@@ -26,9 +27,10 @@ export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, updates, me
  * updates leaves to needs me what asks for their review or OK (QA1). Phase L: why_filed goes first, so "Why did
  * you file the blocker?" is not blocked, nor a why about the work. Phase C: why goes next, so "Why is Forager at
  * risk?" is not how it stands and "What's holding up #151?" is not blocked. Undo and corrections are
- * whole-message commands, read by ruleQuestion.
+ * whole-message commands, read by ruleQuestion. Phase Q: explain_project goes last but for needs me, so "What is
+ * Forager?" is tried after every other topic's words and "Weh mi fi start?" is not needs me's "mi fi".
  */
-export const BY_RULE = [smallTalk, whyFiled, why, mentions, blocked, due, updates, myWork, projectStatus, needsMe] as const;
+export const BY_RULE = [smallTalk, whyFiled, why, mentions, blocked, due, updates, myWork, projectStatus, explainProject, needsMe] as const;
 
 export type QuestionTopic = (typeof TOPICS)[number]["id"];
 export const QUESTION_TOPICS = TOPICS.map((t) => t.id) as readonly QuestionTopic[];

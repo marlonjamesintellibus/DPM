@@ -4,6 +4,7 @@ import type { QuestionTopic } from "../../domain/question";
 import { blocked } from "./blocked";
 import { correction } from "./correction";
 import { due } from "./due";
+import { explainProject } from "./explain-project";
 import { mentions } from "./mentions";
 import { myWork } from "./my-work";
 import { needsMe } from "./needs-me";
@@ -23,6 +24,7 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   due,
   blocked,
   project_status: standing,
+  explain_project: explainProject,
   updates,
   mentions,
   why,

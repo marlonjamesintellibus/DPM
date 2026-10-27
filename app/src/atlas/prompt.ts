@@ -23,8 +23,9 @@ import { CONFIDENCES } from "../domain/shared";
 // commands, and a record change said about a line is an item. Each command says who decides it (rule 10):
 // a report of someone else's decision is never the author's. Phase C, the why topic and its subjectId (WY1
 // to WY8). Phase L, "Undo that", "Why did you file that?" and corrections that teach Atlas a name (M30, M31).
-// read-15 (W2-D2): with no answer open, nothing is a command.
-export const PROMPT_VERSION = "read-15";
+// read-15 (W2-D2): with no answer open, nothing is a command. read-wave3-q, the conversational plan's phase Q:
+// the explain_project topic ("What is Forager?"), and a name that fits two listed projects names neither (EX5).
+export const PROMPT_VERSION = "read-wave3-q";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -87,6 +88,8 @@ Questions
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.
+- What a project is, who it is for or where to start on it ("What is Forager?", "Explain Store Insights", "I'm new on GQ, where do I start?") is explain_project. "Tell me about Forager" asks how it stands: project_status.
+- projectId may come from part of a listed project's name or alias ("Insights" is Store Insights). If the words could mean two listed projects, projectId is null: DPM asks which.
 - Do not answer the question yourself. DPM answers it from the asker's own data.
 - A message can be only a question: then items is an empty list.
 - Questions in Patois are questions like any other: "Weh mi fi do today?" is needs_me, "Wah mi a work pon?" is my_work, "Wha gwaan wid Forager?" is updates, "Wha gwaan?" alone is small_talk.

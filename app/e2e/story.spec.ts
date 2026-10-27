@@ -103,6 +103,17 @@ test("Section 18. Kemar asks what he is working on: his open work, each linked t
   await expect(page.getByRole("button", { name: "What's due this week?" })).toBeVisible();
 });
 
+test("Phase Q. Kemar asks what GQ is and where to start: who owns it, its empty plan, and who to ask (EX2)", async () => {
+  await page.getByRole("link", { name: "New", exact: true }).click();
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("I'm new on GQ, where do I start?");
+  await box.press("Enter");
+  await expect(page.getByText(/^GQ & Academy is an internal project, with no dates set yet, and Alicia Campbell owns it\./)).toBeVisible();
+  await expect(page.getByText(/It has no threads or milestones yet\. They come from GitHub and from updates people give Atlas\./)).toBeVisible();
+  await expect(page.getByText(/Where to start: nothing on it is yours yet, so ask Alicia where to begin\.$/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /Internal, with no dates set yet/ })).toHaveAttribute("href", "/projects/gq");
+});
+
 test("3. Alicia set Forager 2.0 Off track at 9:02 with no reason", async () => {
   await viewAs("alicia");
   await expect(page.getByRole("link", { name: /Forager 2.0 is set Off track, but the plan says/ }).first()).toBeVisible();
