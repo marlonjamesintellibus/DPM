@@ -6,6 +6,7 @@ import { applyCaptureEvent, type CaptureRecord } from "./machines/capture";
 import { checkQuestion, ruleQuestion, topicOf } from "./question";
 import { suggestionsAfter } from "./topics";
 import { namesPerson } from "./topics/mentions";
+import { GREETING } from "./topics/small-talk";
 
 const project = (id: string, name: string, aliases: string[] = []): CandidateProject => ({ id, name, aliases, role: "member", records: [], people: [], braid: [] });
 const PROJECTS = [project("forager", "Forager 2.0", ["Forager"]), project("gq", "GQ & Academy", ["GQ", "Academy"])];
@@ -161,6 +162,81 @@ describe("section 18: the new topics take part in follow-ups (section 16)", () =
     expect(ruleQuestion({ ...ctx("And GQ?"), earlier: afterUpdate })?.topic).toBe("blocked");
     // In a conversation with no question before it, it is unclear (CV9), never a guess
     expect(ruleQuestion(ctx("And GQ?"))?.topic).toBe("unclear");
+  });
+});
+
+describe("phase R: Jamaican English and Patois by the rule", () => {
+  it.each([
+    ["JA6", "Weh mi fi do today?", "needs_me", null],
+    ["JA6", "Weh mi fi do?", "needs_me", null],
+    ["", "Wah mi haffi approve?", "needs_me", null],
+    ["", "Wah a wait pon mi?", "needs_me", null],
+    ["", "Wah mi a work pon?", "my_work", null],
+    ["", "Wah deh pon mi plate?", "my_work", null],
+    ["", "Wah due dis week?", "due", null],
+    ["", "Wen di nex milestone pon Forager?", "due", "forager"],
+    ["", "Anyting block pon Forager?", "blocked", "forager"],
+    ["", "A wah a hold up di feed?", "blocked", null],
+    ["", "Wha gwaan wid GQ?", "updates", "gq"],
+    ["", "Anyting new?", "updates", null],
+    ["", "Anybody mention mi?", "mentions", null],
+    ["", "Who call mi name pon Forager?", "mentions", "forager"],
+    ["", "How Forager a go?", "project_status", "forager"],
+    ["", "Forager pon track?", "project_status", "forager"],
+    ["", "Tell mi bout GQ", "project_status", "gq"],
+  ] as const)("%s %s is a question about %s", (_, text, topic, projectId) => {
+    expect(ruleQuestion(ctx(text))).toEqual({ asked: text, topic, projectId });
+  });
+
+  it.each(["Wha gwaan?", "Wha gwaan Atlas", "wah gwan", "Yow!", "Mawnin", "Good mawnin, Atlas", "Tank yuh", "Bless up", "Respect, Atlas", "Aright"])(
+    "JA5 %s is small talk, answered without a model",
+    (text) => {
+      expect(ruleQuestion(ctx(text))).toEqual({ asked: text, topic: "small_talk", projectId: null });
+    },
+  );
+
+  // JA1 to JA3: negation and tense are statements about work, never questions, so they go to the model as updates
+  it.each([
+    ["JA1 negation", "Di access nuh come yet"],
+    ["JA1 negation", "Kyle neva send it yet, so #151 still block."],
+    ["JA2 done", "Mi done wid #208"],
+    ["JA2 soon done", "mi soon done wid #208"],
+    ["JA3 future", "Him a go send it"],
+    ["JA3 future", "Kyle seh him a go send it likkle more"],
+    ["work now", "Mi a work pon #145"],
+    ["CQ13 a greeting with an update", "Wha gwaan, mi done wid #208."],
+    ["CQ13 a greeting with an update", "Mawnin! Mi done wid #208."],
+    ["JA4 code-switching", "Finished the TikTok ingest, but di store feed still nuh come through."],
+  ])("not a question: %s, %s", (_, text) => {
+    expect(ruleQuestion(ctx(text))).toBeNull();
+  });
+
+  it("JA5 the hello goes to a Patois greeting; thanks gets 'Any time'", () => {
+    expect(GREETING.test("wha gwaan?")).toBe(true);
+    expect(GREETING.test("mawnin")).toBe(true);
+    expect(GREETING.test("tank yuh")).toBe(false);
+  });
+
+  it("CQ13 holds for Patois: the checks drop small talk unless the whole message is", () => {
+    const hello = { asked: "Wha gwaan", topic: "small_talk", projectId: null };
+    expect(checkQuestion(hello, ctx("Wha gwaan, mi done wid #208."))).toBeNull();
+    expect(checkQuestion(hello, ctx("Wha gwaan"))).toEqual({ asked: "Wha gwaan", topic: "small_talk", projectId: null });
+  });
+
+  it("'Wha gwaan wid ...' asks what is new; what waits on the asker stays needs me (QA1)", () => {
+    expect(topicOf("wha gwaan wid di store feed?")).toBe("updates");
+    expect(topicOf("wah a wait pon mi?")).toBe("needs_me");
+    expect(topicOf("wah wi a wait pon?")).toBe("blocked");
+  });
+
+  it("CV8 'wah bout GQ?' follows up like 'what about GQ?'", () => {
+    const earlier = [{ captureId: "c0", at: new Date(), text: "Wah mi a work pon?", asked: { topic: "my_work", projectId: null }, openItems: [] }];
+    expect(ruleQuestion({ ...ctx("wah bout GQ?"), earlier })).toEqual({ asked: "wah bout GQ?", topic: "my_work", projectId: "gq" });
+  });
+
+  it("JA7 a word that is also a name counts only written as a name (CQ9)", () => {
+    expect(namesPerson("mi will send it tomorrow", "Will Grant", false)).toBe(false);
+    expect(namesPerson("mi a go ask Will bout #151", "Will Grant", false)).toBe(true);
   });
 });
 

@@ -11,7 +11,11 @@ import { capped, counted, dayDate, forecastText, milestonesOf, projectsAsked, wo
 
 type Window = { from: IsoDate; to: IsoDate; label: string; late: boolean };
 
-const SAYS_WINDOW = /\b(today|tomorrow|this week|next week)\b/;
+// Phase R: as the team writes them too ("tideh", "tumaro", "dis week", "nex week")
+const TODAY = /\b(today|tiday|tideh)\b/;
+const TOMORROW = /\b(tomorrow|tumaro|tumoro|tomorra)\b/;
+const NEXT_WEEK = /\b(next week|nex week)\b/;
+const SAYS_WINDOW = /\b(today|tiday|tideh|tomorrow|tumaro|tumoro|tomorra|this week|dis week|next week|nex week)\b/;
 const SAYS_MILESTONES = /\bmilestones?\b/;
 
 /**
@@ -28,9 +32,9 @@ export function dueWords(asked: string, follows: readonly string[] = []): string
 export function dueWindow(asked: string, today: IsoDate): Window {
   const words = asked.toLowerCase();
   const sunday = addDays(today, (7 - WEEKDAYS.indexOf(weekday(today))) % 7);
-  if (/\btomorrow\b/.test(words)) return { from: addDays(today, 1), to: addDays(today, 1), label: "tomorrow", late: false };
-  if (/\bnext week\b/.test(words)) return { from: addDays(sunday, 1), to: addDays(sunday, 7), label: "next week", late: false };
-  if (/\btoday\b/.test(words)) return { from: today, to: today, label: "today", late: true };
+  if (TOMORROW.test(words)) return { from: addDays(today, 1), to: addDays(today, 1), label: "tomorrow", late: false };
+  if (NEXT_WEEK.test(words)) return { from: addDays(sunday, 1), to: addDays(sunday, 7), label: "next week", late: false };
+  if (TODAY.test(words)) return { from: today, to: today, label: "today", late: true };
   return { from: today, to: sunday, label: "this week", late: true };
 }
 

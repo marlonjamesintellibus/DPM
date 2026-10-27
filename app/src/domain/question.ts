@@ -5,7 +5,7 @@
 // read from the asker's own data (queries/answer.ts).
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
-import { smallTalk } from "./topics/small-talk";
+import { GREETING, smallTalk } from "./topics/small-talk";
 
 // Each topic is defined in domain/topics, its answer in queries/answers
 export { QUESTION_TOPICS, type QuestionTopic };
@@ -54,10 +54,17 @@ function followed(text: string, asked: string, topic: QuestionTopic, earlier: re
   return words;
 }
 
-const FOLLOW_UP = /^(and|what about|how about)\b/i;
-// Section 18: "Tell me about Forager" asks too
-const ASKING = /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me)\b/i;
+// Phase R: "wah bout GQ?" and "how bout Forager?" follow up too
+const FOLLOW_UP = /^(and|what about|how about|wah bout|wha bout|wat bout|what bout|how bout)\b/i;
+// Section 18: "Tell me about Forager" asks too. Phase R, JA5, JA6: so do the team's question words ("Weh
+// mi fi do today?", "Wah due dis week?", "A who a hold up di feed?", "Anyting block?"). None of them starts
+// a statement, so "Mi done wid #208" and "Di access nuh come yet" stay updates.
+const ASKING =
+  /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me|wah|wha|weh|wey|wen|a weh|a wah|a wha|a who|a wen|anyting|anybody|tell mi)\b/i;
 // QA4: "Can you mark #145 done?" asks for a change, so it is an update, not a question
+// Phase R: a greeting set off by a comma or stop does not make what follows a question ("Wha gwaan, mi done
+// wid #208." is an update)
+const GREETED = new RegExp(String.raw`${GREETING.source}(?:\s+atlas)?\s*[,!.]\s*`, "i");
 const ASKS_FOR_A_CHANGE = /\b(mark|set|move|change|update|add|log|close|resolve|approve|assign)\b.*\b(#\d+|done|blocked|to\b)/i;
 
 /** The topic a question is about, from its words: what the rule can tell without a model. */
@@ -88,7 +95,7 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   }
   const sentences = text.split(/(?<=[.!?])\s+|\n+/).filter((s) => s.trim());
   if (sentences.length !== 1) return null;
-  if (!(text.endsWith("?") || ASKING.test(text)) || ASKS_FOR_A_CHANGE.test(text)) return null;
+  if (!(text.endsWith("?") || ASKING.test(text.replace(GREETED, ""))) || ASKS_FOR_A_CHANGE.test(text)) return null;
   const lower = text.toLowerCase();
   const project = ctx.projects.find((p) => [p.name, ...p.aliases].some((n) => n && lower.includes(n.toLowerCase())));
   return { asked: text, topic: topicOf(text), projectId: project?.id ?? null };

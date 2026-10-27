@@ -1,7 +1,8 @@
 // Atlas words the reply to a question asked in the chat (machines doc, section 17). DPM found the
 // answer in the asker's own data and shows its details as cards; Atlas only writes the 1 to 3 sentences
 // over them. Anything that adds a number, a #reference, a judgement or health is thrown away and DPM's
-// own sentence is used, as for a status reason (M11).
+// own sentence is used, as for a status reason (M11). Phase R, CD20: the reply is standard English,
+// whatever language the question was asked in.
 import type { Answer } from "../domain/question";
 import type { Drafter } from "./extractor";
 import { plain, reasonProblem, type Worded } from "./reason";
@@ -12,6 +13,7 @@ Write the reply that goes above them, as you would say it to them.
 - Answer what they asked, in 1 to 3 short sentences. If they asked for a list, say what the list is and that it is below; do not repeat every item.
 - Call things by their names ("the store sales feed blocker"). Never call them cards, rows or links.
 - Use only the facts given. Add nothing: no new numbers, dates, names, causes or guesses. Keep every #number, time and count you use exactly as given.
+- Reply in standard English, even when they asked in Jamaican English or Patois. Never correct, translate or remark on how they wrote.
 - Speak to them as "you". Plain words. No em dashes, no bullet points, no headings. Under 400 characters.
 - Never judge a person. Never mention health.
 - Answer with the reply only.`;

@@ -68,8 +68,8 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-6's words and order; a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-6");
+  it("the topics come from domain/topics in read-7's words and order; a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-7");
     expect(SYSTEM_PROMPT).toContain(
       "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
     );
