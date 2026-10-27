@@ -121,6 +121,7 @@ Capture and review (C1, A9.2)
 - [ ] Saving twice, or the same capture from two channels, applies each item once (`AppliedAtMostOnce`, with dedup on).
 - [ ] Every applied change writes an audit entry with actor, time, capture and source span (A11).
 - [ ] Hovering a highlight in "What you said" highlights its cards, and the other way round.
+- [ ] What the server checks refused, and words that fed nothing, are shown to the author only, with the reason in plain words (machines doc section 20, U1).
 
 BRAID
 - [ ] Each BRAID item says whether it is new or the same as an existing entry. Kemar can reject the match, and it becomes a new entry.

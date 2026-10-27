@@ -9,7 +9,7 @@ import type { Answer } from "../domain/question";
 import type { CaptureState } from "../domain/machines/capture";
 import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, shortDate, todayIn, type NotYours } from "./project";
-import { countItems, countsLine } from "./review";
+import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 
 export type ChatSummaryRow = {
   projectId: string;
@@ -216,6 +216,13 @@ function answerOf(stored: unknown): Answer | null {
   };
 }
 
+// Section 20, U1: what was set aside counts while the update can still be reviewed, and once saved
+const SHOWS_SET_ASIDE: readonly CaptureState[] = ["proposed", "reviewing", "saved"];
+
+async function summaryOf(conn: Conn, capture: typeof t.captures.$inferSelect, items: Parameters<typeof readSetAside>[2], counts: string): Promise<string> {
+  return SHOWS_SET_ASIDE.includes(capture.state) ? withSetAside(counts, await readSetAside(conn, capture, items)) : counts;
+}
+
 /** One message and what Atlas made of it, counted per project as the review counts them. */
 async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<ChatCapture> {
   const items = (await conn.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id)).orderBy(t.extractions.ordinal)).map(itemOf);
@@ -249,7 +256,7 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     projects: counts.projects,
     needsOk: counts.needsOk,
     needsProject: counts.needsProject,
-    line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
+    line: chatLine(capture.state, capture.failedStep, await summaryOf(conn, capture, items, countsLine(counts, "; "))),
     answer: answerOf(capture.answer),
   };
 }

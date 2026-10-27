@@ -38,6 +38,11 @@ const JUDGEMENTS = [
   "not pulling her weight", "not pulling their weight", "slacking", "bad at", "terrible at", "difficult to work with",
 ];
 
+/** E17: health words, for text DPM shows back even to the author (section 20, SA6). */
+export function saysHealth(text: string): boolean {
+  return HEALTH.some((h) => mentions(text, h));
+}
+
 /** Check 13's word lists, for any text Atlas writes that people will read (a reason draft). */
 export function saysHealthOrJudgement(text: string): boolean {
   return HEALTH.some((h) => mentions(text, h)) || JUDGEMENTS.some((j) => mentions(text, j));

@@ -26,7 +26,10 @@ export function ReviewScreen({ review }: Props) {
 
   return (
     <div className="flex items-start gap-4">
-      <MessageCard review={review} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} byOrdinal={byOrdinal} />
+      <div className="flex w-[340px] shrink-0 flex-col gap-4">
+        <MessageCard review={review} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} byOrdinal={byOrdinal} />
+        <SetAsideCard review={review} />
+      </div>
       <ChangesCard review={review} open={open} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} />
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         {current && <DetailCard item={current} review={review} />}
@@ -71,9 +74,24 @@ function MessageCard({
   const { capture } = review;
   const spans = mergeSpans(review.highlights);
   const parts: React.ReactNode[] = [];
+  // Section 20, U1: words that fed nothing are underlined in place, so the list below has a home
+  const plain = (from: number, to: number) => {
+    let at = from;
+    for (const u of review.setAside.unused) {
+      if (u.end <= from || u.start >= to) continue;
+      if (u.start > at) parts.push(<span key={`t${at}`}>{capture.text.slice(at, u.start)}</span>);
+      parts.push(
+        <span key={`u${u.start}`} title="Not used" className="underline decoration-fg-3 decoration-dotted underline-offset-4">
+          {capture.text.slice(Math.max(u.start, from), Math.min(u.end, to))}
+        </span>,
+      );
+      at = Math.min(u.end, to);
+    }
+    if (at < to) parts.push(<span key={`t${at}`}>{capture.text.slice(at, to)}</span>);
+  };
   let at = 0;
   for (const s of spans) {
-    if (s.start > at) parts.push(<span key={`t${at}`}>{capture.text.slice(at, s.start)}</span>);
+    if (s.start > at) plain(at, s.start);
     const lit = s.ordinals.some((o) => hover.includes(o) || o === selected);
     parts.push(
       <button
@@ -94,13 +112,13 @@ function MessageCard({
     );
     at = s.end;
   }
-  if (at < capture.text.length) parts.push(<span key="end">{capture.text.slice(at)}</span>);
+  if (at < capture.text.length) plain(at, capture.text.length);
 
   const time = new Intl.DateTimeFormat("en-US", { timeZone: "America/Jamaica", hour: "numeric", minute: "2-digit" }).format(capture.messageAt).replace(" ", "").toLowerCase();
   const source = capture.channel === "atlas" ? `Atlas ${capture.kind === "voice" ? "voice note" : "message"}` : "DPM chat";
   const projectGroups = review.groups.filter((g) => g.type === "project");
   return (
-    <Card label={`Your message · ${source} · ${time}`} title="What you said" emphasis className="w-[340px] shrink-0">
+    <Card label={`Your message · ${source} · ${time}`} title="What you said" emphasis>
       <p className="type-body leading-[26px] text-fg-1">{parts}</p>
       {capture.kind === "voice" && (
         <div className="flex items-center gap-2">
@@ -123,6 +141,30 @@ function MessageCard({
           .
         </p>
       )}
+    </Card>
+  );
+}
+
+// ---- Set aside (section 20, U1) ----
+
+function SetAsideCard({ review }: { review: Review }) {
+  const { refused, unused } = review.setAside;
+  if (!refused.length && !unused.length) return null;
+  return (
+    <Card label="Set aside · only you see this" title="Atlas didn't use these">
+      {refused.map((r, i) => (
+        <div key={`r${i}`} className="flex flex-col gap-0.5">
+          <span className="type-body text-fg-1">{r.reason}</span>
+          {r.quote && <span className="type-caption text-fg-3">&ldquo;{r.quote}&rdquo;</span>}
+        </div>
+      ))}
+      {unused.map((u) => (
+        <div key={`u${u.start}`} className="flex flex-col gap-0.5">
+          <span className="type-body text-fg-1">&ldquo;{u.text}&rdquo;</span>
+          <span className="type-caption text-fg-3">Not used. Nothing in DPM fits it yet.</span>
+        </div>
+      ))}
+      <p className="type-caption text-fg-3">To add something here, send it again in other words or tell your PM.</p>
     </Card>
   );
 }

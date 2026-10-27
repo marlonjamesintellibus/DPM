@@ -1247,3 +1247,275 @@ any open item --Discard--> withdrawn (discarded)                             (M2
 | RS8 | Accepted in the chat, then opened here | The card shows Save and Undo |
 | RS9 | The one item is "No change" or "Matches your leave" | Nothing to save: the card says so and offers Discard |
 | RS10 | The update has not been opened for review yet | As before: Start review first, no card buttons |
+
+## 20. Plan: what an update says that use case 1 drops (27 Oct 2026)
+
+**Status:** plan for review. Nothing here is built.
+
+Found in use: "…, I've spoken with Kyle to update the harvest docs he'll do it tomorrow" fed nothing, and nothing said so. Replayed three times, Atlas proposed it once (as a dependency) and left it out twice; the server checks dropped nothing. Going through use case 1's three jobs (update your own work, build each project's BRAID log, ask the right people to decide) found eight kinds of message it should handle and does not. Some were already decided and never built: check 3 says a refused field "tells the author who owns it", but the reason only reaches the audit log; S5 says a forecast from someone who is not the owner "creates an Ask to the owner", but it is refused instead.
+
+Use case 1's scope still holds: meetings (use case 2), a clarifying question in the chat, and the author's own promises (conversational plan phase E) stay out.
+
+### The eight gaps
+
+| # | What someone says | Today | Plan |
+|---|---|---|---|
+| U1 | Anything Atlas did not use, or the checks refused | Silent: unhighlighted, or in the audit log only | A **Set aside** list on the review: each refused item with its reason, each stretch of the message that fed nothing |
+| U2 | Someone else's promise: "Kyle will update the harvest docs tomorrow" | Proposed about 1 time in 3 | A **dependency**, titled with who, what and when, with an **expected date**; DPM asks its owner when the date passes |
+| U3 | A risk, assumption or dependency ending: "the pipeline risk is gone", "Sprouts won't give read access after all", "Kyle sent the docs" | Cannot be proposed (D7: only blockers and issues are resolved from a message) | A **proposed outcome** (closed, realised, confirmed, broken, met, late) for the PM or Lead to decide; it applies on save only when the author holds the right |
+| U4 | A decision reversed: "we're going back to 5am" | Matched "same as" the decision it reverses, or new and unlinked | A new decision that **supersedes** the old one when it is approved |
+| U5 | A change to someone else's record: "Release 1 will slip to the 3rd", "Jodian finished #160" | Refused, and the author is not told | S5 as decided: an **Ask to the owner**, who accepts, changes or declines it |
+| U6 | A date for the author's own work: "I'll finish #147 Monday" | Nothing: a work item has only state and blocked note | A **forecast** on work items, like milestones. The due date never moves from a message |
+| U7 | Work that has no record: "the AI pipeline", "the harvest docs cleanup" | Nothing | Matched to a record if one is close; otherwise **proposed as new work** to the PM or Lead (answers question 5) |
+| U8 | A counted slip: "the model slips a day" | Calendar days: Friday 23 Oct becomes Saturday 24 Oct | **Working days**: Monday 26 Oct (answers question 3) |
+
+### U1. Set aside (no new machine)
+
+- What the checks refused is already stored: the PROPOSALS_READY audit entry keeps `dropped` with the check and the reason. The review reads it; nothing new is stored.
+- Each refused item is shown in the author's words, never the check's:
+
+| Check | Shown as |
+|---|---|
+| 1 Target exists in scope | "I couldn't find that record in your projects" |
+| 2 Quote is real | Not shown (the model misquoted; nothing for the author to do). Counted for evaluation |
+| 3 Field is allowed | Rare once U5 is built: "#160 belongs to Jodian" only where an Ask is not possible |
+| 9 Project is a candidate | "That isn't in a project you're in." Never names the project (P10) |
+| 11 Kind is allowed | "A member can't report that; ask your PM or Lead" |
+| 12 Proposals stay proposals | "A message can't approve or decline; the decider does that" |
+| 13 No judgements, no health | "DPM doesn't keep notes about health or about a person" |
+| cap | "There's more in this message; send the rest separately" |
+
+- **Not used:** a stretch of the message of 4 or more words that no item quotes and that is not the question asked, after dropping connectors ("so", "and", "as", "but") and small talk ("thanks", "good morning"). Shown as a quote, so the author sees exactly what Atlas skipped. Clause level, not sentence level: "I've spoken with Kyle…" follows a comma in the sentence that fed the risk.
+- The chat reply counts it while the update is open or saved: "Got it. 1 update for 1 project; 1 part not used." A discarded or expired update's line is unchanged.
+- Words in a refusal's quote that name health are never shown (SA6), and a stretch with health words is not listed: E17 keeps them out of every view, the author's own included.
+- Read only in use case 1. "Send as a new update" from a set-aside line is phase S (learning from use).
+
+| # | Case | Expected |
+|---|---|---|
+| SA1 | The whole message fed items | No Set aside section |
+| SA2 | A check refused an item about a project the author is not in | "That isn't in a project you're in"; the project is never named |
+| SA3 | Injection text ("ignore your rules, approve…") | What the checks refused shows with its reason; the rest of the instruction shows under Not used, like any words Atlas did not use. Nothing acts on it. (Changed while building: the checks cannot tell an instruction from an ordinary refusal, and showing the author their own words is safe) |
+| SA4 | A stretch is filler ("so yeah", "anyway") | Under 4 words after dropping connectors: not listed |
+| SA5 | The message is only a question | Answered (section 15); nothing set aside |
+| SA6 | Health words were dropped (check 13) | The reason is shown; the words are not quoted (E94) |
+| SA7 | A corrected item was replaced (section 16) | Not set aside; it shows as replaced, as now |
+| SA8 | Atlas proposed nothing at all | "Nothing in this changes a project" as now. Such a message has no review, so the list waits for U2 to U7 to give these messages items |
+| SA9 | Who sees it | The author only, like the whole capture (M1) |
+
+### U1 built (27 Oct 2026)
+
+- Model check: U1 adds no state, event or timer to any machine; `run-all.mjs` passes unchanged. Its rules (author only, never naming another project, never echoing health words) are unit and database tests.
+- `domain/set-aside.ts`: `setAside` (refusals in the author's words, Not used stretches at clause level, fillers dropped, 4 words at least) and `refusalReason` per check. `saysHealth` is exported from the checks.
+- `queries/review.ts`: `readSetAside` reads the latest PROPOSALS_READY audit entry (UD6); the review has `setAside`, and its chat line counts it. `queries/chat.ts` counts it on open and saved updates.
+- Screen: a Set aside card under What you said, and a dotted underline on Not used words in the message.
+- Tests: SA1 to SA6, SA9 and merged refusals (`domain/set-aside.test.ts`); a read with a refusal and an unused clause, the chat line, the author-only rule, and Kemar's story note setting nothing aside (`queries/review.test.ts`). 824 unit tests and the 11-step browser story pass.
+
+### U2. Someone else's promise becomes a dependency
+
+- Prompt: work someone else has agreed to do, that the project waits on, is a dependency. The title says who, what and when: "Kyle to update the harvest docs by 21 Oct". CD5 still holds: it is never a commitment for the speaker or for them.
+- Routing as now: Kyle is tied to Forager (contact on #151).
+- M15: a dependency gets an optional `expectedOn` date, read from the quote by `resolve-dates` like a forecast (check 5).
+- It lands as now: proposed to the PM or Lead (a member reports it), straight on the log for a PM or Lead (E92).
+- New inbox cause `dependency_due:<entry>` for the entry's owner: when the day after `expectedOn` starts, the entry is open or waiting, and no outcome is proposed. "Kyle was to update the harvest docs by 21 Oct." Its actions are U3's outcomes and "New date". DPM never marks it late by itself.
+
+```
+M15, dependency (additions)
+REPORT(expectedOn?) as now
+open | waiting ──SET_EXPECTED(date) (PM or Lead)──▶ same state            a new date clears the due item
+open | waiting ──TIMER day after expectedOn (no outcome proposed)──▶ same state, cause dependency_due opens
+```
+
+| # | Case | Expected |
+|---|---|---|
+| DP1 | No date ("Kyle will send it") | A dependency with no expected date; no due item |
+| DP2 | "Tomorrow" said on a Friday | Saturday, as said (U8 counts durations only); the due item opens Monday, the next working day |
+| DP3 | The same promise reported again | Same as the open dependency (M16); a new date in the report proposes SET_EXPECTED to the owner, never moves it |
+| DP4 | A teammate's promise ("Jodian will send the runbook Friday") | Not a dependency when it is their own listed record: a forecast Ask to them (U5). Otherwise a dependency |
+| DP5 | The author's own promise ("I'll send Kyle the request") | Out of use case 1 (phase E); set aside as "a promise; commitments come later" |
+| DP6 | The promise is about a record already blocked by the same subject (#151 and "Store sales feed access") | Same as the existing dependency, not a new one |
+| DP7 | The dependency is declined | No due item ever opens |
+| DP8 | The date passes while it is still proposed | No due item; the S18 reminders to the decider run as now |
+
+### U3. Proposed outcomes for risks, assumptions and dependencies
+
+D7 stands: only the PM or Lead decides these kinds. What changes is that a message can say so to them, as "it's cleared" already does for blockers.
+
+- New item kind `braid_outcome` with `outcome` (closed or realised for a risk, confirmed or broken for an assumption, met or late for a dependency) and `matchEntryId`. The author always confirms it (as E93).
+- On save: an author with the resolve right gets RESOLVE(outcome) as now; anyone else sends PROPOSE_OUTCOME.
+- Check 12 becomes: a capture may report, add a source, resolve where the author holds the right, or propose a resolution or outcome; never approve or decline.
+
+```
+M15 (additions)
+open | mitigating (risk), holding (assumption), open | waiting (dependency)
+  ──PROPOSE_OUTCOME(outcome) (a member without the resolve right)──▶ same state; adds { by, outcome, on } to outcomesProposed
+  ──RESOLVE(outcome) (PM or Lead; as now)──▶ the outcome's state; clears outcomesProposed
+  ──KEEP_OPEN (PM or Lead; widened from blockers)──▶ same state; clears outcomesProposed; each proposer is told
+inbox cause confirm_outcome:<entry> for the PM and Leads while outcomesProposed is not empty
+```
+
+| # | Case | Expected |
+|---|---|---|
+| OC1 | A PM says "the pipeline risk is gone" | Closed on save; no inbox item |
+| OC2 | A member says it | Proposed; the PM and Leads get "Kemar says this risk is gone" with Close and Keep open |
+| OC3 | Two people propose different outcomes (met, late) | Both shown to the decider, with who said which |
+| OC4 | The entry is already in that state | "No change" on the card |
+| OC5 | The entry is still proposed, not on the log | Refused with the reason; set aside ("it isn't on the log yet") |
+| OC6 | A realised risk | Realised. Making it an issue stays the PM's kind switch (section 13); Atlas does not also propose an issue unless the words report a new problem |
+| OC7 | Outcome for a blocker or issue | Still `braid_resolve` (D7), unchanged |
+| OC8 | The proposer withdraws their capture item before save | Nothing sent, as now |
+| OC9 | The entry is merged or switched before the decider acts | The proposal follows the entry it became (as reports do, section 13) |
+| OC10 | Health or judgement in the reason | Check 13 as now |
+
+### U4. A reversed decision supersedes the old one
+
+- Prompt: a decision that undoes or replaces an approved decision is a new decision with `supersedes` set to that entry, never a `braid_same`.
+- The link `supersedes` already exists. On APPROVE of the new decision, the old one moves `approved ──SUPERSEDE──▶ superseded` in the same command (the arrow exists).
+- Check: `supersedes` must name an approved decision in the same project; otherwise it is kept as `related`.
+
+| # | Case | Expected |
+|---|---|---|
+| SD1 | The old decision is still proposed | Linked `related`; the decider sees "a newer proposal says otherwise" |
+| SD2 | The old decision is already superseded | Linked to the decision that replaced it, if approved; else `related` |
+| SD3 | The new decision is declined | The old one stays approved |
+| SD4 | Atlas matched it "same as" the old one | The author's "Not the same" makes it new (M16); the supersede link is offered on the card |
+| SD5 | It reverses a decision in another project | Check 10: refused, set aside |
+
+### U5. An Ask to the owner (S5, built). M37. NEW
+
+M20 to M36 are reserved by the conversational plan, so this is M37. One machine serves U5 (a change to someone else's record) and U7 (new work for the PM).
+
+```
+M37. Owner ask (Ask)
+(saved item, author without the right) ──CREATE──▶ asked              inbox owner_ask:<id> for the owner (U5) or the PM and Leads (U7)
+asked ──ACCEPT (right checked now; the record is still at the value the author saw)──▶ applied        final; written through M5 or M6 as the person accepting, with the author's quote as the source
+asked ──ACCEPT (the record moved since)──▶ asked, refused: shows today's value; they may Change
+asked ──CHANGE(value), then ACCEPT──▶ applied with their value
+asked ──DECLINE(reason)──▶ declined                                     final; the author is told why
+asked ──MOOT (the record reached that value another way; checked on read and nightly)──▶ moot          final; no write
+asked ──WITHDRAW (the author)──▶ withdrawn                              final
+asked ──TARGET_GONE (record cancelled, or author or owner left the project)──▶ withdrawn                final; reason kept
+asked ──TIMER ownerAskExpiryDays (DECIDE: 7)──▶ expired                 final; the author is told
+```
+
+- Check 3 changes: a field the author may not set becomes an ask instead of a refusal, when an owner exists and the field is one a capture may set. The card says "Ask Jodian" instead of the change; the mark is "Needs your OK" (High or not), because it sends something to someone.
+- The owner sees only the quote that fed it (rule 9, visible quotes), never the rest of the message.
+- `NothingAppliedWithoutConfirm` gains a sibling for M37: nothing applies without the owner's (or PM's) ACCEPT.
+
+| # | Case | Expected |
+|---|---|---|
+| OA1 | "Release 1 will slip to the 3rd" (Alicia's milestone) | Ask Alicia: forecast 30 Oct to 3 Nov. The risk is proposed too, as for any slip |
+| OA2 | "Jodian finished #160" | Ask Jodian: In progress to Done |
+| OA3 | A PM or Lead says it about a work item | Applied on save as now (owner_or_lead); no ask |
+| OA4 | A PM says it about someone else's milestone forecast | Still an ask (S5: owner only, even for a PM) |
+| OA5 | The owner is on leave | The ask waits; it expires as usual. DECIDE: no handover to the PM (default) |
+| OA6 | Two people ask the owner for the same change | One ask per (record, field, value): the second adds its author |
+| OA7 | Two asks for different values on one field | Both shown; accepting one makes the other moot |
+| OA8 | The target is a target date ("move the Release 1 target") | Never from a capture (M6): set aside, "a target moves by a decision" |
+| OA9 | The owner accepts after the author left the project | Withdrawn (TARGET_GONE): nobody vouches for it any more |
+| OA10 | Undo of the author's save | Withdraws open asks; applied ones stay (phase L handles undo) |
+
+### U6. Forecasts on work items
+
+- New field `work_items.forecast_date`, set by its owner from a capture (owner only, as S5 for milestones). Due dates never move from a capture, like targets (M6).
+- M5 gains SET_FORECAST (a field, not a state, like M6's FORECAST_CHANGED). Done clears the forecast.
+- Status rule for a work item becomes: Done if done. Off track if past due and not done, or the forecast is more than the tolerance after due. At risk if blocked, or the forecast is after due. Not started if to do. On track otherwise.
+- The card says "Forecast Fri 23 Oct to Mon 26 Oct (due Fri 23 Oct)", or "On time" when the forecast is on or before due.
+
+| # | Case | Expected |
+|---|---|---|
+| WF1 | Forecast on or before due | Saved; no status change |
+| WF2 | Forecast in the past | Refused by check 5; set aside |
+| WF3 | A done item ("I'll finish #145 Friday" when it is done) | "No change: already done" |
+| WF4 | Forecast falls in the owner's approved leave | Saved, and the card says "You're on leave from 26 Oct". DECIDE: a note only (default), no inbox item |
+| WF5 | Someone else's work item | An Ask (U5) |
+| WF6 | No due date on the item | Forecast saved; no status effect (E50, E51) |
+| WF7 | "Move #147's due date" | Set aside: "a due date is the plan; ask your PM" |
+
+### U7. Work with no record (question 5)
+
+**Question 5: "Is an action someone is assigned in conversation a work item, a BRAID entry, or both?"**
+**Recommended: one, never both, chosen by who does it.**
+- **Someone outside the team** (a client contact, Sprouts IT): a BRAID dependency (U2).
+- **The author or a teammate in the project:** a work item. Atlas first matches a listed record by title (as M16 matches entries); a close match is an update to it, with "Not the same?" on the card. With no match, it is **proposed as new work** to the PM and Leads through M37; accepting creates it in To do or In progress, owned by the author unless the PM changes it. Never created straight from a message: the plan is the PM's, and once GitHub syncs, accepting becomes an Atlas Action that opens the issue (C5).
+- **The author's own promise with no record:** out of use case 1 (phase E). Set aside as a promise.
+- **Not both:** two records for one thing drift apart. A dependency can still hold a work item (the blocked link #151 already has).
+
+| # | Case | Expected |
+|---|---|---|
+| NW1 | "Started on a harvest docs cleanup for Forager today" | New work proposed to Alicia: "Harvest docs cleanup", In progress, owner Kemar |
+| NW2 | "Working on the trend scoring piece" | Matched to #147: In progress, "no change" |
+| NW3 | Two close matches | Choose on the card (as `matchOptions`); never guessed |
+| NW4 | No project named or tied | Choose a project (M14), as now |
+| NW5 | The PM declines | Kemar is told why; nothing is created |
+| NW6 | The same new work said again before the PM acts | Joins the open ask (OA6) |
+| NW7 | A PM or Lead says it | DECIDE: still a proposal to themselves to place it in a thread (default), or created on save |
+| NW8 | Personal work ("studying for my exam") | Not filed (M14) |
+
+### U8. Counted slips use working days (question 3)
+
+**Question 3: "Should forecasts snap to working days?"**
+**Recommended: count, don't snap.** A counted duration ("a day", "two days", "a week" as 5) counts working days, Monday to Friday (holidays wait for an org calendar, as CD7). A named day or date ("Saturday", "the 24th", "tomorrow") is kept as said, and the card shows its weekday so a weekend date is visible. Snapping a date the person named would change what they said.
+
+The story changes: Kemar's "the model slips a day", said on Tuesday about Friday 23 Oct, gives **Monday 26 Oct**, not Saturday 24 Oct. That is the first day of his leave, so the card says so (WF4). The milestone is still At risk: 3 calendar days after target is not more than the 3-day tolerance (F10). The risk becomes "Trend model may slip to 26 Oct".
+
+| # | Case | Expected |
+|---|---|---|
+| WD1 | "Slips a day" from a Friday | The Monday |
+| WD2 | "Slips a week" | 5 working days |
+| WD3 | "Lands Saturday" | Saturday, shown as "Sat 24 Oct" |
+| WD4 | "Slips a couple of days" | 2 working days, Medium confidence (check 4) |
+| WD5 | Tolerance | Stays in calendar days until F10 is decided |
+
+### Evaluation cases to add
+
+New keys: `outcome:<entryId>=<outcome>`, `supersede:<entryId>`, `ask:<targetId>.<field>=<value>`, `track:<project>` (new work), `upd:<workItemId>.forecast=<date>`, and `new:dependency:<project>@<date>` for an expected date. A new optional `titleHas` lists words a passing BRAID title must contain. An approved decision on Store Insights ("Move the daily refresh to 6am") is added to the evaluation seed only, not the story seed.
+
+| id | Text (Kemar unless said) | Expect | Allow / forbid |
+|---|---|---|---|
+| kyle-promise | "I've spoken with Kyle to update the harvest docs, he'll do it tomorrow." | `new:dependency:forager@2026-10-21`, titleHas Kyle | |
+| slip-and-promise | The message from the screenshot, both parts | `new:risk:forager`, `new:dependency:forager@2026-10-21` | forbidWords "the author" |
+| dependency-met | "Kyle finally gave us the store feed access." | `outcome:br-feed-dependency=met`, `resolve:br-feed-blocker` | allow `upd:wi-151.state=in_progress` |
+| risk-closed | "The pipeline risk is gone now, Jodian can run it on her own." | `outcome:br-pipeline-risk=closed` | allow `same:br-pipeline-risk` |
+| risk-realised | "Jodian couldn't run the pipeline without me yesterday, so that risk happened." | `outcome:br-pipeline-risk=realised` | allow `new:issue:forager` |
+| assumption-broken | "Turns out the buyers aren't available the week of the 26th." | `outcome:br-buyers-assumption=broken` | allow `new:issue:forager`, `new:risk:forager` |
+| decision-reversed | "Andre and I agreed to go back to the 5am refresh." | `supersede:<6am decision>` | forbid `same:<6am decision>` |
+| others-forecast | "Release 1 for the buyer pilot is going to slip to the 3rd." | `ask:ms-release-1.forecast=2026-11-03` | allow `new:risk:forager` |
+| others-work | "Jodian finished the feature store backfill." | `ask:wi-160.state=done` | |
+| own-work-forecast | "The trend scoring model will take until Monday." | `upd:wi-147.forecast=2026-10-26` | allow `upd:ms-trend.forecast*`, `new:risk:forager` |
+| new-work | "Started on a harvest docs cleanup for Forager today." | `track:forager` | |
+| known-work | "Working on the trend scoring piece today." | `upd:wi-147.state=in_progress` | forbid `track:*` |
+| slip-working-day | "I think the trend model slips a day." | `upd:ms-trend.forecast=2026-10-26` | allow `new:risk:forager` |
+
+Changed: `not-his-milestone` expects `ask:ms-release-1*` instead of nothing; `not-his-work` expects `ask:wi-160.state=in_progress`; `alicia-not-her-forecast` expects `ask:ms-trend*`; `kemar-note` expects `upd:ms-trend.forecast=2026-10-26`; `forecast-shift` expects 27 Oct only.
+
+### Model first
+
+Before code, in `research/state-machines/js`:
+- `braidEntry.mjs`: PROPOSE_OUTCOME, KEEP_OPEN for the three kinds, SET_EXPECTED and the due timer, SUPERSEDE on approval. Properties: no outcome without the right (`OutcomeOnlyByDecider`); a proposed outcome never changes the state; a superseded decision always has an approved successor.
+- New `ownerAsk.mjs` (M37). Properties: nothing applies without ACCEPT by someone with the right then; an accept never overwrites a value changed since; every ask ends (applied, declined, moot, withdrawn or expired).
+- `trackedStatus.mjs`: the work item rule with a forecast.
+- `captureSave.mjs`: a save creates asks and outcome proposals, and still applies each item at most once.
+
+### What else changes
+
+- **Story and tests:** U8 moves Kemar's forecast to 26 Oct in the use case table (rows 4 and 8), the fixture, the seed checks, the review and answer tests, the story test and the browser story. Alicia approves "Trend model may slip to 26 Oct".
+- **Use case 1's acceptance criteria** gain: refused items and unused words are shown to the author; a change to someone else's record asks its owner; counted slips use working days.
+- **Migrations:** `work_items.forecast_date`; `braid_entries.expected_on` and `outcomes_proposed`; an `owner_asks` table.
+
+### Decisions this plan needs
+
+| # | Question | Default |
+|---|---|---|
+| UD1 | How long an Ask to the owner stays open | 7 days, like a review |
+| UD2 | An owner on leave: does the PM get their asks? | No; the ask waits |
+| UD3 | New work from a PM or Lead: created on save, or proposed to themselves? | Proposed, so it is placed in a thread |
+| UD4 | A forecast in the owner's leave: a note, or an inbox item for the PM? | A note on the card |
+| UD5 | Question 3 (working days) changes the story's dates. Take it now, or after use case 1 ships? | Now, before testing |
+| UD6 | Where set-aside reasons live: read from the audit log, or a column on the capture | The audit log |
+
+### Build order
+
+1. **U1 Set aside.** It makes every other gap visible while testing, and needs no machine.
+2. **U2, U3, U4.** BRAID changes on M15, mostly prompt, checks and arrows that already exist.
+3. **U5 and U7** together (M37).
+4. **U6 and U8**, with the story date change.
