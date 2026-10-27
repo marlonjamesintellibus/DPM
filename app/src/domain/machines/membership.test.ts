@@ -35,15 +35,17 @@ const WORLD: World = {
   memberships: [kemarIn("forager"), kemarIn("insights"), kemarIn("gq"), kemarIn("study", "member", "pm"), kemarIn("partner")],
 };
 
+const ADMIN = { byAdmin: true };
+
 describe("membership arrows", () => {
   it("invited -> member, requested -> member, member -> left", () => {
     expect(applyMembership(kemarIn("forager", "invited"), { type: "ACCEPT" }, "kemar").record.state).toBe("member");
-    expect(applyMembership(kemarIn("forager", "requested"), { type: "APPROVE" }, "alicia").record.state).toBe("member");
+    expect(applyMembership(kemarIn("forager", "requested"), { type: "APPROVE" }, "alicia", ADMIN).record.state).toBe("member");
     expect(applyMembership(kemarIn("forager"), { type: "LEAVE" }, "kemar").record.state).toBe("left");
   });
 
   it("a role change keeps the member state and is audited", () => {
-    const r = applyMembership(kemarIn("forager"), { type: "CHANGE_ROLE", role: "lead" }, "alicia");
+    const r = applyMembership(kemarIn("forager"), { type: "CHANGE_ROLE", role: "lead" }, "alicia", ADMIN);
     expect(r.outcome).toMatchObject({ ok: true, from: "member", to: "member" });
     expect(r.record.role).toBe("lead");
     expect(r.audit).toEqual({
@@ -60,13 +62,31 @@ describe("membership arrows", () => {
     expect(applyMembership(kemarIn("forager"), { type: "CHANGE_ROLE", role: "member" }, "alicia").outcome.ok).toBe(false);
     for (const s of ["invited", "requested", "left"] as const) {
       const record = kemarIn("forager", s);
-      const r = applyMembership(record, { type: "CHANGE_ROLE", role: "lead" }, "alicia");
+      const r = applyMembership(record, { type: "CHANGE_ROLE", role: "lead" }, "alicia", ADMIN);
       expect(r).toMatchObject({ outcome: { ok: false }, audit: null });
       expect(r.record).toBe(record);
     }
   });
 
-  it("refuses arrows that are not drawn; left is final", () => {
+  it("D4 only the group's admin approves joins and changes roles; only the person answers an invitation", () => {
+    expect(applyMembership(kemarIn("forager", "requested"), { type: "APPROVE" }, "jodian").outcome).toMatchObject({ ok: false, reason: "only the group's admin does this" });
+    expect(applyMembership(kemarIn("forager"), { type: "CHANGE_ROLE", role: "lead" }, "jodian").outcome.ok).toBe(false);
+    expect(applyMembership(kemarIn("forager", "invited"), { type: "ACCEPT" }, "alicia", ADMIN).outcome.ok).toBe(false);
+  });
+
+  it("D4 invitations can be declined or expire, requests declined, and anyone can be invited back", () => {
+    expect(applyMembership(kemarIn("forager", "invited"), { type: "DECLINE" }, "kemar").record.state).toBe("declined");
+    expect(applyMembership(kemarIn("forager", "requested"), { type: "DECLINE" }, "alicia", ADMIN).record.state).toBe("declined");
+    expect(applyMembership(kemarIn("forager", "invited"), { type: "EXPIRE" }, "rule", { daysInvited: 13 }).outcome.ok).toBe(false);
+    expect(applyMembership(kemarIn("forager", "invited"), { type: "EXPIRE" }, "rule", { daysInvited: 14 }).record.state).toBe("expired");
+    for (const s of ["left", "declined", "expired"] as const) expect(applyMembership(kemarIn("forager", s), { type: "INVITE" }, "alicia", ADMIN).record.state).toBe("invited");
+  });
+
+  it("D4 the admin cannot leave until someone else is admin", () => {
+    expect(applyMembership(kemarIn("forager"), { type: "LEAVE" }, "kemar", { personIsAdmin: true }).outcome).toMatchObject({ ok: false, reason: "make someone else the group's admin first" });
+  });
+
+  it("refuses arrows that are not drawn; left returns only by invitation", () => {
     expect(applyMembership(kemarIn("forager", "invited"), { type: "APPROVE" }, "alicia").outcome.ok).toBe(false);
     expect(applyMembership(kemarIn("forager", "requested"), { type: "ACCEPT" }, "kemar").outcome.ok).toBe(false);
     expect(applyMembership(kemarIn("forager"), { type: "ACCEPT" }, "kemar").outcome.ok).toBe(false);

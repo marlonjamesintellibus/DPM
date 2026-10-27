@@ -11,6 +11,7 @@ import type { BraidEntryRecord } from "../domain/machines/braid-entry";
 import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
+import { getLeaveImpact } from "./leave";
 import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, STATUS_LABEL, statusLabel, todayIn } from "./project";
 
 export type InboxCause =
@@ -22,13 +23,26 @@ export type InboxCause =
   | "blocker_new"
   | "clear"
   /** M2 review reminder: the author has not saved an update yet. */
-  | "review_waiting";
+  | "review_waiting"
+  /** D6: someone asked for leave; what it touches in the viewer's project. */
+  | "leave_impact"
+  /** E93: the work a blocker held has moved on; is the blocker resolved? */
+  | "confirm_clear"
+  /** D10: Atlas drafted what follows a realised risk, a broken assumption or a late dependency. */
+  | "follow_up"
+  /** M5, A10.1 (D18): work went Done with no PR or document linked. */
+  | "done_no_change";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
 const GROUP_ORDER: readonly InboxGroup[] = ["do_now", "today", "this_week"];
 
-export type InboxSubject = { type: "project"; id: string } | { type: "braid_entry"; id: string; projectId: string } | { type: "capture"; id: string };
+export type InboxSubject =
+  | { type: "project"; id: string }
+  | { type: "braid_entry"; id: string; projectId: string }
+  | { type: "capture"; id: string }
+  | { type: "leave"; id: string; projectId: string }
+  | { type: "work_item"; id: string; projectId: string };
 
 export type InboxEntry = {
   id: string;
@@ -61,7 +75,7 @@ export type Inbox = {
 };
 
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, "review_waiting"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, "review_waiting", "leave_impact", "done_no_change"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -112,7 +126,14 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
   const entryProjects = entryIds.length
     ? await conn.select({ id: t.braidEntries.id, projectId: t.braidEntries.projectId }).from(t.braidEntries).where(inArray(t.braidEntries.id, entryIds))
     : [];
-  const projectOf = (p: (typeof parsed)[number]) => (STATUS_CAUSES.includes(p.cause) ? p.subjectId : entryProjects.find((e) => e.id === p.subjectId)?.projectId);
+  const workIds = parsed.filter((p) => p.cause === "done_no_change").map((p) => p.subjectId);
+  const doneWork = workIds.length ? await conn.select().from(t.workItems).where(inArray(t.workItems.id, workIds)) : [];
+  const projectOf = (p: (typeof parsed)[number]) =>
+    STATUS_CAUSES.includes(p.cause)
+      ? p.subjectId
+      : p.cause === "done_no_change"
+        ? doneWork.find((w) => w.id === p.subjectId)?.projectId
+        : entryProjects.find((e) => e.id === p.subjectId)?.projectId;
   const projectIds = [...new Set(parsed.map(projectOf).filter((id): id is string => !!id && reader.mayRead(id)))];
   const today = todayIn(now);
   const projects = new Map<string, { row: typeof t.projects.$inferSelect; calculated: ReturnType<typeof calculatePlan>["project"]; log: Record<string, BraidEntryRecord> }>();
@@ -160,7 +181,34 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
     });
   }
 
-  for (const p of parsed.filter((x) => x.cause !== "review_waiting")) {
+  // D6: a request or change waiting on an admin; each lead sees only their project's part
+  for (const p of parsed.filter((x) => x.cause === "leave_impact")) {
+    const [leaveId, projectId] = p.subjectId.split("@");
+    const impact = await getLeaveImpact(conn, viewerId, leaveId, projectId);
+    if (!impact.found) continue;
+    const who = firstName(impact.person.name);
+    const things = impact.count === 0 ? "nothing to cover" : `${impact.count} ${impact.count === 1 ? "thing" : "things"} to cover`;
+    const age = ageOf(p.row.createdAt, now, true);
+    items.push({
+      id: p.row.id,
+      causeKey: p.row.causeKey,
+      cause: p.cause,
+      state: p.row.state,
+      title: `${who} asked ${impact.change ? "to change leave to" : "for leave"} ${impact.askedLabel}: ${things} in ${impact.project.name}`,
+      why: impact.mayDecide ? "you are an admin of one of their projects, so you decide this leave" : "an admin decides the leave; this is what it touches in your project",
+      source: `${who}'s update`,
+      age,
+      sourceLine: `${who}'s update · ${age}`,
+      action: impact.mayDecide ? "Decide" : "Plan cover",
+      group: "today",
+      groupLabel: GROUP_LABEL.today,
+      subject: { type: "leave", id: leaveId, projectId },
+      project: impact.project,
+      createdAt: p.row.createdAt,
+    });
+  }
+
+  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact")) {
     const projectId = projectOf(p);
     const project = projectId ? projects.get(projectId) : undefined;
     if (!project) continue; // not readable any more, or the subject is gone
@@ -207,6 +255,20 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
           subject,
         });
       }
+      continue;
+    }
+
+    if (p.cause === "done_no_change") {
+      const w = doneWork.find((x) => x.id === p.subjectId)!;
+      make({
+        title: `${w.number ?? w.title} is Done with no linked change`,
+        why: `${w.title} went Done without a PR or document; link the change that finished it`,
+        source: "Delivery check",
+        fromWords: false,
+        action: "Add link",
+        group: "today",
+        subject: { type: "work_item", id: w.id, projectId: project.row.id },
+      });
       continue;
     }
 
@@ -264,6 +326,32 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
           subject,
         });
         break;
+      case "confirm_clear":
+        make({
+          title: `Your work is moving again. Is this blocker resolved? ${entry.title}`,
+          why: "nothing it was holding is blocked now; only you or a PM or Lead can resolve it",
+          source: "Delivery check",
+          fromWords: false,
+          action: "Resolve",
+          group: "today",
+          subject,
+        });
+        break;
+      case "follow_up": {
+        const from = entry.links.find((l) => l.relation === "raised_from");
+        const origin = from ? project.log[from.entryId] : undefined;
+        const what = origin ? { realised: "was realised", broken: "broke", late: "is late" }[origin.state as "realised" | "broken" | "late"] : undefined;
+        make({
+          title: `Atlas drafted a${entry.kind === "issue" ? "n" : ""} ${KIND_LABEL[entry.kind].toLowerCase()}: ${entry.title}`,
+          why: origin && what ? `the ${KIND_LABEL[origin.kind].toLowerCase()} "${origin.title}" ${what}; confirm it, or drop it` : "confirm it, or drop it",
+          source: "Delivery check",
+          fromWords: false,
+          action: "Confirm",
+          group: "today",
+          subject,
+        });
+        break;
+      }
       case "clear": {
         const by = nameOf(entry.resolveProposedBy);
         make({

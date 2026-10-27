@@ -28,7 +28,7 @@ export function AppShell({
 export function PageHead({ title, children }: { title: string; children?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-3 border-b border-line px-7 pt-[18px] pb-3.5">
-      <h1 className="type-title text-fg-1">{title}</h1>
+      <h1 className="shrink-0 type-title whitespace-nowrap text-fg-1">{title}</h1>
       {children}
     </div>
   );

@@ -194,7 +194,7 @@ describe("map story: changed-before-save (E24, E25, S3)", () => {
     const t1 = key("145");
     const t2 = "milestone:trend:forecast";
     const db: Record<string, string | null> = { [t1]: "in_progress", [t2]: "2026-10-23" };
-    let cap: CaptureRecord = { ...(receiveCapture({ dedupKey: "whatsapp:m1", kind: "text" }, new Set()) as { ok: true; record: CaptureRecord }).record, state: "reviewing" };
+    let cap: CaptureRecord = { ...(receiveCapture({ dedupKey: "atlas:m1", kind: "text" }, new Set()) as { ok: true; record: CaptureRecord }).record, state: "reviewing" };
     let items = [
       startItem("u1", update("145", "in_progress", "done", { mark: "needs_ok" })),
       startItem("u2", update("trend", "2026-10-23", "2026-10-24", { mark: "needs_ok", confidence: "medium", target: { type: "milestone", id: "trend", field: "forecast", oldValue: "2026-10-23", newValue: "2026-10-24" } })),

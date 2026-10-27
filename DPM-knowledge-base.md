@@ -86,7 +86,7 @@ Capture  ->  Extract  ->  Confirm  ->  Record  ->  Evaluate  ->  Present  ->  Ac
    +------------------------------------------------------------------------------+
 ```
 
-1. **Capture.** A message, voice note, meeting transcript, email or system event arrives. Channels: app chat, phone, WhatsApp, voice, integrations (GitHub, calendar, CRM, accounting, HR, monitoring).
+1. **Capture.** A message, voice note, meeting transcript, email or system event arrives. Channels: the Atlas messaging app (text and voice notes), app chat, phone, integrations (GitHub, calendar, CRM, accounting, HR, monitoring).
 2. **Extract.** Atlas proposes record changes. Each proposal has: target record, field, old value, new value, source span (the exact words), confidence (High, Medium, Low).
 3. **Confirm.** The person accepts, edits or rejects each proposal. High confidence changes that match existing facts can be pre-accepted but still shown. Medium or Low wait for the person. If one field is unclear, Atlas asks one question.
 4. **Record.** Accepted changes are stored with provenance (A11).
@@ -299,7 +299,7 @@ Four ways to read the same records. Every page (Today, People, a project, Custom
 Every inbox item has:
 - **Title** in plain words ("Forager 2.0 is set Off track, but the plan says At risk")
 - **Why here** ("a status and the data disagree, and no reason is given")
-- **Source and age** ("Delivery check · 2h", "WhatsApp · 8:12am", "GitHub · yesterday")
+- **Source and age** ("Delivery check · 2h", "Atlas · 8:12am", "GitHub · yesterday")
 - **Primary action** (Add reason, Approve, Chase Kyle, Assign, Reply)
 - **Group:** Decide now / Today / This week (or, for care, Waiting longest / From the team / Today)
 - **Auto-close condition:** the item disappears when its cause is gone
@@ -425,7 +425,7 @@ How Intellibus fills in Part A. All data is a placeholder snapshot: **Tuesday 20
 
 | Part A primitive | Intellibus name |
 |---|---|
-| Check-in | Morning check-in (with Atlas, often WhatsApp) |
+| Check-in | Morning check-in (with Atlas, in the Atlas messaging app) |
 | Help request | Care request ("I need food", "I need a ride", "I want to talk to someone") |
 | Assessment | GQ (skills diagnostic, 0 to 100 per area; bands Low 0 to 49, Mid 50 to 79, High 80 to 100) |
 | Learning | Academy courses |
@@ -625,7 +625,7 @@ scheduled -> drafted (Atlas) -> edited -> approved -> sent
 2. How do we model roll-up: one composed statechart, or independent machines plus a reducer?
 3. How long does a set status last? What events clear it?
 4. Which transitions may Atlas propose, and which can only a person make?
-5. How do we merge the same event arriving from two channels (WhatsApp and app)?
+5. How do we merge the same event arriving from two channels (Atlas and the DPM app)? Answered for use case 1: two captures, deduplicated by channel and message id (machines doc D14).
 6. How do external systems (GitHub, CRM) map to our states, and who wins on conflict?
 7. Which timers are org config (cutoffs, SLAs, quiet days, tolerance) and which are fixed?
 8. How do we replay or simulate a day (for testing rules and briefings)?
@@ -713,7 +713,7 @@ The model is general if an org has: people whose wellbeing and availability matt
 | Goal metric | Placements | Visitors, revenue after opening | Placement rate | Access, outcomes | People reached |
 | Operations alert | System down | Weather, materials delay | Venue, connectivity | Equipment, staffing | Logistics |
 
-Signs the model fits: work is planned, people are the constraint, statuses must be explained to someone outside the team, and input happens in conversation (WhatsApp, calls, meetings).
+Signs the model fits: work is planned, people are the constraint, statuses must be explained to someone outside the team, and input happens in conversation (Atlas messages, calls, meetings).
 
 Signs it does not: pure ticket queues with no targets, highly regulated records that cannot accept conversational input, or teams with no external party.
 

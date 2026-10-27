@@ -16,7 +16,7 @@ import type { TargetType } from "./shared";
 export function targetKey(item: ExtractedItem): string | null {
   const { target, braid, kind } = item.draft;
   if (kind === "update" && target) return `${target.type}:${target.id}:${target.field}`;
-  if (kind === "braid_same" && braid?.matchEntryId) return `braid_entry:${braid.matchEntryId}:state`;
+  if ((kind === "braid_same" || kind === "braid_resolve") && braid?.matchEntryId) return `braid_entry:${braid.matchEntryId}:state`;
   return null;
 }
 
@@ -32,7 +32,8 @@ export type PlannedWrite = {
 /** A BRAID event for the M15 machine to run for the speaker. */
 export type BraidIntent = {
   itemId: string;
-  event: "REPORT" | "ADD_SOURCE";
+  /** RESOLVE (D7): resolves the entry if the speaker may, otherwise proposes it to those who may. */
+  event: "REPORT" | "ADD_SOURCE" | "RESOLVE";
   kind: BraidKind;
   projectId: string;
   title: string;
@@ -100,7 +101,7 @@ export function planSave(
     const key = targetKey(item);
     const now = key === null ? null : valueOf(key);
     // Compare and set: a field that moved to anything but the item's new value is a conflict
-    const alreadyTrue = kind === "update" && now === item.value;
+    const alreadyTrue = (kind === "update" && now === item.value) || (kind === "braid_resolve" && now === "resolved");
     if (key !== null && now !== item.saw && !alreadyTrue) {
       conflicts.push({ itemId: item.id, key, saw: item.saw, current: now });
     } else if (kind === "update" && target && key !== null && item.value !== null) {
@@ -112,11 +113,11 @@ export function planSave(
     } else if (entry && projectId !== null) {
       braid.push({
         itemId: item.id,
-        event: kind === "braid_new" ? "REPORT" : "ADD_SOURCE",
+        event: kind === "braid_new" ? "REPORT" : kind === "braid_resolve" ? "RESOLVE" : "ADD_SOURCE",
         kind: entry.kind,
         projectId,
         title: item.value ?? entry.title,
-        matchEntryId: kind === "braid_same" ? entry.matchEntryId : null,
+        matchEntryId: kind === "braid_same" || kind === "braid_resolve" ? entry.matchEntryId : null,
       });
     } else {
       throw new Error(`item ${item.id}: nothing to apply`);

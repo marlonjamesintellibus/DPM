@@ -39,7 +39,7 @@ function draft(over: Partial<ExtractedItemDraft> = {}): ExtractedItemDraft {
   };
 }
 
-function fresh(kind: "text" | "voice" = "text", key = "whatsapp:m1"): CaptureRecord {
+function fresh(kind: "text" | "voice" = "text", key = "atlas:m1"): CaptureRecord {
   const r = receiveCapture({ dedupKey: key, kind }, new Set());
   if (!r.ok) throw new Error(r.reason);
   return r.record;
@@ -68,7 +68,7 @@ describe("capture processing arrows", () => {
   it("text goes straight to reading; voice is transcribed first", () => {
     expect(ev(fresh("text"), { type: "START" }).record).toMatchObject({ state: "reading", tries: 1 });
     const voice = ev(fresh("voice"), { type: "START" }).record;
-    expect(voice).toMatchObject({ state: "transcribing", tries: 0 });
+    expect(voice).toMatchObject({ state: "transcribing", tries: 1 });
     expect(ev(voice, { type: "TRANSCRIBED", confidence: "high" }).record).toMatchObject({ state: "reading", tries: 1, transcriptConfidence: "high" });
   });
 
@@ -141,9 +141,9 @@ describe("capture processing arrows", () => {
 
 describe("capture processing edge cases", () => {
   it("E1 the same voice note arriving twice is dropped by its dedup key", () => {
-    const input = { channel: "whatsapp", author: "kemar", text: "Finished the TikTok ingest", sentAt: new Date("2026-10-20T13:58:00Z") };
-    const key = captureDedupKey({ ...input, messageId: "wamid.1" });
-    expect(key).toBe("whatsapp:wamid.1");
+    const input = { channel: "atlas", author: "kemar", text: "Finished the TikTok ingest", sentAt: new Date("2026-10-20T13:58:00Z") };
+    const key = captureDedupKey({ ...input, messageId: "atl.1" });
+    expect(key).toBe("atlas:atl.1");
     const seen = new Set([key]);
     expect(receiveCapture({ dedupKey: key, kind: "voice" }, seen)).toEqual({ ok: false, reason: "already received" });
     // without a message id: same author, text and minute give the same key; other text does not
@@ -190,7 +190,36 @@ describe("capture processing edge cases", () => {
     }
     r = ev(r, { type: "READ_FAILED", why: "bad_output" }).record;
     r = ev(r, { type: "RETRY" }).record;
-    expect(r).toMatchObject({ state: "failed", tries: config.captureMaxTries, dedupKey: "whatsapp:m1" });
+    expect(r).toMatchObject({ state: "failed", tries: config.captureMaxTries, dedupKey: "atlas:m1", failedStep: "read" });
+  });
+
+  it("D1 a voice note that cannot be transcribed is tried again, then fails asking for a new one", () => {
+    let r = ev(fresh("voice"), { type: "START" }).record;
+    for (let n = 1; n < config.captureMaxTries; n++) {
+      r = ev(r, { type: "TRANSCRIBE_FAILED", why: "no_transcript" }).record;
+      expect(r.state).toBe("transcribe_wait");
+      r = ev(r, { type: "RETRY" }).record;
+      expect(r).toMatchObject({ state: "transcribing", tries: n + 1 });
+    }
+    r = ev(ev(r, { type: "TRANSCRIBE_FAILED", why: "error" }).record, { type: "RETRY" }).record;
+    expect(r).toMatchObject({ state: "failed", failedStep: "transcribe" });
+  });
+
+  it("D1 tries for reading start again once the transcript is in", () => {
+    let r = ev(fresh("voice"), { type: "START" }).record;
+    r = ev(ev(r, { type: "TRANSCRIBE_FAILED", why: "timeout" }).record, { type: "RETRY" }).record;
+    expect(r.tries).toBe(2);
+    expect(ev(r, { type: "TRANSCRIBED", confidence: "high" }).record).toMatchObject({ state: "reading", tries: 1 });
+  });
+
+  it("D19 a transcription or read with no answer for 5 minutes goes back to retry, not before", () => {
+    const reading = ev(fresh(), { type: "START" }).record;
+    expect(ev(reading, { type: "STALE" }, { idleMinutes: config.staleReadMinutes - 1 }).outcome).toMatchObject({ ok: false, reason: "waiting 4 of 5 minutes" });
+    expect(ev(reading, { type: "STALE" }, { idleMinutes: config.staleReadMinutes }).record).toMatchObject({ state: "retry_wait", tries: 1 });
+    const transcribing = ev(fresh("voice"), { type: "START" }).record;
+    expect(ev(transcribing, { type: "STALE" }, { idleMinutes: 9 }).record.state).toBe("transcribe_wait");
+    expect(ev(at("reviewing"), { type: "STALE" }, { idleMinutes: 60 }).outcome.ok).toBe(false);
+    expect(ev(reading, { type: "STALE" }).outcome).toMatchObject({ ok: false, reason: "the time since the last move is needed" });
   });
 
   it("E19 no key or provider down fails the job the same way", () => {
@@ -298,7 +327,7 @@ describe("capture processing keeps its rules under any events", () => {
 // Property test: the Capture model (Dedup on) replayed on two channels against one plan. Each copy of
 // the message is its own capture; the plan changes once because Save compares and sets.
 describe("captures keep the Capture model's properties", () => {
-  const CHANNELS = ["whatsapp", "app"] as const;
+  const CHANNELS = ["atlas", "app"] as const;
   const UPDATES = { u1: "work_item:145:state", u2: "milestone:trend:forecast" } as const;
   type U = keyof typeof UPDATES;
   const move = fc.oneof(
@@ -319,7 +348,7 @@ describe("captures keep the Capture model's properties", () => {
         for (const mv of moves) {
           const c = cap[mv.c];
           if (mv.m === "arrive") {
-            // a WhatsApp retry has the same dedup key as the first copy (E1)
+            // an Atlas resend has the same dedup key as the first copy (E1)
             const r = receiveCapture({ dedupKey: `${mv.c}:m1`, kind: "text" }, seen);
             if (r.ok) {
               cap[mv.c] = { record: r.record, items: [] };
@@ -423,12 +452,12 @@ describe("map stories", () => {
       const read = ev(ev(got.record, { type: "START" }).record, { type: "PROPOSALS_READY", count: 2 }).record;
       return ev(read, { type: "OPEN_REVIEW" }, ACTIVE).record;
     };
-    // the app copy is proposed before the WhatsApp copy is saved, so both saw the old values
-    const whatsapp = arrive("whatsapp:m1")!;
-    expect(arrive("whatsapp:m1")).toBeNull(); // E1: a WhatsApp retry is dropped
+    // the app copy is proposed before the Atlas copy is saved, so both saw the old values
+    const fromAtlas = arrive("atlas:m1")!;
+    expect(arrive("atlas:m1")).toBeNull(); // E1: Atlas resending it is dropped
     const app = arrive("app:m1")!;
     const accept = (items: ExtractedItem[]) => items.map((i) => (i.state === "needs_ok" ? applyItemEvent(i, { type: "ACCEPT" }).item : i));
-    const first = saveNow(whatsapp, accept([u1(), u2()]), plan);
+    const first = saveNow(fromAtlas, accept([u1(), u2()]), plan);
     expect(first.items.map((i) => i.state)).toEqual(["applied", "applied"]);
     const second = saveNow(app, accept([u1(), u2()].map((i) => ({ ...i, id: `app:${i.id}` }))), plan);
     // E2: the second save finds the plan already has the new values

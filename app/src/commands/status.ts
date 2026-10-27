@@ -172,7 +172,8 @@ export async function draftReason(conn: Conn, projectId: string, now: Date): Pro
   const covered = new Set<string>();
   for (const e of entries) {
     if (e.kind === "blocker") {
-      const blocked = workItems.filter((w) => w.blockedLinks.includes(e.id) && w.number);
+      // Links stay after work moves on (E93), so only work still blocked counts here
+      const blocked = workItems.filter((w) => w.blockedLinks.includes(e.id) && w.state === "blocked" && w.number);
       blocked.forEach((w) => covered.add(w.id));
       const first = e.sources.map((s) => dateInZone(new Date(s.at), config.timeZone)).sort()[0] ?? today;
       const n = Math.max(0, daysBetween(first, today));
@@ -222,4 +223,20 @@ export async function draftReasonWithAtlas(conn: Conn, projectId: string, now: D
   if (!project?.setStatus) return draft;
   const worded = await wordReason(drafter, { projectName: project.name, status: STATUS_LABEL[project.setStatus], facts: draft.text });
   return worded.by === "atlas" ? { ...draft, text: worded.text, by: "atlas" } : { ...draft, fallback: worded.fallback };
+}
+
+/** M5, A10.1 (D18): the owner links the PR or document that finished their work; the error item closes. */
+export function linkChange(ctx: CommandCtx, workItemId: string, url: string): Promise<void> {
+  return runCommand(ctx, async (tx) => {
+    const link = url.trim();
+    if (!/^https?:\/\/\S+$/.test(link)) throw new CommandRefused("paste the link to the PR or document");
+    const [row] = await tx.select().from(t.workItems).where(eq(t.workItems.id, workItemId));
+    if (!row) throw new CommandRefused(`no work item ${workItemId}`, "not_found");
+    const members = await membersOf(tx, row.projectId);
+    const role = members.find((m) => m.id === ctx.actorId)?.role;
+    if (row.ownerId !== ctx.actorId && role !== "pm" && role !== "lead") throw new CommandRefused("only the owner, a PM or a Lead links a change", "not_allowed");
+    await tx.update(t.workItems).set({ linkedChange: link, updatedAt: ctx.now }).where(eq(t.workItems.id, workItemId));
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: "LINK_CHANGE", subjectType: "work_item", subjectId: workItemId, detail: { link } });
+    await evaluateProject(tx, row.projectId, ctx.now, { actorId: ctx.actorId });
+  });
 }

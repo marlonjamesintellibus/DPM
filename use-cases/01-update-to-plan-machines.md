@@ -314,8 +314,8 @@ Each has an ID used as a test name. "Where" is the machine and state that handle
 
 | ID | Case | What happens | Where |
 |---|---|---|---|
-| E1 | Same voice note arrives twice (WhatsApp retry) | Second copy has the same dedup key and is dropped | M2 RECEIVED guard |
-| E2 | Kemar says the same thing on WhatsApp and in the app, different words | Two captures, two sets of proposals. The second save finds current already equals new: no_change | M4 compare and set |
+| E1 | Same voice note arrives twice (Atlas resends it) | Second copy has the same dedup key and is dropped | M2 RECEIVED guard |
+| E2 | Kemar says the same thing in Atlas and in the DPM app, different words | Two captures, two sets of proposals. The second save finds current already equals new: no_change | M4 compare and set |
 | E3 | Two sessions of the same review (phone and web) press Save | First save wins. Second sees "Saved at 9:11 from your phone"; nothing applied twice | M2 version check, M4 once per ID |
 | E4 | Empty or chatty message ("morning!") | 0 proposals: capture goes to nothing_to_update; Atlas replies normally | M2 |
 | E5 | Voice transcription is poor or in Jamaican Patois | Transcript stored as is; low transcript confidence lowers every extraction to at most Medium | M2, M3 confidence floor |
@@ -524,6 +524,8 @@ The domain code (`app/src/domain`, 387 tests) follows this doc and the checked m
 
 ### Needs a decision
 
+Decided on 26 Oct: see section 11.
+
 | # | Question | Default in the code |
 |---|---|---|
 | D1 | A voice note that cannot be transcribed has no way out of `transcribing` (rule 3) | Add `transcribing` to retry, then failed, like reading (not yet in the code) |
@@ -558,6 +560,8 @@ The commands (`app/src/commands`) and per-viewer queries (`app/src/queries`) run
 | G18 | A quote on a project page | Shown only when the words were applied into that project as routed. A source from another project's words shows no quote, even to someone in both projects (E79) |
 
 ### Needs a decision
+
+Decided on 26 Oct: see section 11.
 
 | # | Question | Default in the code |
 |---|---|---|
@@ -606,9 +610,173 @@ Prompt `read-2`, one run each, after G19 and G20; a second Sol run passed 33 aga
 
 ### Needs a decision
 
+Decided on 26 Oct: see section 11.
+
 | # | Question | Default in the code |
 |---|---|---|
 | D19 | A capture whose read crashed mid-way (process stopped) stays in reading, and a second read is refused | Nothing moves it yet. A timer that returns a read older than 5 minutes to retry_wait would fix it |
 | D20 | "Jodian has the runbook already": the design reads it as Low (needs Kemar's OK); every model says High, so it is pre-accepted | Kept as the model says; the checks only lower confidence for hedges, relative dates and poor transcripts |
 | D21 | Model choice: Haiku is a quarter of Sol's cost here and nearly as good | GPT-6.1 Sol, as asked. Revisit with real messages after B7 |
 | D22 | The evaluation uses Kemar's data only | More authors and projects come with phase 5 seed data |
+
+## 11. Decisions on D1 to D22 (26 Oct 2026)
+
+Marlon decided D1, D3, D4, D5, D6 and D19, and asked for the best path on the rest. The machine changes below were model checked first (`research/state-machines/js`: CaptureJob, Leave and BraidFollowUps, 3 rows and 17 planted bugs, every result as expected), then built on 26 Oct with tests (622 in all). What building them found is at the end of this section.
+
+**Channel.** Messages and voice notes come from **Atlas**, Intellibus's messaging app, which works with the Atlas AI in DPM. They do not come from WhatsApp. The capture channel `whatsapp` becomes `atlas`; `app` stays for DPM's own chat. Every message from Atlas carries a message id. Marlon will share more about the Atlas bots and the Atlas experience later.
+
+### The capture job (D1, D3, D19)
+
+```
+received -> transcribing (voice) | reading (text)
+transcribing -> TRANSCRIBED -> reading
+transcribing -> TRANSCRIBE_FAILED -> transcribe_wait                         NEW (D1)
+transcribe_wait -> RETRY -> transcribing (tries < 3) | failed, asks for a new voice note   NEW (D1)
+reading -> READ_FAILED -> retry_wait -> RETRY -> reading (tries < 3) | failed, asks to try again or type
+TIMER stale (5 min with no answer): reading -> retry_wait, transcribing -> transcribe_wait   NEW (D19)
+reviewing -> SAVE -> saving -> SAVE_DONE -> saved
+saving -> SAVE_ERROR -> save_wait -> RETRY -> saving (tries < 3) | reviewing, told       NEW (D3)
+save_wait -> RETRY, already saved -> saved   (the save went through; only the reply was lost)
+saving -> SAVE_FAILED -> reviewing   (a conflict or a refusal, shown on its card; no retry)
+```
+
+| # | Decision | Edge cases and how they are handled |
+|---|---|---|
+| D1 | A voice note that cannot be transcribed is tried again, up to 3 times. Then the capture fails and Atlas asks for a new voice note: "I couldn't hear that one. Can you send it again, or type it?" | The new voice note is a new capture with its own message id. The failed one stays failed, with its audio kept for the author only. A transcription that never answers is caught by the 5 minute timer (the model check found this: without it the note waits in transcribing forever). Tries for transcribing and reading are counted apart |
+| D3 | A save that fails on a database error is retried with the same item IDs, up to 3 times (after 1s, then 2s). If it still cannot save, the capture goes back to reviewing and the author is told: "This didn't save, and nothing was changed. Try Save again." They can press Save again | The save is one transaction, so a failed try writes nothing. If the save went through but the reply was lost, the retry finds the capture saved and reports it saved; nothing applies twice (once per item ID). A conflict or a record refusal is not retried: it goes back to the card (D12). Saving again after being told starts a fresh count |
+| D19 | A read or a transcription with no answer for 5 minutes goes back to retry | An answer that arrives after its attempt was given up is dropped: each read carries its attempt number, and only the current attempt may store items. Checks still re-read the database when items are stored |
+
+### Saving updates (D2, D12, D13, D14)
+
+| # | Was the default the best? | Decision | Edge cases |
+|---|---|---|---|
+| D2 | Mostly. Withdrawing is right; the conflict path is not, because there is nothing to resolve on cancelled work | Cancelled work is never sent to Atlas as a candidate. If work is cancelled after Atlas proposed an update and before Save, that item is withdrawn at Save with "This issue was cancelled", and the rest saves. It is never a conflict | The author already saw it cancelled and confirmed it anyway: still withdrawn, same message. A BRAID item about cancelled work still saves (the log keeps history) |
+| D12 | No. A refusal that leaves no trace breaks rule 2 | Before writing, Save checks every update against its record's machine (the machines are pure, so this needs no writes). A refusal goes back to that card: "#142 can't go from To do to Done here. Edit it or reject it", and nothing is applied (all or nothing). It is written to the audit. If a refusal still happens while writing (a race), the transaction rolls back and the refusal is logged in a separate transaction | Several refusals: each card shows its own. A refused item the author rejects lets the rest save |
+| D13 | Yes, with a clearer screen | An update whose target is a record stays in that record's project (G2). The review offers "Move" only for BRAID items and items with no target. The server still refuses a move of a record update, with: "#151 is in Forager 2.0. To log this somewhere else, add it as a BRAID item in that project" | Moving a BRAID item re-runs checks 9 to 14 for the new project. Moving to a project the author is not in is refused |
+| D14 | No. Atlas always sends a message id, so the "no id" case should not exist | The dedup key is channel plus message id. A message with no id is refused at the Atlas endpoint (part of B8). The same words sent in Atlas and in DPM's chat are two captures; once the first is saved, the second's items show "No change" | A message Atlas resends (a network retry) has the same id and is dropped (E1). Edits to a sent message in Atlas: a new id, so a new capture |
+
+### Memberships and roles (D4)
+
+| # | Decision | Edge cases |
+|---|---|---|
+| D4 | Roles stay seeded for use case 1. Later, the person who creates a group is its admin from the start. The admin can tell Atlas who each person is and their role ("Alicia is the PM, Kemar is a data engineer"); Atlas proposes the roles and the admin confirms them, as with any capture. The admin approves joins and role changes. Membership gains: invited -> declined, invited -> expired (14 days), requested -> declined, left -> invited (to rejoin) | The admin leaves: the group needs another admin first. Only an admin's words can set a role; anyone else's become a proposal to the admin. This arrives with the Atlas contract (B8, B9) |
+
+### Leave (D6)
+
+```
+Leave said in a message, matched against the author's live leave (requested or approved):
+  covered by one          -> "Matches your leave" or "Matches your leave request": no change
+  overlaps one            -> needs OK: "Change your leave to 11 to 14 Nov?"
+      requested: the dates change, still requested
+      approved:  the approved dates stay; the new dates wait as a change for the admin
+  neither                 -> needs OK: a new leave request
+requested -> approved | declined (admin) | withdrawn (author)            NEW: declined, withdrawn
+approved (change waiting) -> approved, new dates | approved, old dates
+```
+
+| # | Decision | Edge cases |
+|---|---|---|
+| D6 | Atlas checks every leave request and approved leave of the author. Out 11 to 13 Nov with a request for 11 to 13 Nov: it matches that one, and nothing new is made. With no match, saving makes a new request. Each new or changed request shows each project lead, and the admin, what the absence touches in their project: the person's open and blocked work, milestones they own due in the window or soon after, handover steps not done, and BRAID entries that name them as the only one who can do something. The admin approves or declines | Each lead sees only their own project's part, never the reason. The impact items close when the admin decides, and the cover steps (C9: handover, covered or uncovered) carry on from there. Overlapping but not equal dates become a change, not a second request. A second change before the admin decides replaces the first. Approved leave is never lost while a change waits. A capture never approves leave |
+
+**Question for Marlon:** who approves leave? The default above is the group admin, with project leads shown the impact. KB C9 does not say.
+
+### Status rules (D5)
+
+| # | Decision | Edge cases |
+|---|---|---|
+| D5 | A planned milestone whose target date passes becomes missed, like one in progress, so it reads Off track | Its forecast moving later than the target before that day already shows At risk or Off track. Finishing a missed milestone still moves it to done |
+
+### BRAID entries (D7 to D11, D15, D16)
+
+| # | Was the default the best? | Decision | Edge cases |
+|---|---|---|---|
+| D7 | No: E93 already says what should happen | A new item kind, "resolve", for blockers and issues. "Kyle sent the feed" gives two items for Kemar to confirm: resolve the blocker, and unblock #151. Kemar owns the blocked work, so the blocker resolves on save. If Jodian says it, it becomes the "it's cleared" proposal to Kemar and the PM. When every work item a blocker blocks leaves Blocked, a rule asks the owner to confirm; it never resolves it | Check 12 becomes: a capture may report, add a source, or propose a resolution; never approve or decline. A resolve item on a blocker already resolved is "No change". The Thursday step of the story gains the resolve item |
+| D8 | No: adding a source to a finished entry hides the news | A finished entry never reopens from a message, except blockers and issues (S14). A report on a closed risk proposes a new risk, linked "raised again", for the leads to approve. A report on a realised risk goes to the issue it became; on a broken assumption or a late dependency, to the risk it raised; on a superseded decision, to the decision that replaced it. A report on a met dependency or a confirmed assumption adds a source | A declined proposal reported again becomes a new proposal linked to the declined one, so the decider sees it was declined before |
+| D9 | No: a silent merge can hide an open report | Merging an open duplicate into a resolved entry asks the PM: "Reopen it, or keep it resolved?" Keeping it resolved records the choice on the entry, and the duplicate's reports are kept on it | Merging into an open entry needs no choice. Unmerge restores both as they were (G7) |
+| D10 | Yes, with less work for the person | Still never automatic (P5). When a risk is realised, an assumption breaks or a dependency is late, Atlas drafts the new entry and puts it in the approver's inbox to confirm in one step | The draft carries the link (`raised_from`). Declining the draft leaves the first entry as it is |
+| D11 | Close: it should not need every report to be theirs | A reporter can always take back their own report. The entry is withdrawn only when no one else reported it. If someone said it is cleared, the resolver answers first | The last reporter withdrawing a blocker that is linked to blocked work: allowed, and the work keeps its Blocked note until its owner changes it |
+| D15 | No: the reporter should hear back | Atlas tells the reporter in their chat when their entry is approved, declined or resolved: "Alicia approved your risk: Trend model may slip to 24 Oct." It is a message, not an inbox item, because there is nothing to do | Asked for more stays an inbox item, because there is something to do |
+| D16 | Partly: fine for now, but it should be per project | The number of decision approvers is a project setting, 1 by default, set by the PM (1 or 2, S11). The config value is the default for new projects | Changing it does not change decisions already approved |
+
+### Not built yet (D17, D18): build in phase 5
+
+| # | Decision |
+|---|---|
+| D17 | On the reason screen (L6), "Add to the BRAID log" adds an entry inline and links it to the reason. The PM holds the approve right, so the entry lands on the log at once (landsAs); anyone else's lands as a proposal |
+| D18 | On the review screen (L16): "Not the same" turns a match into a new entry; "Pick an entry" lists the project's open entries of the same kind. And the M5 check "Done with no linked change" (Error) opens an inbox item for the work's owner when work goes Done with no PR or doc linked |
+
+### Atlas (D20 to D22)
+
+| # | Decision |
+|---|---|
+| D20 | Marking a handover step handed over always needs the author's OK, whatever confidence the model gives. It changes who covers the work while someone is away, so a person confirms it. This matches the design (L16) |
+| D21 | GPT-6.1 Sol stays the reader. The reason wording, which is short and checked, uses Haiku (cheaper). If Sol fails twice, the third try uses Haiku, so a provider outage does not fail the read. The evaluation is run again after any prompt or model change, and with real messages after B7 |
+| D22 | The evaluation gains messages from Alicia (PM: she may change others' work, resolve blockers and approve) and Andre (one project), built from the seed through the same loader the app uses, so the cases and the seed stay in step |
+
+### Built (26 Oct 2026)
+
+| # | Where | Tests |
+|---|---|---|
+| D1, D19 | M2 gains `transcribe_wait`, `TRANSCRIBE_FAILED` and the `STALE` timer (`runCaptureTimers`); a read is `beginRead`, then `finishTranscribe` or `failTranscribe`, then `proposeItems` or `failRead`, each naming its attempt (`ReadSuperseded` for a late answer). `capturesToRead` lists what a worker should read. Atlas sends the transcript with the voice note (`atlasTranscript`) | `commands/atlas.test.ts`, `machines/capture.test.ts` |
+| D3, D12 | `saveCapture` retries a database error twice (1s, 2s), answers "saved" when only the reply was lost, and otherwise returns `failed` with the message. Every write is checked against its record's machine first; a refusal comes back on its card ("Can't apply") and is audited. A refusal of the whole save is audited in its own transaction | `commands/capture.test.ts` |
+| D2, D13, D14 | Cancelled work is not a candidate and is always withdrawn at save. The review marks `canMove` only for BRAID items and items with no target. Captures from `atlas` must carry a message id; the fallback key includes the channel | same |
+| D4, D5 | Membership: declined, expired, invited back, admin-only approvals and role changes; the admin cannot leave first. Milestones: planned to missed, and `runMilestoneTimers` fires it | `machines/membership.test.ts`, `commands/milestones.test.ts` |
+| D6 | `fitLeave` (matches, change, new); `approveLeave`, `declineLeave`, `withdrawLeave`; `leave_impact` inbox items from `syncLeaveImpact`, read through `getLeaveImpact` | `machines/leave.test.ts`, `commands/leave.test.ts` |
+| D7 to D11, D15, D16 | Item kind `braid_resolve`; `confirm_clear` and `follow_up` inbox causes; `redirectReport`; the merge choice; withdrawing one's own report (kept as `withdrawn_at`); `notices` shown in the chat; `projects.decision_approvers` and `setDecisionApprovers` | `commands/braid-followups.test.ts`, `machines/braid-entry.test.ts`, `story.test.ts` (Thursday resolves the blocker) |
+| D20 to D22 | Handing a step over always needs OK; `withFallback` (Sol, then Haiku on the last try) and a Haiku drafter, each set by `OPENROUTER_*_MODEL`; 10 evaluation messages from Alicia and Andre, with every author's data loaded from the seed | `atlas/openrouter.test.ts`, `atlas/eval/cases.test.ts` |
+
+One migration, `app/drizzle/0002_d1_to_d22.sql`.
+
+### Found while building them
+
+| # | Point | What the code does |
+|---|---|---|
+| G25 | Unblocking work cleared its links to the blocker, so nothing could tell the owner their work was moving again (E93) | Links stay when work leaves Blocked; the reason draft counts only work still blocked. Saving an update that blocks work and a blocker report from the same words links them (M5) |
+| G26 | Every project lead was told about a leave even with nothing to cover ("nothing to cover in GQ & Academy") | A lead is told only when their project has something to cover; an admin is always told once, so someone decides |
+| G27 | A change to leave compared against no value and always conflicted | It compares against the leave's dates as they are now, so a leave that moved meanwhile is a real conflict |
+| G28 | The model checker's withdraw arrows, drawn in the obvious order, gave the unhelpful refusal ("only you reported it") | The withdraw-the-entry arrow comes first and says why it refuses ("others reported it too", "the owner or a PM or Lead answers first") |
+| G29 | A programming error during Save (a resolve item the save did not know) looked like a database error and was retried, then "didn't save" | Fixed; the cause is written to the audit (`SAVE_ERROR`), which is how it was found |
+
+Evaluation on prompt `read-3` (43 messages, GPT-6.1 Sol): 42 pass, nothing forbidden, $0.27.
+
+| # | Question | Default in the code |
+|---|---|---|
+| D23 | "We decided to keep the refresh at 7am after all" from Andre, who is in one project: the model proposed nothing, because the words name no project or record | Left as is. A rule that the author's only project counts as "a thing tied to one project" (M14) would file it; decide with real messages |
+| D24 | Who approves leave (KB C9 does not say) | An admin of one of the person's projects (the group's creator), with each project's leads shown the impact |
+
+### What this changed in the code
+
+- Capture: TRANSCRIBE_FAILED and transcribe_wait, the stale timer, attempt numbers on reads, the save retry, the "already saved" answer, the new chat lines. Channel `whatsapp` to `atlas` (a migration).
+- Save: the pre-write refusal check (D12), cancelled work out of the candidates (D2), "Move" only for BRAID items (D13), dedup by channel and message id (D14).
+- Leave: matching requested leave, changes to leave, decline and withdraw, the impact items for leads and the admin.
+- Milestones: planned to missed.
+- BRAID: the resolve item kind and check 12, reports on finished entries, the merge choice, withdrawing one's own report, chat messages to reporters, the per-project approver setting.
+- Atlas: handover steps always need OK, Haiku for wording and as the last-try fallback, more evaluation cases.
+- Phase 5 picks up D17 and D18.
+
+## 12. Found while building phase 5 (26 Oct 2026)
+
+The screens run on the commands and per-viewer queries as they are; View as sets who is acting, and every change is a Server Action that runs the command as that person, so rights are checked by the commands, never by the screen.
+
+### Decided in the code
+
+| # | Point | What the code does |
+|---|---|---|
+| G30 | The plan timeline (L14) needs a start for each piece of work | Work items gain `start_date`, seeded to match the plan the design draws; the bar runs from start to due and is coloured by the rules (done, in progress, not started, blocked or late to start, forecast to miss) |
+| G31 | D17 and D18 needed commands | `reportBraidEntry` (lands by the reporter's right), `rematchExtraction` ("Not the same", "Pick an entry"; choosing is confirming), and `linkChange` with the rule `done_no_change:<work item>` for the work's owner (M5, A10.1). The seed's #142 has its PR linked; #145 and #208, done by voice in the story, ask Kemar for the link, as M5 expects |
+| G32 | Approving had no words for the reporter (L6b "Note to Kemar") | APPROVE takes an optional note, kept with the answer and sent in the reporter's notice (D15) |
+| G33 | Move on the review (D13) | Offered only for new BRAID entries and items with no target: a same-as report or a resolution belongs to its entry's log, as an update belongs to its record's project |
+| G34 | Today in the design shows Chat, Inbox, Dashboard and Table | Chat and Inbox are built; a lead starts in the inbox and anyone else in the chat, and either can switch (A8). The status pill in Today's head (an org-level "Off track because…") is left out: it needs the executive's org status, not in this slice |
+| G35 | The demo clock | Starts at 9:10am on 20 Oct 2026 and runs in real time from when the server starts, so the story plays forward; `DPM_CLOCK=real` uses the real time |
+
+### Needs a decision
+
+| # | Question | Default in the code |
+|---|---|---|
+| D25 | Dashboard and Table views (A8), and the Plan card's "Client view" | Not built; the switch offers only Chat and Inbox |
+| D26 | The mobile chat (L18f) as its own layout, and voice capture from the app | The web chat carries the L18f content; voice notes arrive from Atlas only |
+| D27 | Executive and care team views (L0 lists them) | Not in the seed; View as offers Kemar, Alicia and Andre |
+| D28 | Icons have their colours baked in, so they vanish in dark mode | Light mode matches Figma; dark mode needs icons that follow the text colour |
+| D29 | Kemar's chat lists each update as a conversation; the design's conversations are topics ("NEPA support staffing") | One conversation per update until Atlas has topics |
+| D30 | Inbox actions for causes not in this slice ("Chase Kyle", "Approve cover", "Assign") | Each item opens its own detail with the actions the commands support |
+

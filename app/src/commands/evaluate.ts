@@ -6,7 +6,7 @@ import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Tx } from "../db/conn";
 import { loadBraidLog, loadPlanRows, loadProject, membersOf, persistSetStatus, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
-import { braidEntryCauses, decidersFor, type BraidEntryRecord, type ProjectMember } from "../domain/machines/braid-entry";
+import { braidEntryCauses, decidersFor, type BraidEntryRecord, type DecisionPolicy, type ProjectMember } from "../domain/machines/braid-entry";
 import { evaluateCause, LIVE, type InboxItemRef } from "../domain/machines/inbox-item";
 import { applySetStatus, setStatusCause, type SetStatusRecord } from "../domain/machines/set-status";
 import { calculatePlan } from "../domain/status/rules";
@@ -22,11 +22,17 @@ export type Evaluation = {
 };
 
 /** Who an inbox cause belongs to. Keys are "<cause>:<subject id>" (M10). */
+/** D16: the project's own number of decision approvers; self approval comes from config (S12). */
+export function policyOf(project: { decisionApprovers: number }): Partial<DecisionPolicy> {
+  return { approversNeeded: project.decisionApprovers };
+}
+
 function ownersOf(
   causeKey: string,
   project: { ownerId: string; setBy: string | null },
   entry: BraidEntryRecord | undefined,
   members: readonly ProjectMember[],
+  policy: Partial<DecisionPolicy> = {},
 ): string[] {
   const [cause] = causeKey.split(":");
   const leads = members.filter((m) => m.role === "pm" || m.role === "lead").map((m) => m.id);
@@ -35,7 +41,7 @@ function ownersOf(
     case "keep_set_status":
       return [project.setBy ?? project.ownerId];
     case "approve":
-      return entry ? decidersFor(entry, members) : [];
+      return entry ? decidersFor(entry, members, policy) : [];
     case "no_decider": // E91: nobody can decide it, so the project owner is told
       return [project.ownerId];
     case "more_info":
@@ -44,6 +50,8 @@ function ownersOf(
       return members.filter((m) => m.role === "pm").map((m) => m.id);
     case "clear": // S13: the owner of the blocked work, or a PM or Lead, confirms
       return [...new Set([...(entry?.ownerId ? [entry.ownerId] : []), ...leads])].filter((id) => id !== entry?.resolveProposedBy);
+    case "follow_up": // D10: a PM or Lead confirms or drops what Atlas drafted
+      return leads;
     default:
       throw new Error(`unknown inbox cause ${causeKey}`);
   }
@@ -56,7 +64,16 @@ function ownersOf(
 export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts: { actorId?: string } = {}): Promise<Evaluation> {
   const project = await loadProject(tx, projectId);
   if (!project) throw new CommandRefused(`no project ${projectId}`, "not_found");
-  const [planRows, members, { log }] = await Promise.all([loadPlanRows(tx, projectId), membersOf(tx, projectId), loadBraidLog(tx, projectId)]);
+  const [planRows, members, { log }, work] = await Promise.all([
+    loadPlanRows(tx, projectId),
+    membersOf(tx, projectId),
+    loadBraidLog(tx, projectId),
+    tx
+      .select({ id: t.workItems.id, ownerId: t.workItems.ownerId, state: t.workItems.state, blockedLinks: t.workItems.blockedLinks, linkedChange: t.workItems.linkedChange })
+      .from(t.workItems)
+      .where(eq(t.workItems.projectId, projectId)),
+  ]);
+  const policy = policyOf(project);
   const plan = calculatePlan(planRows, todayOf(now));
 
   // M9: tell the set status the plan may have moved. "previous" is the plan the reason was given
@@ -89,12 +106,39 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
   const statusCause = setStatusCause(record);
   if (statusCause) desired.set(`${statusCause}:${projectId}`, ownersOf(`${statusCause}:${projectId}`, project, undefined, members));
   for (const entry of Object.values(log)) {
-    for (const key of braidEntryCauses(entry, members)) desired.set(key, ownersOf(key, project, entry, members));
+    for (const key of braidEntryCauses(entry, members, policy)) desired.set(key, ownersOf(key, project, entry, members, policy));
+    // E93: every work item the blocker held has moved on; its owners are asked, the blocker is never closed by the rule
+    const held = work.filter((w) => w.blockedLinks.includes(entry.id));
+    if (entry.kind === "blocker" && entry.state === "reported" && !entry.resolveProposedBy && held.length && held.every((w) => w.state !== "blocked")) {
+      desired.set(`confirm_clear:${entry.id}`, [...new Set(held.map((w) => w.ownerId))].sort());
+    }
   }
 
-  // Every item ever made for this project's causes (the project itself and its BRAID entries)
-  const subjects = new Set([projectId, ...Object.keys(log)]);
+  // M5, A10.1 (D18): work marked Done with no PR or document linked; its owner links one
+  for (const w of work) if (w.state === "done" && !w.linkedChange) desired.set(`done_no_change:${w.id}`, [w.ownerId]);
+
+  // Every item ever made for this project's causes (the project itself, its BRAID entries, its work)
+  const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id)]);
   const items = (await tx.select().from(t.inboxItems)).filter((i) => subjects.has(i.causeKey.slice(i.causeKey.indexOf(":") + 1)));
+  const { opened, closed } = await syncInbox(tx, now, items, desired, opts);
+
+  return { calculated: plan.project, threads: plan.threads, setStatus: record, opened, closed };
+}
+
+type InboxRow = typeof t.inboxItems.$inferSelect;
+
+/**
+ * Keeps the inbox in step with a set of causes (M10). `items` are every item ever made for these
+ * causes; `desired` is who each cause belongs to now. An item whose cause is gone closes as acted
+ * when the owner's own action removed it, otherwise as auto closed.
+ */
+export async function syncInbox(
+  tx: Tx,
+  now: Date,
+  items: readonly InboxRow[],
+  desired: ReadonlyMap<string, readonly string[]>,
+  opts: { actorId?: string } = {},
+): Promise<{ opened: Evaluation["opened"]; closed: Evaluation["closed"] }> {
   const opened: Evaluation["opened"] = [];
   const closed: Evaluation["closed"] = [];
   const pairs = new Set<string>([...items.filter((i) => LIVE.includes(i.state)).map((i) => `${i.ownerId}|${i.causeKey}`)]);
@@ -125,8 +169,7 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
       closed.push({ ownerId, causeKey, to: c.to });
     }
   }
-
-  return { calculated: plan.project, threads: plan.threads, setStatus: record, opened, closed };
+  return { opened, closed };
 }
 
 /** Runs evaluate for several projects, each once, in a stable order. */

@@ -10,8 +10,8 @@ import { KEMAR_NOTE, KEMAR_NOTE_AT, KEMAR_PROPOSALS } from "../domain/atlas-chec
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { getChatSummary } from "../queries/chat";
 import { AT_910, at, seededDb } from "../test/seeded-db";
-import { readCapture } from "./atlas";
-import { beginRead, createCapture } from "./capture";
+import { capturesToRead, readCapture } from "./atlas";
+import { beginRead, createCapture, proposeItems, ReadSuperseded, runCaptureTimers } from "./capture";
 import { CommandRefused } from "./core";
 import { draftReason, draftReasonWithAtlas } from "./status";
 
@@ -19,8 +19,9 @@ let db: Db;
 const kemar = () => ({ db, now: at(0), actorId: "kemar" });
 const noWait = { retryDelayMs: () => 0 };
 
-async function note(text = KEMAR_NOTE) {
-  const { captureId } = await createCapture(kemar(), { channel: "whatsapp", kind: "voice", text, messageAt: KEMAR_NOTE_AT, receivedAt: KEMAR_NOTE_AT, transcriptConfidence: "high" });
+let messages = 0;
+async function note(text = KEMAR_NOTE, kind: "voice" | "text" = "voice") {
+  const { captureId } = await createCapture(kemar(), { channel: "atlas", messageId: `atl-${++messages}`, kind, text, messageAt: KEMAR_NOTE_AT, receivedAt: KEMAR_NOTE_AT, transcriptConfidence: kind === "voice" ? "high" : null });
   return captureId;
 }
 
@@ -110,6 +111,75 @@ describe("readCapture", () => {
 
   it("a database refusal is not mistaken for a model failure", async () => {
     await expect(readCapture(kemar(), "cap-missing", createFixtureExtractor(), noWait)).rejects.toBeInstanceOf(CommandRefused);
+  });
+});
+
+describe("D1, D14, D19: voice notes, message ids and reads that never answer", () => {
+  it("D1: a voice note with no transcript is tried 3 times, then Atlas asks for a new voice note", async () => {
+    const id = await note("", "voice");
+    const atlas = flaky([]);
+    const r = await readCapture(kemar(), id, atlas, noWait);
+    expect(r).toMatchObject({ outcome: "failed", tries: 3, failedStep: "transcribe" });
+    expect(atlas.calls).toBe(0); // the model is never asked about a note nobody could hear
+    expect(await moves(id)).toEqual(["RECEIVED", "START", "TRANSCRIBE_FAILED", "RETRY", "TRANSCRIBE_FAILED", "RETRY", "TRANSCRIBE_FAILED", "RETRY"]);
+    expect((await getChatSummary(db, "kemar")).latest?.line).toBe("I couldn't hear that voice note. Can you send it again, or type it?");
+  });
+
+  it("D1: the new voice note is a new capture, read as normal", async () => {
+    await readCapture(kemar(), await note("", "voice"), flaky([]), noWait);
+    const later = new Date(KEMAR_NOTE_AT.getTime() + 60_000);
+    const { captureId: again } = await createCapture(kemar(), { channel: "atlas", messageId: "atl-again", kind: "voice", text: KEMAR_NOTE, messageAt: later, receivedAt: later, transcriptConfidence: "high" });
+    expect(await readCapture(kemar(), again, createFixtureExtractor(), noWait)).toMatchObject({ outcome: "proposed", state: "proposed" });
+    expect((await getChatSummary(db, "kemar")).latest).toMatchObject({ id: again, line: "Got it. 9 updates for 2 projects; 4 need your OK." });
+  });
+
+  it("D14: a message from Atlas without its message id is refused", async () => {
+    await expect(createCapture(kemar(), { channel: "atlas", kind: "text", text: "#145 done", messageAt: at(0), receivedAt: at(0) })).rejects.toThrow("needs its message id");
+  });
+
+  it("D14: the same words in Atlas and in the DPM app are two captures; a resend from Atlas is one", async () => {
+    const input = { kind: "text" as const, text: "#145 done", messageAt: at(0), receivedAt: at(0) };
+    const a = await createCapture(kemar(), { ...input, channel: "atlas", messageId: "atl-9" });
+    const resend = await createCapture(kemar(), { ...input, channel: "atlas", messageId: "atl-9", receivedAt: at(1) });
+    const app = await createCapture(kemar(), { ...input, channel: "app" });
+    expect(resend).toEqual({ captureId: a.captureId, duplicate: true });
+    expect(app.duplicate).toBe(false);
+  });
+
+  it("D19: a read with no answer for 5 minutes goes back to retry; the late answer is dropped", async () => {
+    const id = await note("#145 is done.", "text");
+    const started = await beginRead(kemar(), id); // the process stops here
+    expect(await runCaptureTimers({ db, now: at(4) })).toMatchObject({ stale: [] });
+    expect(await runCaptureTimers({ db, now: at(5) })).toMatchObject({ stale: [id] });
+    expect(await capturesToRead(db)).toEqual([id]);
+    // The first try answers after all: too late
+    await expect(proposeItems({ ...kemar(), now: at(6) }, id, [KEMAR_PROPOSALS[1]], { model: "late", attempt: started.tries })).rejects.toBeInstanceOf(ReadSuperseded);
+    const r = await readCapture({ ...kemar(), now: at(6) }, id, flaky([], [{ ...KEMAR_PROPOSALS[1], quote: "#145 is done" }]), noWait);
+    expect(r).toMatchObject({ outcome: "proposed", state: "proposed" });
+    expect(r.outcome === "proposed" && r.items).toHaveLength(1);
+    expect(await capturesToRead(db)).toEqual([]);
+  });
+
+  it("D19: a transcription with no answer is caught the same way (found by the model check)", async () => {
+    const id = await note();
+    await beginRead(kemar(), id);
+    expect(await runCaptureTimers({ db, now: at(5) })).toMatchObject({ stale: [id] });
+    const [row] = await db.select().from(t.captures).where(eq(t.captures.id, id));
+    expect(row.state).toBe("transcribe_wait");
+  });
+
+  it("a run whose capture moved on stops quietly", async () => {
+    const id = await note("#145 is done.", "text");
+    const late: Extractor = {
+      name: "slow",
+      async extract() {
+        // The timer fires while the model is still thinking, and another worker starts the next try
+        await runCaptureTimers({ db, now: at(10) });
+        await beginRead({ ...kemar(), now: at(10) }, id);
+        return { proposals: [KEMAR_PROPOSALS[1]], malformed: [], model: "slow", usage: null };
+      },
+    };
+    expect(await readCapture(kemar(), id, late, noWait)).toEqual({ outcome: "superseded", failures: [] });
   });
 });
 

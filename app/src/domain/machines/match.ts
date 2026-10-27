@@ -210,18 +210,59 @@ export function saveMatch(match: MatchRecord, log: BraidLog, report: MatchReport
 
 export type LogResult = { outcome: Outcome<BraidEntryState>; log: BraidLog };
 
+/** D9: merging an open report into a resolved blocker or issue asks the PM what the target becomes. */
+export type MergeChoice = "reopen" | "keep_resolved";
+
+/** The PM must choose when an open duplicate goes into a resolved entry (D9). */
+export function mergeNeedsChoice(from: BraidEntryRecord, into: BraidEntryRecord): boolean {
+  return into.state === "resolved" && from.state === "reported";
+}
+
 /**
  * A PM merges a duplicate into another entry of the same kind. The sources move: the duplicate keeps
  * none and remembers them for unmerge, the other entry gains them once. Nothing is copied or lost.
+ * D9: an open duplicate into a resolved entry either reopens it or is recorded as kept resolved.
  */
-export function mergeEntries(log: BraidLog, fromId: string, intoId: string, ctx: BraidCtx): LogResult {
+export function mergeEntries(log: BraidLog, fromId: string, intoId: string, ctx: BraidCtx, choice?: MergeChoice): LogResult {
   const from = log[fromId];
   const into = log[intoId];
   if (!from || !into) return { outcome: refused("MERGE", from?.state ?? "missing", "both entries must be on this log"), log };
+  const needsChoice = mergeNeedsChoice(from, into);
+  if (needsChoice && !choice) return { outcome: refused("MERGE", from.state, `"${into.title}" is resolved and this report is open: reopen it, or keep it resolved`), log };
   const r = applyBraidEvent(from, { type: "MERGE", into }, ctx);
   if (!r.outcome.ok) return { outcome: r.outcome, log };
-  const gained = { ...into, sources: [...into.sources, ...from.sources] };
+  let gained: BraidEntryRecord = { ...into, sources: [...into.sources, ...from.sources] };
+  if (needsChoice && choice === "reopen") {
+    const reopened = applyBraidEvent(gained, { type: "REOPEN" }, ctx);
+    if (!reopened.outcome.ok) return { outcome: reopened.outcome, log };
+    gained = reopened.record;
+  } else if (needsChoice) gained = { ...gained, keptOnMerge: true };
   return { outcome: r.outcome, log: { ...log, [fromId]: r.record, [intoId]: gained } };
+}
+
+/**
+ * D8: where a report on an entry that has finished goes. Finished entries never reopen from a
+ * message, except blockers and issues (S14) and declined proposals (E85), which the machine handles.
+ * A closed risk gets a new risk linked to it; a realised risk, broken assumption or late dependency
+ * sends the report to the entry it raised; a superseded decision, to the decision that replaced it.
+ */
+export type Redirect = { to: "same"; entryId: string } | { to: "entry"; entryId: string } | { to: "new_raised_again"; fromId: string };
+
+export function redirectReport(log: BraidLog, entryId: string): Redirect {
+  const entry = log[entryId];
+  if (!entry) return { to: "same", entryId };
+  const pointingAt = (relation: BraidLinkRelation) =>
+    Object.values(log).find((e) => e.id !== entryId && !GONE.includes(e.state) && e.links.some((l) => l.relation === relation && l.entryId === entryId));
+  if (entry.kind === "risk" && entry.state === "closed") return { to: "new_raised_again", fromId: entryId };
+  if (["realised", "broken", "late"].includes(entry.state)) {
+    const raised = pointingAt("raised_from");
+    if (raised) return { to: "entry", entryId: raised.id };
+  }
+  if (entry.state === "superseded") {
+    const winner = pointingAt("supersedes");
+    if (winner) return { to: "entry", entryId: winner.id };
+  }
+  return { to: "same", entryId };
 }
 
 /** Undoes a merge, latest first: the entry gets back exactly the sources it had, and they leave the other entry. */
@@ -232,6 +273,8 @@ export function unmergeEntry(log: BraidLog, entryId: string, ctx: BraidCtx): Log
   const r = applyBraidEvent(entry, { type: "UNMERGE", target }, ctx);
   if (!r.outcome.ok) return { outcome: r.outcome, log };
   const back = new Set(entry.mergedSources.map((s) => s.id));
-  const lost = { ...target, sources: target.sources.filter((s) => !back.has(s.id)) };
+  // D9: "kept resolved" was a choice about the merged report; with none merged into it any more, it goes
+  const stillMerged = Object.values(log).some((e) => e.id !== entryId && e.mergedInto === target.id);
+  const lost = { ...target, sources: target.sources.filter((s) => !back.has(s.id)), keptOnMerge: target.keptOnMerge && stillMerged };
   return { outcome: r.outcome, log: { ...log, [entryId]: r.record, [target.id]: lost } };
 }

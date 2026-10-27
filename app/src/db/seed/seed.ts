@@ -92,12 +92,13 @@ export async function seedSnapshot(db: Db, options: SeedOptions = {}): Promise<S
     await tx.insert(t.handoverSteps).values(steps.map((s, i) => ({ ...s, handoverId: HANDOVER.id, position: i + 1 })));
     await tx.insert(t.leave).values(LEAVE);
 
+    const { messageId, ...kemarCapture } = KEMAR_CAPTURE;
     const capture = {
-      ...KEMAR_CAPTURE,
+      ...kemarCapture,
       text: KEMAR_NOTE,
       messageAt: new Date(KEMAR_CAPTURE.messageAt),
       receivedAt: new Date(KEMAR_CAPTURE.receivedAt),
-      dedupKey: captureDedupKey({ channel: KEMAR_CAPTURE.channel, author: KEMAR_CAPTURE.authorId, text: KEMAR_NOTE, sentAt: new Date(KEMAR_CAPTURE.messageAt) }),
+      dedupKey: captureDedupKey({ channel: KEMAR_CAPTURE.channel, author: KEMAR_CAPTURE.authorId, text: KEMAR_NOTE, sentAt: new Date(KEMAR_CAPTURE.messageAt), messageId }),
       // Atlas has read it and proposed; Kemar has not opened the review yet (story step 2)
       state: "proposed" as const,
       tries: 1,

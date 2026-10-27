@@ -82,13 +82,13 @@ export const MILESTONES = [
 ];
 
 export const WORK_ITEMS = [
-  { id: "wi-142", projectId: "forager", threadId: "th-trend", milestoneId: "ms-data", number: "#142", title: "TikTok trend ingest", ownerId: "kemar", state: "done" as const, dueDate: "2026-10-19" },
-  { id: "wi-145", projectId: "forager", threadId: "th-trend", milestoneId: "ms-data", number: "#145", title: "Google Trends connector", ownerId: "kemar", state: "in_progress" as const, dueDate: "2026-10-21" },
-  { id: "wi-147", projectId: "forager", threadId: "th-trend", milestoneId: "ms-trend", number: "#147", title: "Trend scoring model", ownerId: "kemar", state: "in_progress" as const, dueDate: "2026-10-23" },
-  { id: "wi-151", projectId: "forager", threadId: "th-store", milestoneId: null, number: "#151", title: "Store sales feed access", ownerId: "kemar", state: "in_progress" as const, dueDate: "2026-10-22" },
-  { id: "wi-152", projectId: "forager", threadId: "th-store", milestoneId: null, number: "#152", title: "Store feed connector", ownerId: "kemar", state: "to_do" as const, dueDate: "2026-10-27" },
-  { id: "wi-160", projectId: "forager", threadId: "th-prod", milestoneId: "ms-prod-checks", number: "#160", title: "Feature store backfill", ownerId: "jodian", state: "in_progress" as const, dueDate: "2026-10-28" },
-  { id: "wi-208", projectId: "insights", threadId: "th-weekly", milestoneId: null, number: "#208", title: "Weekly sales export", ownerId: "kemar", state: "in_progress" as const, dueDate: "2026-10-23" },
+  { id: "wi-142", projectId: "forager", threadId: "th-trend", milestoneId: "ms-data", number: "#142", title: "TikTok trend ingest", ownerId: "kemar", state: "done" as const, startDate: "2026-10-12", dueDate: "2026-10-19", linkedChange: "https://github.com/intellibus/forager/pull/142" },
+  { id: "wi-145", projectId: "forager", threadId: "th-trend", milestoneId: "ms-data", number: "#145", title: "Google Trends connector", ownerId: "kemar", state: "in_progress" as const, startDate: "2026-10-14", dueDate: "2026-10-21" },
+  { id: "wi-147", projectId: "forager", threadId: "th-trend", milestoneId: "ms-trend", number: "#147", title: "Trend scoring model", ownerId: "kemar", state: "in_progress" as const, startDate: "2026-10-19", dueDate: "2026-10-23" },
+  { id: "wi-151", projectId: "forager", threadId: "th-store", milestoneId: null, number: "#151", title: "Store sales feed access", ownerId: "kemar", state: "in_progress" as const, startDate: "2026-10-15", dueDate: "2026-10-22" },
+  { id: "wi-152", projectId: "forager", threadId: "th-store", milestoneId: null, number: "#152", title: "Store feed connector", ownerId: "kemar", state: "to_do" as const, startDate: "2026-10-21", dueDate: "2026-10-27" },
+  { id: "wi-160", projectId: "forager", threadId: "th-prod", milestoneId: "ms-prod-checks", number: "#160", title: "Feature store backfill", ownerId: "jodian", state: "in_progress" as const, startDate: "2026-10-22", dueDate: "2026-10-28" },
+  { id: "wi-208", projectId: "insights", threadId: "th-weekly", milestoneId: null, number: "#208", title: "Weekly sales export", ownerId: "kemar", state: "in_progress" as const, startDate: "2026-10-19", dueDate: "2026-10-23" },
 ];
 
 // KB B4: "handover 2 of 4". The runbook is the step Kemar's note talks about.
@@ -180,7 +180,9 @@ export const BRAID_LINKS = [{ entryId: "br-feed-blocker", otherEntryId: "br-feed
 export const KEMAR_CAPTURE = {
   id: "cap-kemar-0858",
   authorId: "kemar",
-  channel: "whatsapp" as const,
+  channel: "atlas" as const,
+  /** The Atlas messaging app's id for the voice note (D14). */
+  messageId: "atl-msg-0858",
   kind: "voice" as const,
   durationSeconds: 31,
   messageAt: "2026-10-20T13:58:00Z",

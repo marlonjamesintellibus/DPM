@@ -71,7 +71,7 @@ export const KEMAR_CONTEXT: CheckContext = {
     },
   ],
   notConnected: [],
-  leave: { targetId: "leave-kemar", approved: [{ id: "lv-kemar-oct", start: "2026-10-26", end: "2026-10-30" }] },
+  leave: { targetId: "leave-kemar", existing: [{ id: "lv-kemar-oct", start: "2026-10-26", end: "2026-10-30", state: "approved", change: null }] },
 };
 
 /** What a good model returns, in the order of the use case table (items 1 to 11). */

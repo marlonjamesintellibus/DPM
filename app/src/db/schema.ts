@@ -108,6 +108,8 @@ export const projects = pgTable("projects", {
   reasonGivenAt: text("reason_given_at"),
   setBy: text("set_by").references(() => people.id),
   setAt: instant("set_at"),
+  /** D16, S11: approvals a decision needs on this project (1 or 2), set by its PM. */
+  decisionApprovers: integer("decision_approvers").notNull().default(1),
   version: version(),
   createdAt: created(),
   updatedAt: updated(),
@@ -174,9 +176,13 @@ export const workItems = pgTable(
     title: text("title").notNull(),
     ownerId: text("owner_id").notNull().references(() => people.id),
     state: text("state").$type<WorkItemState>().notNull(),
+    /** When the work is planned to start; with dueDate it draws the plan's bar (L14). */
+    startDate: day("start_date"),
     dueDate: day("due_date"),
     blockedNote: text("blocked_note"),
     blockedLinks: text("blocked_links").array().notNull().default(sql`'{}'::text[]`),
+    /** The PR or document that finished it (A10.1: Done with no linked change is an error). */
+    linkedChange: text("linked_change"),
     version: version(),
     createdAt: created(),
     updatedAt: updated(),
@@ -215,6 +221,10 @@ export const leave = pgTable("leave", {
   startDate: day("start_date").notNull(),
   endDate: day("end_date").notNull(),
   state: text("state").$type<LeaveState>().notNull(),
+  /** D6: new dates asked for on approved leave; the approved dates stand until an admin decides. */
+  changeStart: day("change_start"),
+  changeEnd: day("change_end"),
+  decidedBy: text("decided_by").references(() => people.id),
   version: version(),
   createdAt: created(),
   updatedAt: updated(),
@@ -245,6 +255,8 @@ export const braidEntries = pgTable(
     newAlert: boolean("new_alert").notNull().default(false),
     mergedInto: text("merged_into"),
     stateBeforeMerge: text("state_before_merge").$type<BraidEntryState>(),
+    /** D9: a PM merged an open duplicate in and chose to keep this entry resolved. */
+    keptOnMerge: boolean("kept_on_merge").notNull().default(false),
     version: version(),
     createdAt: created(),
     updatedAt: updated(),
@@ -268,6 +280,8 @@ export const braidSources = pgTable(
     spanStart: integer("span_start"),
     spanEnd: integer("span_end"),
     at: instant("at").notNull(),
+    /** D11: the person took this report back. Kept for the history, never shown on the entry. */
+    withdrawnAt: instant("withdrawn_at"),
   },
   (t) => [index("braid_sources_entry").on(t.entryId)],
 );
@@ -322,7 +336,8 @@ export const statusReasonLinks = pgTable(
 export const captures = pgTable("captures", {
   id: text("id").primaryKey(),
   authorId: text("author_id").notNull().references(() => people.id),
-  channel: text("channel").$type<"whatsapp" | "app" | "atlas">().notNull(),
+  /** atlas: the Atlas messaging app, which always sends a message id. app: DPM's own chat. */
+  channel: text("channel").$type<"atlas" | "app">().notNull(),
   kind: text("kind").$type<"text" | "voice">().notNull(),
   text: text("text").notNull(),
   durationSeconds: integer("duration_seconds"),
@@ -337,6 +352,7 @@ export const captures = pgTable("captures", {
   moreFound: boolean("more_found").notNull().default(false),
   reminded: boolean("reminded").notNull().default(false),
   transcriptConfidence: text("transcript_confidence").$type<Confidence>(),
+  failedStep: text("failed_step").$type<"transcribe" | "read">(),
   version: version(),
   createdAt: created(),
   updatedAt: updated(),
@@ -358,7 +374,7 @@ export const extractions = pgTable(
     confidence: text("confidence").$type<Confidence>().notNull(),
     value: text("value"),
     saw: text("saw"),
-    conflict: jsonb("conflict").$type<{ current: string | null; reason: string | null }>(),
+    conflict: jsonb("conflict").$type<{ current: string | null; reason: string | null; refused?: boolean }>(),
     withdrawn: text("withdrawn").$type<WithdrawReason>(),
     touched: boolean("touched").notNull().default(false),
     appliedAt: instant("applied_at"),
@@ -367,6 +383,26 @@ export const extractions = pgTable(
     updatedAt: updated(),
   },
   (t) => [uniqueIndex("extractions_capture_ordinal").on(t.captureId, t.ordinal), index("extractions_project").on(t.projectId)],
+);
+
+// ---- Notices (D15) ----
+
+/**
+ * Atlas telling someone what happened to something of theirs ("Alicia approved your risk"). Shown
+ * in their chat; never an inbox item, because there is nothing to do.
+ */
+export const notices = pgTable(
+  "notices",
+  {
+    id: text("id").primaryKey(),
+    personId: text("person_id").notNull().references(() => people.id),
+    at: instant("at").notNull(),
+    text: text("text").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    projectId: text("project_id").references(() => projects.id),
+  },
+  (t) => [index("notices_person").on(t.personId, t.at)],
 );
 
 // ---- Inbox and audit ----

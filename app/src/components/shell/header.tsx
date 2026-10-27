@@ -4,10 +4,12 @@ export type HeaderProps = {
   breadcrumb: string[];
   asOf: string;
   roleLabel: string;
+  /** The View as menu (L0); a plain button when not given. */
+  roleMenu?: React.ReactNode;
 };
 
 // D/Header (Figma 41:2728): breadcrumb, snapshot time, View as, Ask Atlas.
-export function Header({ breadcrumb, asOf, roleLabel }: HeaderProps) {
+export function Header({ breadcrumb, asOf, roleLabel, roleMenu }: HeaderProps) {
   const parents = breadcrumb.slice(0, -1);
   const current = breadcrumb[breadcrumb.length - 1];
   return (
@@ -25,14 +27,16 @@ export function Header({ breadcrumb, asOf, roleLabel }: HeaderProps) {
       </nav>
       <div className="flex-1" />
       <span className="type-caption text-fg-3">{asOf}</span>
-      <button
-        type="button"
-        className="flex items-center gap-1.5 rounded-control border border-line px-2.5 py-[5px] hover:bg-hover"
-      >
-        <Icon name="eye" />
-        <span className="type-label text-fg-1">{roleLabel}</span>
-        <Icon name="chevron-down-sm" />
-      </button>
+      {roleMenu ?? (
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded-control border border-line px-2.5 py-[5px] hover:bg-hover"
+        >
+          <Icon name="eye" />
+          <span className="type-label text-fg-1">{roleLabel}</span>
+          <Icon name="chevron-down-sm" />
+        </button>
+      )}
       <button
         type="button"
         className="flex items-center gap-1.5 rounded-control bg-inverse px-2.5 py-[5px]"

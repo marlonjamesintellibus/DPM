@@ -1,6 +1,6 @@
 // Domain records in and out of the database. Loaders return the record plus the version it was
 // read at; persisters write only what changed and check the version (a stale one throws).
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { expectOne, nextVersion, StaleVersion } from "../commands/core";
 import type { BraidEntryRecord, BraidLog, BraidSource, ProjectMember } from "../domain/machines/braid-entry";
 import type { CaptureRecord } from "../domain/machines/capture";
@@ -10,6 +10,7 @@ import type { SetStatusRecord } from "../domain/machines/set-status";
 import type { PlanRows } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import type { Conn, Tx } from "./conn";
+import type { LeaveRecord } from "../domain/machines/leave";
 import * as t from "./schema";
 
 export type Versions = Map<string, number>;
@@ -24,7 +25,7 @@ export async function loadWorld(conn: Conn): Promise<World> {
   ]);
   const refs: ProjectRef[] = projects.map((p) => {
     const g = groups.find((x) => x.id === p.groupId)!;
-    return { id: p.id, name: p.name, orgTag: g.orgId, connected: g.connectedToDpm };
+    return { id: p.id, name: p.name, orgTag: g.orgId, connected: g.connectedToDpm, adminId: g.ownerId };
   });
   const records: MembershipRecord[] = memberships.map((m) => ({ projectId: m.projectId, personId: m.personId, state: m.state, role: m.role }));
   return { memberships: records, projects: refs };
@@ -88,6 +89,18 @@ export async function persistSetStatus(tx: Tx, projectId: string, version: numbe
 
 // ---- Captures and extracted items (M2, M3) ----
 
+/** A leave row as the domain sees it (M8): dates, state, and a change waiting (D6). Never a reason. */
+export function leaveRecordOf(row: typeof t.leave.$inferSelect): LeaveRecord {
+  return {
+    id: row.id,
+    personId: row.personId,
+    start: row.startDate,
+    end: row.endDate,
+    state: row.state,
+    change: row.changeStart && row.changeEnd ? { start: row.changeStart, end: row.changeEnd } : null,
+  };
+}
+
 export function captureRecordOf(row: typeof t.captures.$inferSelect): CaptureRecord {
   return {
     dedupKey: row.dedupKey,
@@ -98,6 +111,7 @@ export function captureRecordOf(row: typeof t.captures.$inferSelect): CaptureRec
     moreFound: row.moreFound,
     reminded: row.reminded,
     transcriptConfidence: row.transcriptConfidence,
+    failedStep: row.failedStep,
   };
 }
 
@@ -116,6 +130,7 @@ export async function persistCapture(tx: Tx, captureId: string, version: number,
       moreFound: record.moreFound,
       reminded: record.reminded,
       transcriptConfidence: record.transcriptConfidence,
+      failedStep: record.failedStep,
       version: nextVersion(t.captures.version),
       updatedAt: now,
     })
@@ -161,6 +176,7 @@ export async function persistItems(tx: Tx, before: readonly ExtractedItem[], aft
         withdrawn: item.withdrawn,
         touched: item.touched,
         draft: item.draft,
+        kind: item.draft.kind,
         projectId: item.draft.projectId,
         routing: item.draft.routing,
         scope: item.draft.scope,
@@ -185,7 +201,8 @@ export async function loadBraidLog(conn: Conn, projectId: string): Promise<{ log
   const ids = entries.map((e) => e.id);
   if (!ids.length) return { log: {}, versions: new Map() };
   const [sources, links, answers] = await Promise.all([
-    conn.select().from(t.braidSources).where(inArray(t.braidSources.originEntryId, ids)),
+    // D11: a report taken back stays in the table for the history, never on the entry
+    conn.select().from(t.braidSources).where(and(inArray(t.braidSources.originEntryId, ids), isNull(t.braidSources.withdrawnAt))),
     conn.select().from(t.braidLinks).where(inArray(t.braidLinks.entryId, ids)),
     conn.select().from(t.braidAnswers).where(inArray(t.braidAnswers.entryId, ids)).orderBy(t.braidAnswers.id),
   ]);
@@ -223,6 +240,7 @@ export async function loadBraidLog(conn: Conn, projectId: string): Promise<{ log
       mergedInto: e.mergedInto,
       stateBeforeMerge: e.stateBeforeMerge,
       mergedSources: sources.filter((s) => s.originEntryId === e.id && s.entryId !== e.id).map(toSource),
+      keptOnMerge: e.keptOnMerge,
     };
   }
   return { log, versions: new Map(entries.map((e) => [e.id, e.version])) };
@@ -249,6 +267,7 @@ function entryColumns(e: BraidEntryRecord) {
     newAlert: e.newAlert,
     mergedInto: e.mergedInto,
     stateBeforeMerge: e.stateBeforeMerge,
+    keptOnMerge: e.keptOnMerge,
   };
 }
 
@@ -301,6 +320,11 @@ export async function persistBraidLog(
       }
     }
     const old = before[id];
+    // D11: a source that left this entry and sits on no other one was taken back by its reporter
+    const everywhere = new Set(Object.values(after).flatMap((e) => [...e.sources, ...e.mergedSources].map((s) => s.id)));
+    for (const s of old?.sources ?? []) {
+      if (!everywhere.has(s.id)) await tx.update(t.braidSources).set({ withdrawnAt: now }).where(eq(t.braidSources.id, s.id));
+    }
     if (!old || JSON.stringify(old.links) !== JSON.stringify(entry.links)) {
       await tx.delete(t.braidLinks).where(eq(t.braidLinks.entryId, id));
       if (entry.links.length) await tx.insert(t.braidLinks).values(entry.links.map((l) => ({ entryId: id, otherEntryId: l.entryId, relation: l.relation })));

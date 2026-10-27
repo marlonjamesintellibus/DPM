@@ -15,7 +15,7 @@ describe("getChatSummary (L18f)", () => {
     const { latest } = await getChatSummary(db, "kemar");
     expect(latest).toMatchObject({
       id: "cap-kemar-0858",
-      channel: "whatsapp",
+      channel: "atlas",
       kind: "voice",
       time: "8:58am",
       state: "proposed",
@@ -44,8 +44,8 @@ describe("getChatSummary (L18f)", () => {
   });
 
   it("only the viewer's own captures, newest first", async () => {
-    expect(await getChatSummary(db, "alicia")).toEqual({ viewerId: "alicia", latest: null });
-    expect(await getChatSummary(db, "andre")).toEqual({ viewerId: "andre", latest: null });
+    expect(await getChatSummary(db, "alicia")).toEqual({ viewerId: "alicia", latest: null, notices: [] });
+    expect(await getChatSummary(db, "andre")).toEqual({ viewerId: "andre", latest: null, notices: [] });
 
     await db.insert(t.captures).values({
       id: "cap-kemar-1400",

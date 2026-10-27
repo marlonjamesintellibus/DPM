@@ -62,9 +62,15 @@ describe("milestone arrows", () => {
     expect(applyMilestone(moved, { type: "FORECAST_CHANGED", forecast: "2026-10-24" }, KEMAR).outcome.ok).toBe(false);
   });
 
+  it("D5 a planned milestone whose target passes is missed, and finishing it still moves it to done", () => {
+    const missed = applyMilestone(trend("planned"), { type: "TARGET_PASSED", at: midnightJamaica("2026-11-01") }, null).record;
+    expect(missed.state).toBe("missed");
+    expect(applyMilestone(trend("planned"), { type: "TARGET_PASSED", at: midnightJamaica("2026-10-23") }, null).outcome.ok).toBe(false);
+    expect(applyMilestone(missed, { type: "FINISH" }, KEMAR).record.state).toBe("done");
+  });
+
   it("refuses arrows that are not drawn", () => {
     expect(applyMilestone(trend("planned"), { type: "FINISH" }, KEMAR).outcome.ok).toBe(false);
-    expect(applyMilestone(trend("planned"), { type: "TARGET_PASSED", at: midnightJamaica("2026-11-01") }, null).outcome.ok).toBe(false);
     expect(applyMilestone(trend("done"), { type: "FORECAST_CHANGED", forecast: "2026-10-30" }, KEMAR).outcome.ok).toBe(false);
     expect(applyMilestone(trend("done"), { type: "START" }, KEMAR).outcome.ok).toBe(false);
     expect(applyMilestone(trend("missed"), { type: "TARGET_PASSED", at: midnightJamaica("2026-11-01") }, null).outcome.ok).toBe(false);

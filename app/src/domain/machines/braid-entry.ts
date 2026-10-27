@@ -118,6 +118,8 @@ export type BraidEntryRecord = {
   stateBeforeMerge: BraidEntryState | null;
   /** The sources this entry had when it was merged away, given back on unmerge. */
   mergedSources: BraidSource[];
+  /** D9: a PM merged an open duplicate into this resolved entry and chose to keep it resolved. */
+  keptOnMerge: boolean;
 };
 
 export function draftEntry(fields: { id: string; projectId: string; kind: BraidKind; title: string; ownerId?: string | null }): BraidEntryRecord {
@@ -143,6 +145,7 @@ export function draftEntry(fields: { id: string; projectId: string; kind: BraidK
     mergedInto: null,
     stateBeforeMerge: null,
     mergedSources: [],
+    keptOnMerge: false,
   };
 }
 
@@ -152,7 +155,8 @@ export type BraidEvent =
   /** From the Apply job, for the speaker. Words such as "we agreed" are shown to the approver and never approve (E96). */
   | { type: "REPORT"; source: BraidSource; wordsClaimApproval?: boolean }
   | { type: "ADD_SOURCE"; projectId: string; kind: BraidKind; source: BraidSource }
-  | { type: "APPROVE" }
+  /** note: optional words to the reporter (L6b), kept with the answer. */
+  | { type: "APPROVE"; note?: string }
   | { type: "DECLINE"; reason: string }
   | { type: "REQUEST_INFO"; question: string }
   | { type: "REPLY"; answer: string }
@@ -160,7 +164,7 @@ export type BraidEvent =
   | { type: "REOPEN" }
   /** A risk starts mitigating; a dependency starts waiting. */
   | { type: "PROGRESS" }
-  /** "It's cleared" from someone who may not resolve the blocker (S13). */
+  /** "It's cleared" from someone who may not resolve the blocker or issue (S13, D7). */
   | { type: "PROPOSE_RESOLVE" }
   /** The owner or a PM or Lead says a proposed clearing is wrong; the blocker stays. */
   | { type: "KEEP_OPEN" }
@@ -264,6 +268,22 @@ function reporterGuard(c: Ctx): string | null {
   return c.actor !== null && c.actor.id === c.record.reportedBy ? null : "only the reporter";
 }
 
+// D11: anyone who reported an entry may take back their own report
+const ownSources = (c: Ctx) => c.record.sources.filter((s) => s.personId === c.actor?.id);
+const othersReported = (c: Ctx) => c.record.sources.some((s) => s.personId !== c.actor?.id);
+
+function withdrawGuard(c: Ctx): string | null {
+  if (!c.actor || (!ownSources(c).length && c.actor.id !== c.record.reportedBy)) return "only someone who reported it";
+  return null;
+}
+
+// A follow up Atlas drafted (D10) waits for a PM or Lead to confirm or drop it
+function followUpGuard(c: Ctx): string | null {
+  const role = c.actor?.role;
+  if (role !== "pm" && role !== "lead") return "a PM or Lead confirms or drops a drafted follow up";
+  return c.record.links.some((l) => l.relation === "raised_from") ? null : "not a drafted follow up";
+}
+
 function addSourceGuard(c: Ctx, e: EventOf<"ADD_SOURCE">): string | null {
   if (!c.actor?.role) return "only a project member can report";
   if (e.projectId !== c.record.projectId) return "the entry is in another project";
@@ -341,16 +361,19 @@ export const braidEntryMachine = defineMachine<BraidEntryState, BraidEvent, Ctx>
     { from: ["proposed"], on: "REQUEST_INFO", to: "more_info", guard: (c, e) => decideGuard(c) ?? (e.question.trim() ? null : "say what you need to know") },
     { from: ["more_info"], on: "REPLY", to: "proposed", guard: reporterGuard },
 
-    { from: ["proposed", "more_info"], on: "WITHDRAW", to: "withdrawn", guard: reporterGuard },
-    // Only while nobody else has reported it or said it is cleared: withdrawing must not drop their reports
+    // D11: the last report goes, and so does the entry; but someone who said it is cleared is answered first
+    { from: ["proposed", "more_info"], on: "WITHDRAW", to: "withdrawn", guard: (c) => withdrawGuard(c) ?? (othersReported(c) ? "others reported it too" : null) },
     {
       from: ["reported"],
       on: "WITHDRAW",
       to: "withdrawn",
       guard: (c) =>
-        reporterGuard(c) ??
-        (c.record.sources.every((s) => s.personId === c.record.reportedBy) && !c.record.resolveProposedBy ? null : "others have acted on it"),
+        withdrawGuard(c) ??
+        (othersReported(c) ? "others reported it too" : c.record.resolveProposedBy ? "someone said it is cleared; the owner or a PM or Lead answers first" : null),
     },
+    // With others' reports on it, withdrawing takes back only the actor's own; the entry stays
+    ...(["proposed", "more_info", "reported"] as const).map((s): BraidArrow => ({ from: [s], on: "WITHDRAW", to: s, guard: (c) => withdrawGuard(c) ?? (othersReported(c) ? null : "only you reported it") })),
+    { from: ["none"], on: "WITHDRAW", to: "withdrawn", guard: followUpGuard },
 
     { from: ["reported"], on: "RESOLVE", to: "resolved", guard: resolveTo(["blocker", "issue"]) },
     { from: ["open", "mitigating"], on: "RESOLVE", to: "closed", guard: resolveTo(["risk"], "closed") },
@@ -369,7 +392,7 @@ export const braidEntryMachine = defineMachine<BraidEntryState, BraidEvent, Ctx>
       to: "reported",
       guard: (c) => {
         if (!c.actor?.role) return NOT_MEMBER;
-        if (c.record.kind !== "blocker") return `not for a ${c.record.kind}`;
+        if (c.record.kind !== "blocker" && c.record.kind !== "issue") return `not for a ${c.record.kind}`;
         if (resolveGuard(c) === null) return "you may resolve it yourself";
         return c.record.resolveProposedBy ? "already proposed as cleared" : null;
       },
@@ -418,9 +441,11 @@ function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: st
       if (r.state === "resolved") return { ...added, resolvedBy: null, resolvedOn: null };
       return added;
     }
-    case "APPROVE":
-      if (to === "proposed") return { ...r, answers: answer("approve", null) };
-      return { ...r, answers: answer("approve", null), decidedBy: by, decidedOn: today, selfApproved: by === r.reportedBy };
+    case "APPROVE": {
+      const note = e.note?.trim() || null;
+      if (to === "proposed") return { ...r, answers: answer("approve", note) };
+      return { ...r, answers: answer("approve", note), decidedBy: by, decidedOn: today, selfApproved: by === r.reportedBy };
+    }
     case "DECLINE":
       return { ...r, answers: answer("decline", e.reason), decidedBy: by, decidedOn: today, selfApproved: false };
     case "REQUEST_INFO":
@@ -440,8 +465,14 @@ function effects(r: BraidEntryRecord, e: BraidEvent, to: BraidEntryState, by: st
       return { ...r, newAlert: false };
     case "REMIND":
       return { ...r, remindersSent: r.remindersSent + 1, lastRemindedOn: today };
-    case "WITHDRAW":
+    case "WITHDRAW": {
+      if (to === r.state) {
+        // D11: only the actor's own reports leave; the next reporter becomes the entry's reporter
+        const sources = r.sources.filter((s) => s.personId !== by);
+        return { ...r, sources, reportedBy: r.reportedBy === by ? (sources[0]?.personId ?? null) : r.reportedBy };
+      }
       return { ...r, newAlert: false, resolveProposedBy: null };
+    }
     case "MERGE":
       // This entry's half of the move; mergeEntries puts the same sources on the other entry
       return { ...r, mergedInto: e.into.id, stateBeforeMerge: r.state, mergedSources: r.sources, sources: [], newAlert: false, resolveProposedBy: null };
@@ -521,5 +552,7 @@ export function braidEntryCauses(entry: BraidEntryRecord, members: readonly Proj
   if (entry.state === "more_info") keys.push(`more_info:${entry.id}`);
   if (entry.state === "reported" && entry.newAlert) keys.push(`blocker_new:${entry.id}`);
   if (entry.state === "reported" && entry.resolveProposedBy) keys.push(`clear:${entry.id}`);
+  // D10: a follow up Atlas drafted when a risk was realised, an assumption broke or a dependency was late
+  if (entry.state === "none" && entry.links.some((l) => l.relation === "raised_from")) keys.push(`follow_up:${entry.id}`);
   return keys;
 }

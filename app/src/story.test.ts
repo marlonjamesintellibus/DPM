@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./commands/capture";
 import type { CommandCtx } from "./commands/core";
 import { decideBraidEntry } from "./commands/braid";
-import { draftReason, keepSetStatus, saveReason, setStatus } from "./commands/status";
+import { draftReason, keepSetStatus, linkChange, saveReason, setStatus } from "./commands/status";
 import type { Db } from "./db/client";
 import * as t from "./db/schema";
 import type { RawProposal } from "./domain/atlas-checks/types";
@@ -43,7 +43,8 @@ beforeAll(async () => {
 describe("use case 1: a daily update reaches the right projects", () => {
   it("8:58am. Kemar's voice note arrives and Atlas proposes 11 items for 2 projects", async () => {
     const created = await createCapture(as("kemar", "08:58"), {
-      channel: "whatsapp",
+      channel: "atlas",
+      messageId: "atl-msg-0858",
       kind: "voice",
       text: KEMAR_NOTE,
       messageAt: jamaica("08:58"),
@@ -103,7 +104,10 @@ describe("use case 1: a daily update reaches the right projects", () => {
       "Kemar raised a risk: Trend model may slip to 24 Oct",
     ]);
     expect(await titles("andre", "09:12")).toEqual(["Kemar proposed a decision: move the daily refresh to 6am"]);
-    expect(await titles("kemar", "09:12")).toEqual([]);
+    // M5, A10.1: work Done by voice with no PR linked is expected to ask its owner for the link (D18)
+    expect(await titles("kemar", "09:12")).toEqual(["#145 is Done with no linked change", "#208 is Done with no linked change"]);
+    await linkChange(as("kemar", "09:13"), "wi-145", "https://github.com/intellibus/forager/pull/145");
+    expect(await titles("kemar", "09:13")).toEqual(["#208 is Done with no linked change"]);
 
     const foragerQuotes = (await project("alicia", "forager", "09:12")).braid.entries.flatMap((e) => e.sources.map((s) => s.quote)).filter(Boolean);
     expect(foragerQuotes).toContain("Still waiting on Kyle for the store feed");
@@ -137,18 +141,25 @@ describe("use case 1: a daily update reaches the right projects", () => {
     expect(await titles("andre", "09:30")).toEqual([]);
   });
 
-  it("Thursday. The feed opens and the model is back on plan: Alicia's reason goes stale, and she keeps Off track", async () => {
+  it("Thursday. The feed opens and the model is back on plan: the blocker resolves, Alicia's reason goes stale, and she keeps Off track", async () => {
     const update = "Kyle sent the store feed, so #151 is moving again, and the trend model is back on plan for the 23rd.";
     const later: RawProposal[] = [
+      // D7, E93: Kemar owns the blocked work, so saying the feed came resolves the blocker once he confirms it
+      { kind: "braid_resolve", projectId: "forager", routingReason: { basis: "target", evidence: "store feed", label: "The feed blocker" }, matchEntryId: "br-feed-blocker", quote: "Kyle sent the store feed", confidence: "high", rationale: "The store feed came" },
       { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#151", label: "#151" }, targetId: "wi-151", field: "state", newValue: "in_progress", quote: "#151 is moving again", confidence: "high", rationale: "The store feed is unblocked" },
       { kind: "update", projectId: "forager", routingReason: { basis: "owned_record", evidence: "Trend model", label: "Kemar owns it" }, targetId: "ms-trend", field: "forecast", newValue: "2026-10-23", quote: "the trend model is back on plan for the 23rd", confidence: "high", rationale: "Back on the target date" },
     ];
     const thursday = as("kemar", "09:00", THURSDAY);
     const { captureId: next } = await createCapture(thursday, { channel: "app", kind: "text", text: update, messageAt: thursday.now, receivedAt: thursday.now });
     const proposed = await proposeItems(thursday, next, later);
-    expect(proposed.items.map((i) => i.state)).toEqual(["pre_accepted", "pre_accepted"]);
+    expect(proposed.items.map((i) => i.state)).toEqual(["needs_ok", "pre_accepted", "pre_accepted"]);
     await openReview(thursday, next);
+    await decideExtraction(thursday, proposed.items[0].id, { type: "accept" });
     await saveCapture(as("kemar", "09:05", THURSDAY), next);
+    const blocker = (await project("alicia", "forager", "09:05", THURSDAY)).braid.entries.find((e) => e.title === "Store sales feed access" && e.kind === "blocker");
+    expect(blocker).toMatchObject({ state: "resolved" });
+    // D15: Alicia reported it, so Atlas tells her; nothing lands in her inbox for it
+    expect((await getChatSummary(db, "alicia")).notices.map((n) => n.text)).toContain("Kemar resolved the blocker you reported: Store sales feed access.");
 
     const forager = await project("alicia", "forager", "09:05", THURSDAY);
     expect(forager.calculated.status).toBe("on_track");

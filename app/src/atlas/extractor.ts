@@ -30,8 +30,8 @@ export type Extraction = {
 
 export interface Extractor {
   readonly name: string;
-  /** Throws AtlasReadFailed; anything else thrown is treated as a model error. */
-  extract(context: CheckContext, options?: { signal?: AbortSignal }): Promise<Extraction>;
+  /** Throws AtlasReadFailed; anything else thrown is treated as a model error. `attempt` is the read's try (1 to 3). */
+  extract(context: CheckContext, options?: { signal?: AbortSignal; attempt?: number }): Promise<Extraction>;
 }
 
 /** Text drafted by Atlas for a person to read and edit (a reason for a set status). */

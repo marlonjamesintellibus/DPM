@@ -6,6 +6,7 @@ import type { EvalCase } from "./cases";
 
 export function itemKey(i: ExtractedItemDraft): string {
   if (i.target) return `upd:${i.target.id}.${i.target.field}=${i.target.newValue}`;
+  if (i.kind === "braid_resolve") return `resolve:${i.braid?.matchEntryId}`;
   if (i.braid?.match === "same_as") return `same:${i.braid.matchEntryId}`;
   return `new:${i.braid?.kind}:${i.projectId ?? "none"}`;
 }

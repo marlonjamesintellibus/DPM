@@ -5,7 +5,7 @@ import { clone, allFunctions, product } from '../lib.mjs';
 const UPD_STATES = ['proposed', 'accepted', 'edited', 'rejected'];
 const CONFIDENCE = ['high', 'medium', 'low'];
 
-export default function Capture({ Channels = ['whatsapp', 'app'], Updates = ['u1', 'u2'], Dedup = false, Bug = null } = {}) {
+export default function Capture({ Channels = ['atlas', 'app'], Updates = ['u1', 'u2'], Dedup = false, Bug = null } = {}) {
   const reviewing = (s, c) => ['proposed', 'partially_confirmed'].includes(s.cap[c]);
   const move = (s, c, from, to) => {
     if (s.cap[c] !== from) return [];

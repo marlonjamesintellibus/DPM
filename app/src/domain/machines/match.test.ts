@@ -261,7 +261,7 @@ describe("merge and unmerge", () => {
   it("unmerge only in reverse order; every source ends where it started", () => {
     let log: BraidLog = { ...forager(), b3: entry("b3", "blocker", jodian, "a5") };
     log = mergeEntries(log, "b3", "b1", ctx(alicia)).log;
-    log = mergeEntries(log, "b1", "b2", ctx(alicia)).log;
+    log = mergeEntries(log, "b1", "b2", ctx(alicia), "keep_resolved").log;
     expect(ids(log.b2)).toEqual(["a2", "a1", "a5"]);
     expect(unmergeEntry(log, "b3", ctx(alicia))).toMatchObject({ outcome: { ok: false, reason: expect.stringMatching(/reverse order/) }, log });
     expect(unmergeEntry(log, "b1", ctx(andre)).outcome.ok).toBe(false); // PM only

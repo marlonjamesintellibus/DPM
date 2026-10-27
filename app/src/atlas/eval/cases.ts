@@ -1,14 +1,20 @@
-// The Atlas evaluation set (phase 4 step 7). Every message is Kemar's, sent at 8:58am on Tuesday
-// 20 Oct 2026, against his candidate data (KEMAR_CONTEXT). A case is scored on what passes the
-// server checks, not on what the model said, because that is what a person would see.
+// The Atlas evaluation set (phase 4 step 7, D22). Messages are sent at 8:58am on Tuesday 20 Oct
+// 2026 by Kemar (a member of 3 projects), Alicia (PM of Forager 2.0 and GQ & Academy) or Andre (PM
+// of Store Insights), against their candidate data as the app loads it from the seed. A case is
+// scored on what passes the server checks, not on what the model said: that is what a person sees.
 //
 // Item keys:
 //   upd:<targetId>.<field>=<value>     an update ("upd:wi-145.state=done")
 //   new:<kind>:<project|none>          a new BRAID entry, related to another entry or not
 //   same:<entryId>                     another report of an open entry
+//   resolve:<entryId>                  says a blocker or issue is cleared (D7)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
+export type EvalAuthor = "kemar" | "alicia" | "andre";
+
 export type EvalCase = {
   id: string;
+  /** Who sends it; Kemar when not given. */
+  author?: EvalAuthor;
   /** What it tests, in a few words. */
   about: string;
   text: string;
@@ -65,10 +71,10 @@ export const EVAL_CASES: EvalCase[] = [
   },
   {
     id: "unblocked",
-    about: "work moving again",
+    about: "work moving again, and the blocker cleared (D7, E93)",
     text: "Kyle sent the access, so #151 is moving again. Working on it now.",
-    expect: ["upd:wi-151.state=in_progress"],
-    allow: ["same:br-feed-blocker", "same:br-feed-dependency"],
+    expect: ["upd:wi-151.state=in_progress", "resolve:br-feed-blocker"],
+    allow: ["same:br-feed-dependency"],
   },
   {
     id: "reopen",
@@ -204,5 +210,85 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     allow: ["upd:wi-145.state=in_progress", "new:risk:forager"],
     forbidWords: ["migraine"],
+  },
+
+  // ---- D22: a PM's rights differ (Alicia), and so does someone in one project (Andre) ----
+  {
+    id: "alicia-others-work",
+    author: "alicia",
+    about: "a PM may update someone else's work",
+    text: "Jodian finished the feature store backfill, #160 is done.",
+    expect: ["upd:wi-160.state=done"],
+  },
+  {
+    id: "alicia-resolves",
+    author: "alicia",
+    about: "a PM resolves a blocker (S13, D7)",
+    text: "Kyle sent the store feed access this morning, so that blocker is gone.",
+    expect: ["resolve:br-feed-blocker"],
+    allow: ["upd:wi-151.state=in_progress"],
+  },
+  {
+    id: "alicia-not-her-forecast",
+    author: "alicia",
+    about: "a forecast only its owner moves, even for a PM (S5)",
+    text: "The trend model is going to slip to the 27th.",
+    expect: [],
+    allow: ["new:risk:forager"],
+    forbid: ["upd:ms-trend*"],
+  },
+  {
+    id: "alicia-own-forecast",
+    author: "alicia",
+    about: "her own milestone",
+    text: "Release 1 for the buyer pilot moves to Tuesday 3 Nov.",
+    expect: ["upd:ms-release-1.forecast=2026-11-03"],
+    allow: ["new:risk:forager"],
+  },
+  {
+    id: "alicia-approve-by-message",
+    author: "alicia",
+    about: "nothing is approved from a message (E96)",
+    text: "I approve Kemar's risk about the trend model slipping.",
+    expect: [],
+    forbid: ["upd:*"],
+    allow: ["new:risk:forager"],
+  },
+  {
+    id: "alicia-gq",
+    author: "alicia",
+    about: "her other project",
+    text: "On GQ & Academy, we're assuming the next cohort starts on 9 Nov.",
+    expect: ["new:assumption:gq"],
+  },
+  {
+    id: "andre-export",
+    author: "andre",
+    about: "a PM marks Kemar's work done",
+    text: "#208, the weekly sales export, is done.",
+    expect: ["upd:wi-208.state=done"],
+  },
+  {
+    id: "andre-not-his-project",
+    author: "andre",
+    about: "a project he is not in (check 9)",
+    text: "I hear the Forager store feed is still blocked.",
+    expect: [],
+    allow: ["new:blocker:none"],
+    forbid: ["upd:*", "same:*", "resolve:*", "new:blocker:forager"],
+  },
+  {
+    id: "andre-decision",
+    author: "andre",
+    about: "a decision on his project",
+    text: "We decided to keep the refresh at 7am after all.",
+    expect: ["new:decision:insights"],
+  },
+  {
+    id: "andre-risk",
+    author: "andre",
+    about: "a risk on his project",
+    text: "Risk: Sprouts may cut the budget for the weekly export.",
+    expect: ["new:risk:insights"],
   },
 ];

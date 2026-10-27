@@ -69,6 +69,12 @@ describe("BRAID entry arrows (every drawn arrow)", () => {
     { kind: "risk", from: "proposed", event: { type: "WITHDRAW" }, actor: kemar, to: "withdrawn" },
     { kind: "risk", from: "more_info", event: { type: "WITHDRAW" }, actor: kemar, to: "withdrawn" },
     { kind: "blocker", from: "reported", event: { type: "WITHDRAW" }, actor: kemar, to: "withdrawn" },
+    // D11: with others' reports on it, withdrawing takes back only Kemar's; the entry stays
+    { kind: "risk", from: "proposed", event: { type: "WITHDRAW" }, actor: kemar, to: "proposed", patch: { sources: [src("s1"), src("s2", "jodian")] } },
+    { kind: "risk", from: "more_info", event: { type: "WITHDRAW" }, actor: kemar, to: "more_info", patch: { sources: [src("s1"), src("s2", "jodian")] } },
+    { kind: "blocker", from: "reported", event: { type: "WITHDRAW" }, actor: kemar, to: "reported", patch: { sources: [src("s1"), src("s2", "jodian")] } },
+    // D10: a PM or Lead drops a follow up Atlas drafted
+    { kind: "issue", from: "none", event: { type: "WITHDRAW" }, actor: alicia, to: "withdrawn", patch: { links: [{ relation: "raised_from", entryId: "r9" }] } },
     { kind: "blocker", from: "reported", event: { type: "RESOLVE" }, actor: jodian, to: "resolved" },
     { kind: "risk", from: "open", event: { type: "RESOLVE", outcome: "closed" }, actor: alicia, to: "closed" },
     { kind: "risk", from: "mitigating", event: { type: "RESOLVE", outcome: "closed" }, actor: alicia, to: "closed" },
@@ -176,8 +182,22 @@ describe("BRAID entry refusals", () => {
     refused(at("risk", "open"), { type: "WITHDRAW" }, kemar); // decided already
   });
 
-  it("a reported blocker cannot be withdrawn once others reported it too", () => {
-    expect(refused(at("blocker", "reported", { sources: [src("s1"), src("s2", "jodian")] }), { type: "WITHDRAW" }, kemar)).toMatch(/others/);
+  it("D11 withdrawing a blocker others reported takes back only your own report", () => {
+    const r = apply(at("blocker", "reported", { sources: [src("s1"), src("s2", "jodian")] }), { type: "WITHDRAW" }, kemar);
+    expect(r.record).toMatchObject({ state: "reported", reportedBy: "jodian" });
+    expect(r.record.sources.map((s) => s.personId)).toEqual(["jodian"]);
+    // Jodian, who reported it too, may take back theirs even though Kemar reported it first
+    expect(apply(at("blocker", "reported", { sources: [src("s1"), src("s2", "jodian")] }), { type: "WITHDRAW" }, jodian).record.sources.map((s) => s.personId)).toEqual(["kemar"]);
+    refused(at("blocker", "reported"), { type: "WITHDRAW" }, jodian); // never reported it
+  });
+
+  it("D11 the last report goes only after anyone who said it is cleared is answered", () => {
+    expect(refused(at("blocker", "reported", { resolveProposedBy: "jodian" }), { type: "WITHDRAW" }, kemar)).toMatch(/answers first/);
+  });
+
+  it("D10 only a PM or Lead drops a drafted follow up, and only a drafted one", () => {
+    refused(at("issue", "none", { links: [{ relation: "raised_from", entryId: "r9" }] }), { type: "WITHDRAW" }, kemar);
+    refused(at("issue", "none"), { type: "WITHDRAW" }, alicia);
   });
 
   it("S13: a blocker is resolved by the owner of the blocked work or a PM or Lead, nobody else", () => {
@@ -205,7 +225,10 @@ describe("BRAID entry refusals", () => {
   it("only someone without the right proposes a blocker is cleared, once", () => {
     expect(refused(at("blocker", "reported"), { type: "PROPOSE_RESOLVE" }, jodian)).toMatch(/yourself/);
     refused(at("blocker", "reported", { resolveProposedBy: "kemar" }), { type: "PROPOSE_RESOLVE" }, kemar);
-    refused(at("issue", "reported"), { type: "PROPOSE_RESOLVE" }, kemar);
+    // D7: an issue can be said to be cleared too, by someone who may not resolve it
+    expect(apply(at("issue", "reported"), { type: "PROPOSE_RESOLVE" }, kemar).record.resolveProposedBy).toBe("kemar");
+    refused(at("issue", "reported", { ownerId: "kemar" }), { type: "PROPOSE_RESOLVE" }, kemar); // he may resolve it himself
+    refused(at("risk", "open"), { type: "PROPOSE_RESOLVE" }, kemar);
     refused(at("blocker", "reported"), { type: "KEEP_OPEN" }, alicia);
     refused(at("blocker", "reported", { resolveProposedBy: "kemar" }), { type: "KEEP_OPEN" }, kemar);
     refused(at("blocker", "reported", { newAlert: true }), { type: "ACKNOWLEDGE" }, andre);

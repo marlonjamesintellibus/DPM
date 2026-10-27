@@ -6,12 +6,12 @@ import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
 import * as t from "../db/schema";
 import { saveBlockers } from "../domain/machines/capture";
-import { displayMark, type ExtractedItem, type ItemState } from "../domain/machines/extracted-item";
+import { displayMark, type ExtractedItem, type ItemState, type WithdrawReason } from "../domain/machines/extracted-item";
 import { landsAs, type BraidKind, type ProjectRole } from "../domain/rights";
 import { mayReadCapture } from "../domain/routing";
 import type { Confidence, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
-import { firstName, KIND_LABEL, NOT_YOURS, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
+import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
 
 export type ReviewMark = ReturnType<typeof displayMark>;
 
@@ -50,7 +50,15 @@ export type ReviewItem = {
   spans: SourceSpan[];
   quotes: string[];
   rationale: string;
-  conflict: { current: string | null; reason: string | null } | null;
+  conflict: { current: string | null; reason: string | null; refused?: boolean } | null;
+  /** Why a withdrawn card was withdrawn: "This issue was cancelled" (E26, D2). */
+  withdrawnNote: string | null;
+  /** D13: only new BRAID entries and items with no target may move to another project. */
+  canMove: boolean;
+  /** How "Change" edits it, and the value it would save now. Null when there is nothing to edit. */
+  edit: { input: "choice" | "date" | "text"; value: string; options: { value: string; label: string }[] } | null;
+  /** D18: for a BRAID report, the project's other open entries of the same kind ("Pick an entry"). */
+  matchOptions: { id: string; title: string; stateLabel: string }[];
 };
 
 export type ReviewGroup =
@@ -74,7 +82,7 @@ export type Review = {
   capture: {
     id: string;
     text: string;
-    channel: "whatsapp" | "app" | "atlas";
+    channel: "atlas" | "app";
     kind: "text" | "voice";
     durationSeconds: number | null;
     messageAt: Date;
@@ -82,6 +90,8 @@ export type Review = {
     state: string;
   };
   author: PersonRef;
+  /** The author's projects, for Move and for picking a project (M14). */
+  projects: { id: string; name: string }[];
   groups: ReviewGroup[];
   items: ReviewItem[];
   /** For "hover a highlight, see its cards": each quoted range and the items it feeds. */
@@ -130,6 +140,30 @@ export function countsLine(c: ReviewCounts, separator: "; " | ". "): string {
   return waits.length ? `${head}${separator}${waits.join("; ")}.` : `${head}.`;
 }
 
+const WITHDRAWN_NOTE: Record<WithdrawReason, string | null> = {
+  target_cancelled: "This issue was cancelled",
+  left_project: "You are no longer in this project",
+  discarded: null,
+  expired: null,
+};
+
+const WORK_CHOICES = ["to_do", "in_progress", "blocked", "done"] as const;
+const STEP_CHOICES = ["not_done", "in_progress", "handed_over"] as const;
+
+function editOf(item: ExtractedItem): ReviewItem["edit"] {
+  const d = item.draft;
+  if (d.kind === "braid_resolve") return null;
+  if (d.braid) return { input: "text", value: item.value ?? d.braid.title, options: [] };
+  const target = d.target;
+  if (!target) return null;
+  const value = item.value ?? target.newValue;
+  if (target.type === "work_item" && target.field === "state")
+    return { input: "choice", value, options: WORK_CHOICES.map((v) => ({ value: v, label: WORK_STATE_LABEL[v] })) };
+  if (target.type === "handover") return { input: "choice", value, options: STEP_CHOICES.map((v) => ({ value: v, label: HANDOVER_STEP_LABEL[v] })) };
+  if (target.type === "milestone") return { input: "date", value, options: [] };
+  return { input: "text", value, options: [] };
+}
+
 const HANDOVER_STEP_LABEL: Record<string, string> = { not_done: "Not done", in_progress: "In progress", handed_over: "Handed over" };
 
 function leaveRange(value: string): string {
@@ -155,6 +189,8 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const projectIds = [...new Set([...ids((d) => d.projectId), ...drafts.flatMap((d) => d.options ?? [])])];
 
   const [author] = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(eq(t.people.id, capture.authorId));
+  // D7: whether the author may resolve a blocker they say is cleared (S13), for the card's wording
+  const authorsHeld = await conn.select({ blockedLinks: t.workItems.blockedLinks }).from(t.workItems).where(eq(t.workItems.ownerId, capture.authorId));
   const [workItems, milestones, steps, entries, sources, projects, memberships] = await Promise.all([
     workIds.length ? conn.select().from(t.workItems).where(inArray(t.workItems.id, workIds)) : [],
     milestoneIds.length ? conn.select().from(t.milestones).where(inArray(t.milestones.id, milestoneIds)) : [],
@@ -178,6 +214,14 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       : [],
   ]);
   const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? id;
+  // The author's projects (for Move), and their open BRAID entries (for "Pick an entry", D18)
+  const reader = await projectReader(conn, capture.authorId);
+  const authorProjects = (await conn.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).orderBy(t.projects.name)).filter((p) => reader.mayRead(p.id));
+  const projectEntries = authorProjects.length
+    ? (await conn.select().from(t.braidEntries).where(inArray(t.braidEntries.projectId, authorProjects.map((p) => p.id)))).filter(
+        (e) => !["none", "merged", "withdrawn"].includes(e.state),
+      )
+    : [];
   const authorRole = (projectId: string | null): ProjectRole =>
     memberships.find((m) => m.projectId === projectId && m.personId === capture.authorId && m.state === "member")?.role ?? "member";
   const authorFirst = firstName(author?.name ?? capture.authorId);
@@ -185,7 +229,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const titleOf = (item: ExtractedItem): string => {
     const d = item.draft;
     if (d.braid) {
-      if (d.kind === "braid_same" || d.braid.match === "same_as") return entries.find((e) => e.id === d.braid!.matchEntryId)?.title ?? d.braid.title;
+      if (d.kind === "braid_same" || d.kind === "braid_resolve" || d.braid.match === "same_as") return entries.find((e) => e.id === d.braid!.matchEntryId)?.title ?? d.braid.title;
       return item.value ?? d.braid.title;
     }
     const target = d.target!;
@@ -206,6 +250,12 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const changeOf = (item: ExtractedItem): string => {
     const d = item.draft;
     if (d.braid) {
+      if (d.kind === "braid_resolve") {
+        const entry = entries.find((e) => e.id === d.braid!.matchEntryId);
+        const role = authorRole(d.projectId);
+        const owns = entry?.ownerId === capture.authorId || authorsHeld.some((w) => w.blockedLinks.includes(d.braid!.matchEntryId ?? ""));
+        return role === "pm" || role === "lead" || owns ? "Resolve it" : "Tell the owner and the PM it is cleared";
+      }
       if (d.kind === "braid_same") {
         const already = sources.filter((s) => s.entryId === d.braid!.matchEntryId);
         const n = already.length + (already.some((s) => s.extractionId === item.id) ? 0 : 1);
@@ -237,6 +287,8 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
         return nothing ? `Already ${label(value).toLowerCase()}` : `${label(target.oldValue)} to ${label(value)}`;
       }
       case "leave":
+        // D6: a change to live leave shows both, so the author sees what moves
+        if (item.draft.leave?.fit === "change" && target.oldValue) return `Change ${leaveRange(target.oldValue)} to ${leaveRange(value)}`;
         return leaveRange(value);
     }
   };
@@ -258,13 +310,18 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
             state: d.braid.match,
             entryId: d.braid.matchEntryId,
             label:
-              d.braid.match === "new" ? "New" : `${d.braid.match === "same_as" ? "Same as" : "Related to"}: ${matchEntry?.title ?? d.braid.title}`,
+              d.kind === "braid_resolve"
+                ? `Resolves: ${matchEntry?.title ?? d.braid.title}`
+                : d.braid.match === "new"
+                  ? "New"
+                  : `${d.braid.match === "same_as" ? "Same as" : "Related to"}: ${matchEntry?.title ?? d.braid.title}`,
           }
         : null,
       state: item.state,
       confidence: item.confidence,
       mark,
-      markLabel: MARK_LABEL[mark],
+      // D12: the record's own rules refuse it, which is not the same as someone changing it
+      markLabel: item.conflict?.refused ? "Can't apply" : mark === "matches_leave" && d.leave?.requested ? "Matches your leave request" : MARK_LABEL[mark],
       routing: {
         state: d.routing,
         projectId: d.projectId,
@@ -275,6 +332,16 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       quotes: d.spans.map((s) => capture.text.slice(s.start, s.end)),
       rationale: d.rationale,
       conflict: item.conflict,
+      withdrawnNote: item.state === "withdrawn" && item.withdrawn ? WITHDRAWN_NOTE[item.withdrawn] : null,
+      edit: editOf(item),
+      matchOptions:
+        d.braid && d.kind !== "braid_resolve" && d.projectId
+          ? projectEntries
+              .filter((e) => e.projectId === d.projectId && e.kind === d.braid!.kind && e.id !== d.braid!.matchEntryId)
+              .map((e) => ({ id: e.id, title: e.title, stateLabel: e.state.replace("_", " ") }))
+          : [],
+      // A same-as report or a resolution belongs to its entry's log, like an update to its record
+      canMove: d.scope === "project" && (d.kind === "braid_new" || (d.kind === "update" && !d.target)),
     };
   });
 
@@ -325,6 +392,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       state: capture.state,
     },
     author: author ?? { id: capture.authorId, name: capture.authorId },
+    projects: authorProjects,
     groups,
     items: reviewItems,
     highlights: [...highlightMap.values()].sort((a, b) => a.start - b.start || a.end - b.end),

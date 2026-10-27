@@ -191,7 +191,7 @@ describe("more information, withdrawing and reminders", () => {
 
   it("E99: Kemar withdraws after the PM asked for more; his item closes and the entry is withdrawn", async () => {
     await decideBraidEntry(as("alicia", 1), "br-slip", { type: "request_info", question: "Which day exactly?" });
-    await expect(withdrawEntry(as("alicia", 2), "br-slip")).rejects.toThrow("only the reporter");
+    await expect(withdrawEntry(as("alicia", 2), "br-slip")).rejects.toThrow("only someone who reported it");
     const r = await withdrawEntry(as("kemar", 3), "br-slip");
     expect(r.entry.state).toBe("withdrawn");
     expect(await inbox("kemar")).toEqual([["more_info:br-slip", "acted"]]);

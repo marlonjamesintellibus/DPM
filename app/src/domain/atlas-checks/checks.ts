@@ -3,13 +3,13 @@
 // and mark. They are rules over the candidate data the caller read from the database (P6):
 // nothing here asks a model, and nothing the model says about current values or states is used.
 import { config } from "../config";
+import { fitLeave, type LeaveFit } from "../machines/leave";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind } from "../rights";
 import { CONFIDENCES, lowerTo, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type RoutingState, type SourceSpan } from "../shared";
 
 export { lowerTo };
 import { readDateValue, readLeaveRange, type LeaveRange, type ResolvedDate } from "./resolve-dates";
 import type {
-  ApprovedLeave,
   CandidateProject,
   CandidateRecord,
   CheckContext,
@@ -79,6 +79,7 @@ type Work = {
   confidence: Confidence;
   date: ResolvedDate | null;
   leave: LeaveRange | null;
+  leaveFit: LeaveFit | null;
   needsOk: boolean;
   mark: Mark;
   scope: "project" | "personal";
@@ -178,17 +179,16 @@ function isDateField(w: Work): boolean {
 
 const leaveValue = (start: string, end: string | null) => `${start}/${end ?? ".."}`;
 
-function matchLeave(range: LeaveRange | null, approved: readonly ApprovedLeave[]): ApprovedLeave | null {
+// D6: matched against every live leave of the author's, requested or approved (fitLeave, M8)
+function leaveFitOf(range: LeaveRange | null, ctx: CheckContext): LeaveFit | null {
   if (!range) return null;
-  // "From Monday the 26th" must start an approved leave; a stated day or range must sit inside one
-  return range.end === null
-    ? approved.find((l) => l.start === range.start) ?? null
-    : approved.find((l) => l.start <= range.start && range.end! <= l.end) ?? null;
+  const leaves = ctx.leave.existing.map((l) => ({ ...l, personId: ctx.author.id }));
+  return fitLeave({ personId: ctx.author.id, start: range.start, end: range.end }, leaves);
 }
 
 // ---- Checks 1 to 5: one proposal at a time ----
 
-const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same"];
+const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same", "braid_resolve"];
 
 // Kind is tested before anything else because every later check depends on it (check 11 owns it)
 const knownKind: Check = [11, (w) => (ITEM_KINDS.includes(w.kind) ? null : `"${w.kind}" is not something Atlas may propose`)];
@@ -204,7 +204,11 @@ const targetInScope: Check = [
       w.target = t;
       return null;
     }
-    if (!p.matchEntryId) return w.kind === "braid_same" ? "a same-as report needs the entry it joins" : null;
+    if (!p.matchEntryId) {
+      if (w.kind === "braid_same") return "a same-as report needs the entry it joins";
+      return w.kind === "braid_resolve" ? "a resolve item needs the entry it resolves" : null;
+    }
+    if (w.kind === "braid_resolve") w.needsOk = true; // the author always confirms a resolution (E93)
     const m = s.findEntry(p.matchEntryId);
     if (!m) return `BRAID entry "${p.matchEntryId}" is not in your projects`;
     w.match = m;
@@ -303,6 +307,7 @@ function mergeKey(w: Work): string | null {
     return `${id}|${w.field}`;
   }
   if (w.kind === "braid_same" && w.match) return `entry|${w.match.entry.id}`;
+  if (w.kind === "braid_resolve" && w.match) return `resolve|${w.match.entry.id}`;
   return null;
 }
 
@@ -353,13 +358,20 @@ const mark: Check = [
   8,
   (w, s) => {
     if (w.target?.type === "leave") {
-      // M8: leave is read only here; it can match approved leave, or become a request the author confirms
-      const approved = matchLeave(w.leave, s.ctx.leave.approved);
-      if (approved) w.newValue = leaveValue(approved.start, approved.end);
-      w.mark = approved ? "matches_leave" : "needs_ok";
+      // M8, D6: leave that matches live leave changes nothing; a change or a new request needs the author's OK
+      const fit = leaveFitOf(w.leave, s.ctx);
+      w.leaveFit = fit;
+      if (fit?.kind === "matches") w.newValue = leaveValue(fit.range.start, fit.range.end);
+      if (fit?.kind === "change") w.newValue = leaveValue(fit.to.start, fit.to.end);
+      if (fit?.kind === "matches" || fit?.kind === "change") w.oldValue = leaveValue(fit.kind === "matches" ? fit.range.start : fit.from.start, fit.kind === "matches" ? fit.range.end : fit.from.end);
+      w.mark = fit?.kind === "matches" ? "matches_leave" : "needs_ok";
     } else if (w.target?.type === "record" && w.newValue !== null && w.oldValue !== null && norm(w.newValue) === norm(w.oldValue)) {
       w.mark = "no_change";
+    } else if (w.kind === "braid_resolve" && w.match?.entry.state === "resolved") {
+      w.mark = "no_change";
     } else {
+      // D20: handing a step over changes who covers the work while someone is away; a person confirms it
+      if (w.target?.type === "record" && w.target.record.type === "handover" && w.newValue === "handed_over") w.needsOk = true;
       w.mark = !w.needsOk && w.confidence === "high" ? "pre_accepted" : "needs_ok";
     }
     return null;
@@ -408,6 +420,14 @@ const targetBelongs: Check = [
     if (!w.match) return null;
     const { project, entry } = w.match;
     const sameProject = w.routing === "routed" && w.projectId === project.id;
+    if (w.kind === "braid_resolve") {
+      // D7: only blockers and issues are resolved by what someone says; the rest are decided (check 12)
+      if (!sameProject) return `"${entry.title}" is on ${project.name}'s log; it can only be resolved there`;
+      if (entry.kind !== "blocker" && entry.kind !== "issue") return `a ${entry.kind} is not resolved from a message; its PM or Lead decides it`;
+      w.braidKind = entry.kind;
+      w.matchState = "same_as";
+      return null;
+    }
     if (w.kind === "braid_same") {
       if (!sameProject) return `"${entry.title}" is on ${project.name}'s log; a report can only join it there`;
       // M16: kinds never merge. A report about the same subject in another kind is new, and linked.
@@ -433,6 +453,8 @@ const kindAllowed: Check = [
     if (w.kind === "update") return null;
     const kind = w.braidKind as BraidKind;
     if (!BRAID_KINDS.includes(kind)) return `"${w.braidKind ?? ""}" is not a BRAID kind`;
+    // Any member may say it is cleared: with the right it resolves, without it it is a proposal (S13)
+    if (w.kind === "braid_resolve") return null;
     const project = s.project(w.projectId);
     if (!project || s.mayReport(project.role, kind)) return null;
     const who = PROJECT_ROLES.filter((r) => s.mayReport(r, kind)).join(" or ") || "no one";
@@ -590,7 +612,11 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
       const note = w.p.note?.trim();
       if (note && w.newValue === "blocked") draft.target.note = note;
     }
-    else if (t.type === "leave") draft.target = { type: "leave", id: s.ctx.leave.targetId, field: "dates", oldValue: null, newValue: w.newValue ?? "" };
+    else if (t.type === "leave") {
+      draft.target = { type: "leave", id: s.ctx.leave.targetId, field: "dates", oldValue: w.oldValue, newValue: w.newValue ?? "" };
+      const fit = w.leaveFit;
+      if (fit && fit.kind !== "refused") draft.leave = { fit: fit.kind, leaveId: fit.kind === "new" ? null : fit.leaveId, requested: fit.kind !== "new" && fit.requested };
+    }
     // Checks 3 and 12 drop every other target; reaching here means one of them was skipped
     else throw new Error(`check ${t.type === "entry" ? 12 : 3} let through an update to ${describe(t)}`);
   }
@@ -618,6 +644,7 @@ function start(p: RawProposal): Work {
     confidence: "low",
     date: null,
     leave: null,
+    leaveFit: null,
     needsOk: false,
     mark: "needs_ok",
     scope: "project",

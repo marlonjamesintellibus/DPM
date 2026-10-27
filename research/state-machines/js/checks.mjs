@@ -9,6 +9,9 @@ import Routing from './models/routing.mjs';
 import Match from './models/match.mjs';
 import CaptureSave from './models/captureSave.mjs';
 import InboxItem from './models/inboxItem.mjs';
+import CaptureJob from './models/captureJob.mjs';
+import Leave from './models/leave.mjs';
+import BraidFollowUps from './models/braidFollowUps.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -52,6 +55,10 @@ export const ROWS = [
   { spec: 'CaptureSave', setting: 'as given (all or nothing, compare and set)', model: CaptureSave(), expectFail: [] },
   { spec: 'CaptureSave', setting: 'S3 alternative: apply what can', model: CaptureSave({ ApplyMode: 'what_can' }), expectFail: ['AllOrNothing', 'NothingAfterExpiry'] },
   { spec: 'InboxItem', setting: 'as given', model: InboxItem(), expectFail: [] },
+  // CaptureJob, Leave and BraidFollowUps are the decisions on D1 to D11 (machines doc, section 11)
+  { spec: 'CaptureJob', setting: 'as given (retries, 5 minute timer, save retry)', model: CaptureJob(), expectFail: [] },
+  { spec: 'Leave', setting: 'as given (match any live leave, impact per lead)', model: Leave(), expectFail: [] },
+  { spec: 'BraidFollowUps', setting: 'as given', model: BraidFollowUps(), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -94,4 +101,21 @@ export const PLANTS = [
   { spec: 'InboxItem', setting: 'bug: a closed item is reopened when the cause returns', model: InboxItem({ Bug: 'reopenClosed' }), expectFail: ['ClosedNeverReopens'] },
   { spec: 'InboxItem', setting: 'bug: items do not close when the cause goes', model: InboxItem({ Bug: 'noAutoClose' }), expectFail: ['InboxMatchesCause'] },
   { spec: 'InboxItem', setting: 'bug: the rule never runs after a change', model: InboxItem({ Bug: 'ruleNeverRuns' }), expectFail: ['InboxCatchesUp'] },
+  { spec: 'CaptureJob', setting: 'bug: no timer on transcribing (found by the check)', model: CaptureJob({ Bug: 'noTranscribeTimer' }), expectFail: ['ReadEnds'] },
+  { spec: 'CaptureJob', setting: 'bug: no 5 minute timer at all', model: CaptureJob({ Bug: 'noStaleTimer' }), expectFail: ['ReadEnds'] },
+  { spec: 'CaptureJob', setting: 'bug: a failed voice note only says "try again"', model: CaptureJob({ Bug: 'noResendAsk' }), expectFail: ['VoiceFailureAsksForNewNote'] },
+  { spec: 'CaptureJob', setting: 'bug: a late answer from an old attempt is stored', model: CaptureJob({ Bug: 'noAttemptCheck' }), expectFail: ['StoredFromCurrentAttempt'] },
+  { spec: 'CaptureJob', setting: 'bug: a retry after a lost reply applies again', model: CaptureJob({ Bug: 'retryReapplies' }), expectFail: ['AppliedAtMostOnce'] },
+  { spec: 'CaptureJob', setting: 'bug: Save gives up without telling the author', model: CaptureJob({ Bug: 'silentGiveUp' }), expectFail: ['GivingUpIsTold', 'SaveEnds'] },
+  { spec: 'Leave', setting: 'bug: only approved leave is matched (the old default)', model: Leave({ Bug: 'approvedOnly' }), expectFail: ['NoOverlappingLeave'] },
+  { spec: 'Leave', setting: 'bug: leads are not shown the impact', model: Leave({ Bug: 'noImpact' }), expectFail: ['LeadsSeeImpact'] },
+  { spec: 'Leave', setting: "bug: a lead sees other projects' work", model: Leave({ Bug: 'leakImpact' }), expectFail: ['ImpactOnlyOwnProject'] },
+  { spec: 'Leave', setting: 'bug: impact items stay after the decision', model: Leave({ Bug: 'impactsStay' }), expectFail: ['ImpactsCloseWhenDecided'] },
+  { spec: 'Leave', setting: 'bug: a capture approves leave', model: Leave({ Bug: 'captureApproves' }), expectFail: ['NeverApprovedByCapture'] },
+  { spec: 'BraidFollowUps', setting: "bug: anyone's message resolves the blocker", model: BraidFollowUps({ Bug: 'messageResolves' }), expectFail: ['BlockerResolvedByOwnerOrLead'] },
+  { spec: 'BraidFollowUps', setting: 'bug: unblocking #151 resolves the blocker itself', model: BraidFollowUps({ Bug: 'autoResolve' }), expectFail: ['BlockerResolvedByOwnerOrLead'] },
+  { spec: 'BraidFollowUps', setting: 'bug: a report reopens a closed risk', model: BraidFollowUps({ Bug: 'reopenClosedRisk' }), expectFail: ['ClosedRiskStaysClosed'] },
+  { spec: 'BraidFollowUps', setting: 'bug: reports pile on a realised risk', model: BraidFollowUps({ Bug: 'sourceOnRealised' }), expectFail: ['ReportsGoToLiveEntry'] },
+  { spec: 'BraidFollowUps', setting: 'bug: merging into a resolved blocker asks nothing', model: BraidFollowUps({ Bug: 'mergeSilently' }), expectFail: ['MergeChoiceRecorded'] },
+  { spec: 'BraidFollowUps', setting: "bug: withdrawing removes others' reports", model: BraidFollowUps({ Bug: 'withdrawAll' }), expectFail: ['WithdrawKeepsOthers'] },
 ];

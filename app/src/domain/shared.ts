@@ -13,7 +13,8 @@ export function lowerTo(confidence: Confidence, cap: Confidence): Confidence {
 }
 
 /** update: changes a record. braid_new: proposes a new BRAID entry. braid_same: adds a source to an existing one. */
-export type ItemKind = "update" | "braid_new" | "braid_same";
+/** braid_resolve (D7, E93): "Kyle sent the feed" resolves a blocker or issue, or proposes it to those who may. */
+export type ItemKind = "update" | "braid_new" | "braid_same" | "braid_resolve";
 
 /** M14. routed: filed in a project (or personal). choose_project: two or more fit. not_filed: none fits; stays private. */
 export type RoutingState = "routed" | "choose_project" | "not_filed";
@@ -50,4 +51,6 @@ export type ExtractedItemDraft = {
   target?: { type: TargetType; id: string; field: string; oldValue: string | null; newValue: string; note?: string };
   /** For BRAID items. seenState: the matched entry's state when Atlas proposed the match, compared again at save (E83). */
   braid?: { kind: BraidKind; title: string; match: MatchState; matchEntryId: string | null; seenState?: string | null };
+  /** Leave items (D6): it matches live leave, changes it, or is a new request. */
+  leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
 };

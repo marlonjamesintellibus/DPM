@@ -1,0 +1,370 @@
+// Today as an inbox (A8; Figma L6b, L6c): the viewer's live items in one card, worst first, and
+// the chosen one open on the right with what is needed to clear it. Everything is read as the
+// viewer (P10); a BRAID entry shows only the quotes routed to its project (rule 9).
+import Link from "next/link";
+import { eq } from "drizzle-orm";
+import { Icon, type IconName } from "@/components/shell/icon";
+import { Card } from "@/components/ui/card";
+import { StatusMark } from "@/components/ui/controls";
+import { draftReason } from "@/commands/status";
+import { getDb } from "@/db/client";
+import { loadBraidLog } from "@/db/records";
+import * as t from "@/db/schema";
+import { getInbox, type InboxEntry } from "@/queries/inbox";
+import { getLeaveImpact } from "@/queries/leave";
+import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
+import { AcknowledgeControl, ClearControls, DecideControls, FollowUpControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
+
+const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
+  status_set_with_no_reason: "Delivery check",
+  keep_set_status: "Delivery check",
+  approve: "BRAID approval",
+  no_decider: "BRAID approval",
+  more_info: "BRAID question",
+  blocker_new: "New blocker",
+  clear: "Blocker cleared?",
+  confirm_clear: "Blocker cleared?",
+  follow_up: "Drafted by Atlas",
+  review_waiting: "Your update",
+  leave_impact: "Leave",
+  done_no_change: "Delivery check",
+};
+
+// The small mark before an item's source line: a rule's check, someone's words, work, people
+function sourceIcon(item: InboxEntry): IconName {
+  if (item.cause === "leave_impact") return "users";
+  if (item.cause === "done_no_change") return "git-commit";
+  if (item.cause === "blocker_new" || item.cause === "confirm_clear") return "alert";
+  if (item.source === "Delivery check") return "check";
+  return "message";
+}
+
+export async function InboxToday({ viewerId, selectedId, at }: { viewerId: string; selectedId: string | undefined; at: Date }) {
+  const db = await getDb();
+  const inbox = await getInbox(db, viewerId, at);
+  const selected = selectedId === "none" ? undefined : (inbox.items.find((i) => i.id === selectedId) ?? inbox.items[0]);
+  const firstNow = inbox.items.find((i) => i.group === "do_now");
+  const also = firstNow && firstNow.id !== selected?.id ? firstNow : undefined;
+  const n = inbox.items.length;
+  const position = (item: InboxEntry) => inbox.items.indexOf(item) + 1;
+  return (
+    <div className="flex items-start gap-4">
+      <Card
+        label="Inbox"
+        emphasis
+        bodyClassName="gap-1.5"
+        className="w-[520px] shrink-0 self-stretch"
+        title={
+          <span className="flex items-end gap-2">
+            <span>Your next things</span>
+            <span className="type-caption font-normal text-fg-3">{n ? `${n}, in order` : "none"}</span>
+          </span>
+        }
+      >
+        <p className="type-caption text-fg-3">{n ? "Pick one and it opens on the right. Nothing here is pushed to you." : "Nothing needs you right now. New items come here when a rule or someone's update needs you."}</p>
+        {inbox.groups.map((g) => (
+          <div key={g.group} className="flex flex-col gap-1.5">
+            <p className="type-micro text-fg-3">{g.label}</p>
+            {g.items.map((item) => (
+              <InboxRow key={item.id} item={item} n={position(item)} selected={item.id === selected?.id} primary={g.group === "do_now"} />
+            ))}
+          </div>
+        ))}
+      </Card>
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        {selected && <Detail item={selected} label={`${CAUSE_LABEL[selected.cause]} · item ${position(selected)} of ${n}`} viewerId={viewerId} at={at} />}
+        {also && <Detail item={also} label={`${CAUSE_LABEL[also.cause]} · item ${position(also)} of ${n}`} viewerId={viewerId} at={at} />}
+        <YourProjects viewerId={viewerId} at={at} />
+      </div>
+    </div>
+  );
+}
+
+function InboxRow({ item, n, selected, primary }: { item: InboxEntry; n: number; selected: boolean; primary: boolean }) {
+  const href = `/?view=inbox&item=${encodeURIComponent(item.id)}`;
+  return (
+    <div className={`relative flex items-start gap-2.5 rounded-md px-3 py-[11px] ${selected ? "bg-accent-soft" : "hover:bg-hover"}`}>
+      <span className="type-label text-fg-3">{n}</span>
+      <Link href={href} scroll={false} aria-current={selected ? "true" : undefined} className="flex min-w-0 flex-1 flex-col gap-[3px] after:absolute after:inset-0">
+        <span className="type-body-medium text-fg-1">{item.title}</span>
+        <span className="type-caption text-fg-2">Why here: {item.why}</span>
+        <span className="flex items-center gap-1.5">
+          <Icon name={sourceIcon(item)} />
+          <span className="type-micro text-fg-3">{item.sourceLine}</span>
+        </span>
+      </Link>
+      <Link
+        href={href}
+        scroll={false}
+        className={`relative z-10 shrink-0 rounded-control px-2.5 py-1 type-label whitespace-nowrap ${primary ? "bg-inverse text-on-inverse" : "border border-line-strong bg-panel text-fg-1 hover:bg-hover"}`}
+      >
+        {item.action}
+      </Link>
+    </div>
+  );
+}
+
+/** The card that holds an open item (L6b "Card · BRAID approval"): header with close, body p16 gap14. */
+function DetailCard({ label, title, children }: { label: string; title: string; children: React.ReactNode }) {
+  return (
+    <section className="flex flex-col overflow-hidden rounded-panel border border-line bg-panel">
+      <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+        <h2 className="flex-1 type-micro text-fg-3 uppercase">{label}</h2>
+        <Link href="/?view=inbox&item=none" aria-label="Close" scroll={false} className="rounded-sm hover:bg-hover">
+          <Icon name="x-14" />
+        </Link>
+      </div>
+      <div className="flex flex-col gap-3.5 p-4">
+        <h3 className="type-heading text-fg-1">{title}</h3>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** Two grey boxes side by side (L6b "Source and similar", "Set vs calculated"). */
+function Pair({ children }: { children: React.ReactNode }) {
+  return <div className="flex items-stretch gap-3">{children}</div>;
+}
+
+function Box({ head, children }: { head: string; children: React.ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-md bg-panel-2 p-3">
+      <span className="type-caption text-fg-3">{head}</span>
+      {children}
+    </div>
+  );
+}
+
+const Explain = ({ children }: { children: React.ReactNode }) => <p className="type-body text-fg-2">{children}</p>;
+
+async function YourProjects({ viewerId, at }: { viewerId: string; at: Date }) {
+  const db = await getDb();
+  const reader = await projectReader(db, viewerId);
+  const mine = reader.world.memberships.filter((m) => m.personId === viewerId && m.state === "member" && reader.mayRead(m.projectId));
+  const views = (await Promise.all(mine.map((m) => getProject(db, viewerId, m.projectId, at)))).filter((v): v is ProjectView => v.found);
+  return (
+    <section className="flex flex-col overflow-hidden rounded-panel border border-line bg-panel">
+      <h2 className="border-b border-line px-4 py-2.5 type-micro text-fg-3 uppercase">Your projects · {views.length}</h2>
+      {views.map((v, i) => {
+        const pending = v.braid.waitingForApproval;
+        const line = [v.project.customer ?? "Internal", pending ? `${pending} waiting for approval` : null, v.setStatus && v.displayed.from === "calculated" ? `set ${v.setStatus.label}, no reason yet` : null]
+          .filter(Boolean)
+          .join(" · ");
+        return (
+          <Link key={v.project.id} href={`/projects/${v.project.id}`} className={`flex items-center gap-3 px-4 py-3 hover:bg-hover ${i ? "border-t border-line" : ""}`}>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="type-body-medium text-fg-1">{v.project.name}</span>
+              <span className="type-caption text-fg-3">{line}</span>
+            </span>
+            <StatusMark status={v.displayed.status} label={v.displayed.label} />
+            <Icon name="chevron-right-12" />
+          </Link>
+        );
+      })}
+    </section>
+  );
+}
+
+// ---- The open item ----
+
+async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: string; viewerId: string; at: Date }) {
+  switch (item.subject.type) {
+    case "project":
+      return <StatusDetail item={item} label={label} projectId={item.subject.id} viewerId={viewerId} at={at} />;
+    case "braid_entry":
+      return <EntryDetail item={item} label={label} entryId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} at={at} />;
+    case "leave":
+      return <LeaveDetail item={item} label={label} leaveId={item.subject.id} projectId={item.subject.projectId} viewerId={viewerId} />;
+    case "work_item":
+      return (
+        <DetailCard label={label} title={item.title}>
+          <Explain>Why it is here: {item.why}. Paste the PR or document that finished it, and the check closes.</Explain>
+          <LinkChangeForm workItemId={item.subject.id} />
+        </DetailCard>
+      );
+    case "capture":
+      return (
+        <DetailCard label={label} title={item.title}>
+          <Explain>{item.why}.</Explain>
+          <Link href={`/review/${item.subject.id}`} className="self-start rounded-control bg-inverse px-2.5 py-1 type-label text-on-inverse">
+            Review
+          </Link>
+        </DetailCard>
+      );
+  }
+}
+
+async function StatusDetail({ item, label, projectId, viewerId, at }: { item: InboxEntry; label: string; projectId: string; viewerId: string; at: Date }) {
+  const db = await getDb();
+  const view = await getProject(db, viewerId, projectId, at);
+  if (!view.found || !view.setStatus) return null;
+  const draft = await draftReason(db, projectId, at);
+  const set = view.setStatus;
+  const setter = set.setBy?.id === viewerId ? "you" : (set.setBy?.name.split(" ")[0] ?? "the owner");
+  const worst = [...view.threads.flatMap((th) => th.milestones), ...view.unthreaded.milestones].find((m) => m.status === view.calculated.status);
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Pair>
+        <Box head={`Set by ${setter}${set.setAt ? `, ${clockTime(set.setAt)}` : ""}`}>
+          <StatusMark status={set.status} label={set.label} />
+          <span className="type-caption text-fg-2">{view.reason ? (view.reason.stale ? `Reason ${view.reason.staleNote}` : "With a reason") : "No reason given yet"}</span>
+        </Box>
+        <Box head="Calculated from the plan">
+          <StatusMark status={view.calculated.status} label={view.calculated.label} />
+          {worst && <span className="type-caption text-fg-2">Worst milestone: {worst.name}, {worst.statusLabel.toLowerCase()}</span>}
+        </Box>
+      </Pair>
+      <Explain>When they disagree, say why. The reason links to entries on the BRAID log, so the executive, the client view and the table all tell the same story.</Explain>
+      <ReasonEditor
+        projectId={projectId}
+        calculatedLabel={view.calculated.label}
+        setLabel={set.label}
+        draft={{ text: view.reason?.text ?? draft.text, entryIds: view.reason?.links.map((l) => l.entryId) ?? draft.entryIds }}
+        entries={view.braid.entries.map((e) => ({
+          id: e.id,
+          kind: e.kind,
+          kindLabel: e.kindLabel,
+          title: e.reportCount > 1 ? `${e.title} (${e.reportCount} reports)` : e.title,
+          stateLabel: e.waitingForApproval ? "Proposed" : e.stateLabel,
+          onLog: e.onLog,
+        }))}
+        stale={!!view.reason?.stale}
+      />
+    </DetailCard>
+  );
+}
+
+async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { item: InboxEntry; label: string; entryId: string; projectId: string; viewerId: string; at: Date }) {
+  const db = await getDb();
+  const view = await getProject(db, viewerId, projectId, at);
+  if (!view.found) return null;
+  // A drafted follow up (D10) is not on the project view yet; read it from the log
+  if (item.cause === "follow_up") {
+    const draft = (await loadBraidLog(db, projectId)).log[entryId];
+    if (!draft) return null;
+    const from = draft.links.find((l) => l.relation === "raised_from");
+    const origin = from ? view.braid.entries.find((e) => e.id === from.entryId) : undefined;
+    return (
+      <DetailCard label={label} title={item.title}>
+        {origin && (
+          <Pair>
+            <Box head={`${origin.kindLabel} on the ${view.project.name} log`}>
+              <span className="type-caption text-fg-2">
+                {origin.title}: {origin.stateLabel.toLowerCase()}
+              </span>
+            </Box>
+            <Box head="What Atlas drafted">
+              <span className="type-caption text-fg-2">
+                {KIND_LABEL[draft.kind]}: {draft.title}
+              </span>
+            </Box>
+          </Pair>
+        )}
+        <Explain>Nothing goes on the log by itself. Add it as drafted, or drop it.</Explain>
+        <FollowUpControls entryId={entryId} />
+      </DetailCard>
+    );
+  }
+  const entry = view.braid.entries.find((e) => e.id === entryId);
+  if (!entry) return null;
+  const reporter = entry.reportedBy?.name.split(" ")[0] ?? "the reporter";
+  const words = entry.sources.find((s) => s.quote && s.person.id === entry.reportedBy?.id) ?? entry.sources.find((s) => s.quote);
+  const sameKind = view.braid.entries.filter((e) => e.kind === entry.kind && e.id !== entry.id && e.onLog);
+  const related = entry.links.map((l) => `${KIND_LABEL[l.kind]} · ${l.title}`);
+
+  const source = (
+    <Box head={words ? `From ${words.person.name.split(" ")[0]}'s update, ${clockTime(words.at)}` : `Reported by ${entry.reportedBy?.name ?? "someone"}`}>
+      <span className="type-caption text-fg-2">
+        {words ? `"${words.quote}." ${words.person.name.split(" ")[0]} confirmed this on review.` : `${entry.reportCount} ${entry.reportCount === 1 ? "report" : "reports"}.`}
+      </span>
+    </Box>
+  );
+  const similar = (
+    <Box head={entry.kind === "decision" ? `Decisions on the ${view.project.name} log` : `Already on the ${view.project.name} log`}>
+      <span className="type-caption text-fg-2">
+        {entry.kind === "decision"
+          ? `${sameKind.length ? "None conflict." : "None yet."} Atlas checked ${sameKind.length} approved ${sameKind.length === 1 ? "decision" : "decisions"}.`
+          : `${entry.reportCount > 1 ? `Reported ${entry.reportCount} times.` : "Nothing like it."} Atlas checked ${sameKind.length} open ${KIND_LABEL[entry.kind].toLowerCase()}${sameKind.length === 1 ? "" : "s"}.`}
+      </span>
+    </Box>
+  );
+
+  if (item.cause === "approve" || item.cause === "no_decider") {
+    return (
+      <DetailCard label={label} title={item.title}>
+        <Pair>
+          {source}
+          {similar}
+        </Pair>
+        <Explain>
+          {entry.kind === "decision"
+            ? `A decision stays pending until a PM or Lead approves it. "We agreed" in a message does not approve it.`
+            : `Anyone on the project can raise a ${KIND_LABEL[entry.kind].toLowerCase()}. Only a PM or Lead puts it on the log. Once you approve it, you can link it in a reason.`}
+        </Explain>
+        {item.cause === "approve" ? <DecideControls entryId={entryId} reporter={reporter} related={related} /> : <Explain>Nobody on the project holds the right to approve it. Assign a PM or Lead.</Explain>}
+      </DetailCard>
+    );
+  }
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Pair>
+        {source}
+        <Box head="Where it is">
+          <span className="type-caption text-fg-2">
+            {entry.kindLabel} · {entry.stateLabel}
+            {entry.owner ? ` · owner ${entry.owner.name.split(" ")[0]}` : ""}
+          </span>
+        </Box>
+      </Pair>
+      <Explain>
+        {item.cause === "blocker_new"
+          ? "A blocker went on the log; it stops work until it is cleared."
+          : item.cause === "more_info"
+            ? "Answer the question in your chat; the entry goes back to the PM or Lead."
+            : "Only the owner of the blocked work, or a PM or Lead, resolves a blocker. Anyone else's \"it's cleared\" comes here."}
+      </Explain>
+      {item.cause === "clear" || item.cause === "confirm_clear" ? (
+        <ClearControls entryId={entryId} canKeepOpen={item.cause === "clear"} />
+      ) : item.cause === "blocker_new" ? (
+        <AcknowledgeControl entryId={entryId} />
+      ) : null}
+    </DetailCard>
+  );
+}
+
+async function LeaveDetail({ item, label, leaveId, projectId, viewerId }: { item: InboxEntry; label: string; leaveId: string; projectId: string; viewerId: string }) {
+  const db = await getDb();
+  const impact = await getLeaveImpact(db, viewerId, leaveId, projectId);
+  if (!impact.found) return null;
+  const [leave] = await db.select({ state: t.leave.state }).from(t.leave).where(eq(t.leave.id, leaveId));
+  const lines = [
+    ...impact.workItems.map((w) => `${w.number ?? ""} ${w.title}${w.state === "blocked" ? " (blocked)" : ""}`.trim()),
+    ...impact.milestones.map((m) => `Milestone ${m.name}, due ${m.due}`),
+    ...impact.handoverSteps.map((s) => `Handover: ${s.title} to ${s.to.name.split(" ")[0]}, not done`),
+    ...impact.braid.map((e) => `${KIND_LABEL[e.kind as keyof typeof KIND_LABEL]}: ${e.title}`),
+  ];
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Pair>
+        <Box head={`${impact.person.name}${impact.change ? ", a change to approved leave" : ""}`}>
+          <span className="type-body-medium text-fg-1">{impact.askedLabel}</span>
+        </Box>
+        <Box head={`What it touches in ${impact.project.name}`}>
+          <span className="type-caption text-fg-2">{lines.length ? `${lines.length} to cover` : "Nothing to cover"}</span>
+        </Box>
+      </Pair>
+      {lines.length > 0 && (
+        <ul className="flex flex-col gap-1">
+          {lines.map((l) => (
+            <li key={l} className="type-body text-fg-1">
+              {l}
+            </li>
+          ))}
+        </ul>
+      )}
+      <Explain>Only this project&apos;s part is shown here, and never a reason for the leave.</Explain>
+      {impact.mayDecide && leave?.state && <LeaveControls leaveId={leaveId} />}
+    </DetailCard>
+  );
+}

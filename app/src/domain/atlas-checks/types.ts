@@ -2,6 +2,7 @@
 // the model returns through its tool call (build plan 5.1 step 3), untrusted. A CheckContext is
 // what the caller reads from the database for the author: only projects they can file into.
 import type { IsoDate } from "../dates";
+import type { LeaveState } from "../machines/leave";
 import type { BraidKind, ProjectRole } from "../rights";
 import type { Confidence, ExtractedItemDraft, ItemKind, TargetType } from "../shared";
 
@@ -88,7 +89,8 @@ export type CandidateProject = {
   braid: readonly OpenBraidEntry[];
 };
 
-export type ApprovedLeave = { id: string; start: IsoDate; end: IsoDate };
+/** The author's live leave, requested or approved, with any change waiting (D6). Dates only. */
+export type ExistingLeave = { id: string; start: IsoDate; end: IsoDate; state: LeaveState; change?: { start: IsoDate; end: IsoDate } | null };
 
 export type CheckContext = {
   /** The capture text, stored as received and never edited. */
@@ -103,7 +105,7 @@ export type CheckContext = {
   /** The author's projects whose group is not connected to DPM. Safe to name to the author (E75). */
   notConnected: readonly { id: string; name: string }[];
   /** The author's leave target ("Leave Kemar Brown") and their approved leave (M8). */
-  leave: { targetId: string; approved: readonly ApprovedLeave[] };
+  leave: { targetId: string; existing: readonly ExistingLeave[] };
 };
 
 export const CHECK_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;

@@ -5,7 +5,8 @@
 import { defineMachine, transition, type Outcome } from "../machine";
 import { PROJECT_ROLES, type ProjectRole } from "../rights";
 
-export const MEMBERSHIP_STATES = ["invited", "requested", "member", "left"] as const;
+// D4: invited -> declined | expired, requested -> declined, left | declined | expired -> invited (to rejoin)
+export const MEMBERSHIP_STATES = ["invited", "requested", "member", "left", "declined", "expired"] as const;
 export type MembershipState = (typeof MEMBERSHIP_STATES)[number];
 
 export type MembershipRecord = {
@@ -18,8 +19,20 @@ export type MembershipRecord = {
 export type MembershipEvent =
   | { type: "ACCEPT" } // the person accepts an invitation
   | { type: "APPROVE" } // a request to join is approved
+  | { type: "DECLINE" } // the person declines an invitation, or the admin a request
+  | { type: "EXPIRE" } // timer: an invitation nobody answered
+  | { type: "INVITE" } // the admin invites someone back
   | { type: "LEAVE" }
   | { type: "CHANGE_ROLE"; role: ProjectRole };
+
+/** An invitation nobody answers expires after this many days (D4). */
+export const INVITE_EXPIRY_DAYS = 14;
+
+/**
+ * D4: who is acting. The group's admin (its creator) approves joins and role changes; only the
+ * person answers their own invitation. `daysInvited` is for the expiry timer.
+ */
+export type MembershipCtx = { byAdmin?: boolean; byPerson?: boolean; personIsAdmin?: boolean; daysInvited?: number };
 
 export type MembershipAudit = {
   action: `membership.${MembershipEvent["type"]}`;
@@ -30,20 +43,36 @@ export type MembershipAudit = {
   after: { state: MembershipState; role: ProjectRole };
 };
 
-export const membershipMachine = defineMachine<MembershipState, MembershipEvent, MembershipRecord>({
+type Ctx = MembershipCtx & { record: MembershipRecord };
+
+const admin = ({ byAdmin }: Ctx) => (byAdmin ? null : "only the group's admin does this");
+const person = ({ byPerson }: Ctx) => (byPerson ? null : "only the person answers their own invitation");
+
+export const membershipMachine = defineMachine<MembershipState, MembershipEvent, Ctx>({
   name: "membership",
   states: MEMBERSHIP_STATES,
   arrows: [
-    { from: ["invited"], on: "ACCEPT", to: "member" },
-    { from: ["requested"], on: "APPROVE", to: "member" },
-    { from: ["member"], on: "LEAVE", to: "left" },
+    { from: ["invited"], on: "ACCEPT", to: "member", guard: person },
+    { from: ["requested"], on: "APPROVE", to: "member", guard: admin },
+    { from: ["invited"], on: "DECLINE", to: "declined", guard: person },
+    { from: ["requested"], on: "DECLINE", to: "declined", guard: admin },
+    {
+      from: ["invited"],
+      on: "EXPIRE",
+      to: "expired",
+      guard: ({ daysInvited }) => (daysInvited === undefined ? "the days since the invitation are needed" : daysInvited >= INVITE_EXPIRY_DAYS ? null : `invited ${daysInvited} of ${INVITE_EXPIRY_DAYS} days ago`),
+    },
+    { from: ["left", "declined", "expired"], on: "INVITE", to: "invited", guard: admin },
+    // The admin leaving would leave nobody to approve joins: another admin comes first
+    { from: ["member"], on: "LEAVE", to: "left", guard: (c) => (c.personIsAdmin ? "make someone else the group's admin first" : c.byPerson || c.byAdmin ? null : "only the person or the admin") },
     {
       from: ["member"],
       on: "CHANGE_ROLE",
       to: "member",
-      guard: (record, { role }) => {
+      guard: (c, { role }) => {
         if (!PROJECT_ROLES.includes(role)) return `${role} is not a project role`;
-        return role === record.role ? `already ${role}` : null;
+        if (role === c.record.role) return `already ${role}`;
+        return admin(c);
       },
     },
   ],
@@ -57,8 +86,9 @@ export type MembershipResult = {
 };
 
 /** Applies an event to one membership. A refused event returns the record unchanged and no audit entry. */
-export function applyMembership(record: MembershipRecord, event: MembershipEvent, by: string): MembershipResult {
-  const outcome = transition(membershipMachine, record.state, event, record);
+export function applyMembership(record: MembershipRecord, event: MembershipEvent, by: string, ctx: MembershipCtx = {}): MembershipResult {
+  // Leaving or answering one's own invitation needs no flag: the person acting is the member
+  const outcome = transition(membershipMachine, record.state, event, { byPerson: by === record.personId, ...ctx, record });
   if (!outcome.ok) return { outcome, record, audit: null };
   const next: MembershipRecord = {
     ...record,
@@ -88,7 +118,8 @@ export function actorIn(personId: string, projectId: string, memberships: readon
  * A project as routing sees it. `connected` means the group owner has connected the group to DPM.
  * A group with no project (the Data guild, E81) has no ProjectRef, so it is never a target.
  */
-export type ProjectRef = { id: string; name: string; orgTag: string; connected: boolean };
+/** adminId: the person who created the project's group, its admin from the start (D4). */
+export type ProjectRef = { id: string; name: string; orgTag: string; connected: boolean; adminId?: string };
 
 export type World = { memberships: readonly MembershipRecord[]; projects: readonly ProjectRef[] };
 

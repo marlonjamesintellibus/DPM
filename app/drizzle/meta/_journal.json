@@ -15,6 +15,20 @@
       "when": 1793064497268,
       "tag": "0001_use_case_1",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793073062916,
+      "tag": "0002_d1_to_d22",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793074160160,
+      "tag": "0003_phase_5",
+      "breakpoints": true
     }
   ]
 }

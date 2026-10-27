@@ -7,8 +7,9 @@ import { scoreCase, type CaseScore } from "../src/atlas/eval/score";
 import { AtlasReadFailed } from "../src/atlas/extractor";
 import { createOpenRouter, DEFAULT_MODEL } from "../src/atlas/openrouter";
 import { PROMPT_VERSION } from "../src/atlas/prompt";
-import { KEMAR_CONTEXT } from "../src/domain/atlas-checks/kemar-note.fixture";
-import type { RawProposal } from "../src/domain/atlas-checks/types";
+import { evalContexts } from "../src/atlas/eval/contexts";
+import type { CheckContext, RawProposal } from "../src/domain/atlas-checks/types";
+import { seededDb } from "../src/test/seeded-db";
 
 type Run = { id: string; seconds: number; costUsd: number; failed?: string; score?: CaseScore; malformed: number; proposals?: RawProposal[] };
 
@@ -26,11 +27,13 @@ async function pool<T, R>(items: readonly T[], size: number, fn: (t: T) => Promi
   return out;
 }
 
-async function evalModel(model: string, apiKey: string, cases: typeof EVAL_CASES): Promise<Run[]> {
+type Contexts = Awaited<ReturnType<typeof evalContexts>>;
+
+async function evalModel(model: string, apiKey: string, cases: typeof EVAL_CASES, contexts: Contexts): Promise<Run[]> {
   const atlas = createOpenRouter({ apiKey, model, timeoutMs: 120_000 });
   return pool(cases, 4, async (c): Promise<Run> => {
     const started = Date.now();
-    const ctx = { ...KEMAR_CONTEXT, text: c.text };
+    const ctx: CheckContext = { ...contexts[c.author ?? "kemar"], text: c.text };
     try {
       const out = await atlas.extract(ctx);
       return { id: c.id, seconds: (Date.now() - started) / 1000, costUsd: out.usage?.costUsd ?? 0, score: scoreCase(c, out.proposals, ctx), malformed: out.malformed.length, proposals: out.proposals };
@@ -67,7 +70,9 @@ async function main() {
   const only = args.includes("--only") ? args.splice(args.indexOf("--only"), 2)[1].split(",") : null;
   const cases = only ? EVAL_CASES.filter((c) => only.includes(c.id)) : EVAL_CASES;
   const models = args.length ? args : [DEFAULT_MODEL];
-  const results = await Promise.all(models.map(async (m) => ({ model: m, runs: await evalModel(m, apiKey, cases) })));
+  // Each author's data as the app loads it from the seed (D22)
+  const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
+  const results = await Promise.all(models.map(async (m) => ({ model: m, runs: await evalModel(m, apiKey, cases, contexts) })));
   const at = new Date().toISOString().replace(/[:.]/g, "-");
   mkdirSync(".data/atlas-eval", { recursive: true });
   const file = `.data/atlas-eval/${at}.json`;
@@ -88,4 +93,11 @@ async function main() {
   console.log(`\nfull results: ${file}`);
 }
 
-main();
+// The seeded PGlite keeps Node alive; leave once the report is written
+main().then(
+  () => process.exit(process.exitCode ?? 0),
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  },
+);

@@ -44,7 +44,8 @@ export type ExtractedItem = {
   value: string | null;
   /** The target value this item last saw: the database value at proposal, then the value shown in a conflict once the author decides again. */
   saw: string | null;
-  conflict: { current: string | null; reason: string | null } | null;
+  /** refused: the record's own rules refuse the change (D12), so the author edits or rejects it. */
+  conflict: { current: string | null; reason: string | null; refused?: boolean } | null;
   withdrawn: WithdrawReason | null;
   /** The author acted on this item (NoAutoAcceptBelowHigh allows only them to accept below High). */
   touched: boolean;

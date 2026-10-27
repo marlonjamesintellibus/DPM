@@ -66,16 +66,18 @@ export function applyWorkItem(record: WorkItemRecord, event: WorkItemEvent, acto
     const links = event.links ?? (event.type === "BLOCK" ? [] : record.blockedLinks);
     return { outcome, record: { ...record, state: outcome.to, blockedNote: event.note.trim(), blockedLinks: links } };
   }
-  // Leaving Blocked clears the note: it describes the block, and the audit entry keeps its history
-  return { outcome, record: { ...record, state: outcome.to, blockedNote: null, blockedLinks: [] } };
+  // Leaving Blocked clears the note: it describes the block, and the audit entry keeps its history.
+  // The links stay: they say which blockers held this work, so its owner may still resolve them (S13)
+  // and a rule can ask them to once nothing they link to is blocked (E93)
+  return { outcome, record: { ...record, state: outcome.to, blockedNote: null } };
 }
 
 /**
  * The event that moves a work item from one state to another, for Apply to fire from an update's
  * old and new value. null when no arrow is drawn (nothing goes back to To do).
  */
-export function workItemEventTo(from: WorkItemState, to: WorkItemState, note = ""): WorkItemEvent | null {
-  if (to === "blocked") return from === "blocked" ? { type: "UPDATE_BLOCKED_NOTE", note } : { type: "BLOCK", note };
+export function workItemEventTo(from: WorkItemState, to: WorkItemState, note = "", links?: readonly string[]): WorkItemEvent | null {
+  if (to === "blocked") return from === "blocked" ? { type: "UPDATE_BLOCKED_NOTE", note, ...(links ? { links } : {}) } : { type: "BLOCK", note, ...(links ? { links } : {}) };
   if (from === to) return null;
   switch (to) {
     case "in_progress":

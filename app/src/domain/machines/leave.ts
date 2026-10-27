@@ -1,60 +1,175 @@
-// M8. Leave, read only in this slice (C9). An extracted leave either matches approved leave and
-// changes nothing, or, once the author accepts it, becomes a leave request. A capture never
-// creates approved leave, and a leave reason never reaches a record a lead can see (A5.2, A7.3):
-// the types below have no reason field, and every function copies dates only.
+// M8. Leave, with the decision of 26 Oct on D6 (machines doc, section 11; research model leave.mjs).
+// What someone says about leave is matched against every live leave of theirs, requested or
+// approved: covered is no change, overlapping is a change to that leave, anything else a new
+// request. A capture never approves leave: the admin does. Approved dates stay approved while a
+// change waits. A leave reason never reaches a record a lead can see (A5.2, A7.3): the types below
+// have no reason field, and every function copies dates only.
 import { daysBetween, isIsoDate, type IsoDate } from "../dates";
+import { defineMachine, transition, type Outcome } from "../machine";
+import { isMember, type World } from "./membership";
 
 // C9: requested -> approved -> handover_in_progress -> covered | uncovered -> active -> ended
-export const LEAVE_STATES = ["requested", "approved", "handover_in_progress", "covered", "uncovered", "active", "ended"] as const;
+// D6: requested -> declined (admin) | withdrawn (the person)
+export const LEAVE_STATES = ["requested", "approved", "handover_in_progress", "covered", "uncovered", "active", "ended", "declined", "withdrawn"] as const;
 export type LeaveState = (typeof LEAVE_STATES)[number];
 
+export type LeaveRange = { start: IsoDate; end: IsoDate };
+
 /** Leave as the rest of DPM sees it. HR may hold a reason; it is never part of this record. */
-export type LeaveRecord = { id: string; personId: string; start: IsoDate; end: IsoDate; state: LeaveState };
+export type LeaveRecord = {
+  id: string;
+  personId: string;
+  start: IsoDate;
+  end: IsoDate;
+  state: LeaveState;
+  /** D6: new dates asked for on approved leave; the approved dates stand until the admin decides. */
+  change?: LeaveRange | null;
+};
 
 /** What Atlas may extract about leave: dates only, never why ("not feeling well" stays out, E17). */
 export type ExtractedLeave = { personId: string; start: IsoDate; end: IsoDate | null };
 
 export type LeaveRequest = { personId: string; start: IsoDate; end: IsoDate; state: "requested" };
 
-// Approved and every state after it; a request is not approved yet
-const APPROVED: readonly LeaveState[] = LEAVE_STATES.filter((s) => s !== "requested");
+/** Leave that still counts: not declined, withdrawn or over. */
+export const LIVE_LEAVE: readonly LeaveState[] = ["requested", "approved", "handover_in_progress", "covered", "uncovered", "active"];
+// Approved and every state after it, while it can still change
+const CHANGEABLE: readonly LeaveState[] = ["approved", "handover_in_progress", "covered", "uncovered"];
 
-export type LeaveMatch = { mark: "matches_leave"; leaveId: string } | { mark: "needs_ok" };
+/** Waiting on the admin: a request, or approved leave with a change asked for. */
+export function leaveWaiting(l: Pick<LeaveRecord, "state" | "change">): boolean {
+  return l.state === "requested" || (CHANGEABLE.includes(l.state) && !!l.change);
+}
+
+export type LeaveFit =
+  /** Covered by live leave: nothing to change. */
+  | { kind: "matches"; leaveId: string; requested: boolean; range: LeaveRange }
+  /** Overlaps live leave: change it to `to`. */
+  | { kind: "change"; leaveId: string; requested: boolean; from: LeaveRange; to: LeaveRange }
+  | { kind: "new"; range: LeaveRange }
+  | { kind: "refused"; reason: string };
+
+const inside = (day: IsoDate, r: LeaveRange) => daysBetween(r.start, day) >= 0 && daysBetween(day, r.end) >= 0;
+const covers = (r: LeaveRange, s: LeaveRange) => inside(s.start, r) && inside(s.end, r);
+const overlaps = (r: LeaveRange, s: LeaveRange) => daysBetween(r.start, s.end) >= 0 && daysBetween(s.start, r.end) >= 0;
 
 /**
- * Server check 8 for leave. Matches when the extracted days fall inside approved leave of the same
- * person; "out from Monday the 26th" with no end is read as that one day.
+ * Server check 8 for leave, and what Save does with it (D6). "Out from Monday the 26th" has no end:
+ * it matches leave that starts that day, changes leave it falls inside, or is a one day request.
  */
-export function matchLeave(extracted: ExtractedLeave, leaves: readonly LeaveRecord[]): LeaveMatch {
-  const end = extracted.end ?? extracted.start;
-  if (!isIsoDate(extracted.start) || !isIsoDate(end)) return { mark: "needs_ok" };
-  const hit = leaves.find(
-    (l) =>
-      l.personId === extracted.personId &&
-      APPROVED.includes(l.state) &&
-      daysBetween(l.start, extracted.start) >= 0 &&
-      daysBetween(end, l.end) >= 0,
-  );
-  return hit ? { mark: "matches_leave", leaveId: hit.id } : { mark: "needs_ok" };
+export function fitLeave(said: ExtractedLeave, leaves: readonly LeaveRecord[]): LeaveFit {
+  const end = said.end ?? said.start;
+  if (!isIsoDate(said.start) || !isIsoDate(end)) return { kind: "refused", reason: "leave needs real dates" };
+  if (daysBetween(said.start, end) < 0) return { kind: "refused", reason: "leave ends before it starts" };
+  // Approved leave first: what was agreed is what a new message is most likely about
+  const live = leaves
+    .filter((l) => l.personId === said.personId && LIVE_LEAVE.includes(l.state))
+    .sort((a, b) => Number(a.state === "requested") - Number(b.state === "requested") || a.start.localeCompare(b.start));
+  // A change waiting on approved leave counts too: saying the new dates again is no change
+  const ranges = (l: LeaveRecord): LeaveRange[] => [{ start: l.start, end: l.end }, ...(l.change ? [l.change] : [])];
+  const requested = (l: LeaveRecord) => l.state === "requested";
+
+  if (said.end === null) {
+    for (const l of live) for (const r of ranges(l)) if (r.start === said.start) return { kind: "matches", leaveId: l.id, requested: requested(l), range: r };
+    const within = live.find((l) => inside(said.start, l));
+    if (within) return { kind: "change", leaveId: within.id, requested: requested(within), from: { start: within.start, end: within.end }, to: { start: said.start, end: within.end } };
+    return { kind: "new", range: { start: said.start, end } };
+  }
+  const range = { start: said.start, end };
+  for (const l of live) for (const r of ranges(l)) if (covers(r, range)) return { kind: "matches", leaveId: l.id, requested: requested(l), range: r };
+  const touching = live.find((l) => overlaps(l, range));
+  if (touching) return { kind: "change", leaveId: touching.id, requested: requested(touching), from: { start: touching.start, end: touching.end }, to: range };
+  return { kind: "new", range };
 }
 
 export type LeaveOutcome =
   | { kind: "no_change"; leaveId: string }
   | { kind: "request"; request: LeaveRequest }
+  | { kind: "change"; leaveId: string; to: LeaveRange }
   | { kind: "refused"; reason: string };
 
 /** What an accepted leave item does when the capture is saved. Never approved leave. */
 export function acceptExtractedLeave(extracted: ExtractedLeave, leaves: readonly LeaveRecord[]): LeaveOutcome {
-  const match = matchLeave(extracted, leaves);
-  if (match.mark === "matches_leave") return { kind: "no_change", leaveId: match.leaveId };
-  const end = extracted.end ?? extracted.start;
-  if (!isIsoDate(extracted.start) || !isIsoDate(end)) return { kind: "refused", reason: "leave needs real dates" };
-  if (daysBetween(extracted.start, end) < 0) return { kind: "refused", reason: "leave ends before it starts" };
-  // Copy the fields by name, so nothing else the extraction carried can ride along
-  return { kind: "request", request: { personId: extracted.personId, start: extracted.start, end, state: "requested" } };
+  const fit = fitLeave(extracted, leaves);
+  switch (fit.kind) {
+    case "matches":
+      return { kind: "no_change", leaveId: fit.leaveId };
+    case "change":
+      return { kind: "change", leaveId: fit.leaveId, to: fit.to };
+    case "refused":
+      return fit;
+    case "new":
+      // Copy the fields by name, so nothing else the extraction carried can ride along
+      return { kind: "request", request: { personId: extracted.personId, start: fit.range.start, end: fit.range.end, state: "requested" } };
+  }
+}
+
+/** Applies a saved change (from a capture) to the person's own leave: a request moves, approved leave asks. */
+export function changeLeave(record: LeaveRecord, to: LeaveRange): LeaveRecord {
+  if (record.state === "requested") return { ...record, start: to.start, end: to.end };
+  return { ...record, change: { start: to.start, end: to.end } };
+}
+
+// ---- Deciding leave (D6) ----
+
+export type LeaveEvent = { type: "APPROVE" } | { type: "DECLINE" } | { type: "WITHDRAW" };
+
+/** Who is acting: the person whose leave it is, or an admin of one of their projects. */
+export type LeaveActor = { id: string; isPerson: boolean; isAdmin: boolean };
+
+type Ctx = { record: LeaveRecord; actor: LeaveActor };
+
+const adminOnly = ({ actor }: Ctx) => (actor.isAdmin && !actor.isPerson ? null : "only an admin of one of their projects decides leave");
+const personOnly = ({ actor }: Ctx) => (actor.isPerson ? null : "only the person withdraws their own leave request");
+const changeWaits = ({ record }: Ctx) => (record.change ? null : "no change is waiting");
+
+export const leaveMachine = defineMachine<LeaveState, LeaveEvent, Ctx>({
+  name: "leave",
+  states: LEAVE_STATES,
+  arrows: [
+    { from: ["requested"], on: "APPROVE", to: "approved", guard: adminOnly },
+    { from: ["requested"], on: "DECLINE", to: "declined", guard: adminOnly },
+    { from: ["requested"], on: "WITHDRAW", to: "withdrawn", guard: personOnly },
+    // A change to approved leave: approving moves the dates; declining or withdrawing keeps the old ones
+    ...CHANGEABLE.flatMap((s) => [
+      { from: [s], on: "APPROVE" as const, to: s, guard: (c: Ctx) => adminOnly(c) ?? changeWaits(c) },
+      { from: [s], on: "DECLINE" as const, to: s, guard: (c: Ctx) => adminOnly(c) ?? changeWaits(c) },
+      { from: [s], on: "WITHDRAW" as const, to: s, guard: (c: Ctx) => personOnly(c) ?? changeWaits(c) },
+    ]),
+  ],
+});
+
+export function applyLeaveEvent(record: LeaveRecord, event: LeaveEvent, actor: LeaveActor): { outcome: Outcome<LeaveState>; record: LeaveRecord } {
+  const outcome = transition(leaveMachine, record.state, event, { record, actor });
+  if (!outcome.ok) return { outcome, record };
+  const next: LeaveRecord = { ...record, state: outcome.to };
+  if (record.state !== "requested" && record.change) {
+    if (event.type === "APPROVE") Object.assign(next, record.change);
+    next.change = null;
+  }
+  return { outcome, record: next };
+}
+
+/** D4, D6: the admins of the projects the person is in; any of them may decide the person's leave. */
+export function leaveAdmins(personId: string, world: World): string[] {
+  const projects = world.projects.filter((p) => isMember(personId, p.id, world.memberships));
+  return [...new Set(projects.map((p) => p.adminId).filter((id): id is string => !!id && id !== personId))].sort();
+}
+
+/**
+ * D6: who is shown what a person's absence touches, per project: its PMs and Leads, and its admin.
+ * Each sees only their own project's part.
+ */
+export function leaveImpactOwners(personId: string, world: World): { ownerId: string; projectId: string }[] {
+  const out: { ownerId: string; projectId: string }[] = [];
+  for (const p of world.projects.filter((x) => isMember(personId, x.id, world.memberships))) {
+    const leads = world.memberships.filter((m) => m.projectId === p.id && m.state === "member" && (m.role === "pm" || m.role === "lead")).map((m) => m.personId);
+    for (const ownerId of new Set([...leads, ...(p.adminId ? [p.adminId] : [])])) if (ownerId !== personId) out.push({ ownerId, projectId: p.id });
+  }
+  return out.sort((a, b) => a.projectId.localeCompare(b.projectId) || a.ownerId.localeCompare(b.ownerId));
 }
 
 /** The leave a lead sees: dates and state only, whatever the stored row holds besides. */
 export function leaveSeenByLead(row: LeaveRecord): LeaveRecord {
-  return { id: row.id, personId: row.personId, start: row.start, end: row.end, state: row.state };
+  return { id: row.id, personId: row.personId, start: row.start, end: row.end, state: row.state, ...(row.change ? { change: { start: row.change.start, end: row.change.end } } : {}) };
 }

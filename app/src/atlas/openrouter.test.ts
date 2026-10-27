@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { KEMAR_CONTEXT, KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
 import { AtlasReadFailed } from "./extractor";
 import { createFixtureExtractor } from "./fixture";
-import { atlasFromEnv } from "./index";
+import { atlasFromEnv, withFallback } from "./index";
 import { createOpenRouter, DEFAULT_MODEL, OPENROUTER_URL, parseItems } from "./openrouter";
 import { proposeItemsTool, userMessage } from "./prompt";
 
@@ -178,8 +178,21 @@ describe("which Atlas runs", () => {
     expect((await failure(createFixtureExtractor().extract({ ...KEMAR_CONTEXT, text: "hello" }))).why).toBe("model_error");
   });
 
-  it("OpenRouter with a key, on the default model unless one is named", () => {
-    expect(atlasFromEnv({ OPENROUTER_API_KEY: KEY } as unknown as NodeJS.ProcessEnv).extractor.name).toBe("openrouter:openai/gpt-6.1-sol");
-    expect(atlasFromEnv({ OPENROUTER_API_KEY: KEY, OPENROUTER_MODEL: "anthropic/claude-sonnet-5.5" } as unknown as NodeJS.ProcessEnv).extractor.name).toBe("openrouter:anthropic/claude-sonnet-5.5");
+  it("D21 OpenRouter with a key: Sol reads, Haiku takes the last try and words reasons; each can be named", () => {
+    const atlas = atlasFromEnv({ OPENROUTER_API_KEY: KEY } as unknown as NodeJS.ProcessEnv);
+    expect(atlas.extractor.name).toBe("openrouter:openai/gpt-6.1-sol, then openrouter:anthropic/claude-haiku-5.5");
+    expect(atlas.drafter?.name).toBe("openrouter:anthropic/claude-haiku-5.5");
+    const named = atlasFromEnv({ OPENROUTER_API_KEY: KEY, OPENROUTER_MODEL: "anthropic/claude-sonnet-5.5", OPENROUTER_FALLBACK_MODEL: "openai/gpt-6-sol", OPENROUTER_DRAFT_MODEL: "openai/gpt-6.1-sol" } as unknown as NodeJS.ProcessEnv);
+    expect(named.extractor.name).toBe("openrouter:anthropic/claude-sonnet-5.5, then openrouter:openai/gpt-6-sol");
+    expect(named.drafter?.name).toBe("openrouter:openai/gpt-6.1-sol");
+  });
+
+  it("D21 the last try goes to the fallback, every earlier one to the primary", async () => {
+    const asked: string[] = [];
+    const fake = (name: string) => ({ name, extract: async () => (asked.push(name), { proposals: [], malformed: [], model: name, usage: null }) });
+    const atlas = withFallback(fake("sol"), fake("haiku"), 3);
+    for (const attempt of [1, 2, 3]) await atlas.extract(KEMAR_CONTEXT, { attempt });
+    await atlas.extract(KEMAR_CONTEXT);
+    expect(asked).toEqual(["sol", "sol", "haiku", "sol"]);
   });
 });

@@ -56,7 +56,7 @@ describe("the 20 Oct snapshot (phase 2 done when)", () => {
 
   it("Kemar's note waits for review as 11 items: 9 updates for 2 projects, 4 need his OK", async () => {
     const [capture] = await db.select().from(t.captures);
-    expect(capture).toMatchObject({ authorId: "kemar", state: "proposed", proposals: 11, channel: "whatsapp", kind: "voice" });
+    expect(capture).toMatchObject({ authorId: "kemar", state: "proposed", proposals: 11, channel: "atlas", kind: "voice" });
     const items = await db.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id));
     expect(items).toHaveLength(11);
     const changes = items.filter((i) => i.draft.mark !== "no_change" && i.draft.mark !== "matches_leave");
@@ -156,6 +156,6 @@ describe("the domain fixture agrees with the seed", () => {
 
   it("Kemar's approved leave", async () => {
     const rows = await db.select().from(t.leave).where(eq(t.leave.personId, "kemar"));
-    expect(rows.map((l) => ({ id: l.id, start: l.startDate, end: l.endDate }))).toEqual(KEMAR_CONTEXT.leave.approved);
+    expect(rows.map((l) => ({ id: l.id, start: l.startDate, end: l.endDate, state: l.state, change: null }))).toEqual(KEMAR_CONTEXT.leave.existing);
   });
 });

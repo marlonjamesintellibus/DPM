@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { Icon, type IconName } from "./icon";
 
-export type NavItem = { label: string; href: string; icon: IconName; count?: number };
+export type NavItem = {
+  label: string;
+  href: string;
+  icon: IconName;
+  count?: number;
+};
 export type ClientItem = { label: string; href: string; count: number };
 export type Viewer = { name: string; title: string; initials: string };
 
@@ -15,7 +20,14 @@ export type SidebarProps = {
 };
 
 // D/Sidebar (Figma 41:2607). Sits directly on the canvas, no border.
-export function Sidebar({ workspace, nav, clients, internal, viewer, activeHref }: SidebarProps) {
+export function Sidebar({
+  workspace,
+  nav,
+  clients,
+  internal,
+  viewer,
+  activeHref,
+}: SidebarProps) {
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col gap-5 px-3 pt-3 pb-4">
       <button
@@ -42,29 +54,44 @@ export function Sidebar({ workspace, nav, clients, internal, viewer, activeHref 
 
       <nav aria-label="Main" className="flex w-full flex-col gap-px">
         {nav.map((item) => (
-          <NavLink key={item.href} item={item} active={item.href === activeHref} />
+          <NavLink
+            key={item.href}
+            item={item}
+            active={item.href === activeHref}
+          />
         ))}
       </nav>
 
-      <Section title="Clients">
-        {clients.map((c) => (
-          <Link
-            key={c.href}
-            href={c.href}
-            className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 hover:bg-hover"
-          >
-            <span className="size-2 shrink-0 rounded-[2px] bg-neutral" aria-hidden />
-            <span className="flex-1 type-body text-fg-2">{c.label}</span>
-            <span className="type-caption text-fg-3">{c.count}</span>
-          </Link>
-        ))}
-      </Section>
+      {clients.length > 0 && (
+        <Section title="Clients">
+          {clients.map((c) => (
+            <Link
+              key={c.href}
+              href={c.href}
+              className="flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 hover:bg-hover"
+            >
+              <span
+                className="size-2 shrink-0 rounded-[2px] bg-neutral"
+                aria-hidden
+              />
+              <span className="flex-1 type-body text-fg-2">{c.label}</span>
+              <span className="type-caption text-fg-3">{c.count}</span>
+            </Link>
+          ))}
+        </Section>
+      )}
 
-      <Section title="Internal">
-        {internal.map((item) => (
-          <NavLink key={item.href} item={item} active={item.href === activeHref} />
-        ))}
-      </Section>
+      {internal.length > 0 && (
+        <Section title="Internal">
+          {internal.map((item) => (
+            <NavLink
+              key={item.href}
+              item={item}
+              active={item.href === activeHref}
+            />
+          ))}
+        </Section>
+      )}
 
       <div className="flex-1" />
 
@@ -74,9 +101,15 @@ export function Sidebar({ workspace, nav, clients, internal, viewer, activeHref 
         </span>
         <span className="flex min-w-0 flex-1 flex-col whitespace-nowrap">
           <span className="type-label text-fg-1">{viewer.name}</span>
-          <span className="type-micro font-normal text-fg-3">{viewer.title}</span>
+          <span className="type-micro font-normal text-fg-3">
+            {viewer.title}
+          </span>
         </span>
-        <button type="button" aria-label="Account menu" className="rounded-sm hover:bg-hover">
+        <button
+          type="button"
+          aria-label="Account menu"
+          className="rounded-sm hover:bg-hover"
+        >
           <Icon name="more" />
         </button>
       </div>
@@ -92,13 +125,25 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
       className={`flex w-full items-center gap-2.5 rounded-sm px-2 py-1.5 ${active ? "bg-hover" : "hover:bg-hover"}`}
     >
       <Icon name={item.icon} />
-      <span className={`flex-1 type-body-medium ${active ? "text-fg-1" : "text-fg-2"}`}>{item.label}</span>
-      {item.count !== undefined && <span className="type-caption text-fg-3">{item.count}</span>}
+      <span
+        className={`flex-1 type-body-medium ${active ? "text-fg-1" : "text-fg-2"}`}
+      >
+        {item.label}
+      </span>
+      {item.count !== undefined && (
+        <span className="type-caption text-fg-3">{item.count}</span>
+      )}
     </Link>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex w-full flex-col gap-px">
       <div className="px-2 py-1 type-micro text-fg-3">{title}</div>

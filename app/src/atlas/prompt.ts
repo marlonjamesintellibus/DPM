@@ -8,7 +8,7 @@ import { dateInZone, weekday } from "../domain/dates";
 import { BRAID_KINDS } from "../domain/rights";
 import { CONFIDENCES } from "../domain/shared";
 
-export const PROMPT_VERSION = "read-2";
+export const PROMPT_VERSION = "read-3";
 
 export const SYSTEM_PROMPT = `You are Atlas, the assistant inside Intellibus DPM, a project manager for small delivery teams.
 A team member sent a daily update. Your only job is to propose the changes it describes, by calling the propose_items tool once.
@@ -29,6 +29,7 @@ What you may propose (kind)
   - A slip the author expects is a risk. Something agreed is a decision, and it is only proposed: a decision is never approved by the update.
   - If it relates to an open entry of another kind, put that entry's id in matchEntryId.
 - "braid_same": the update reports the same thing as an open BRAID entry already listed. Put that entry's id in matchEntryId and its kind in braidKind.
+- "braid_resolve": the update says a listed blocker or issue is cleared ("Kyle sent the feed"). Put that entry's id in matchEntryId. If the work it held is moving again, also propose the work item's state change. DPM decides whether the author may resolve it or only tells those who may.
 - One sentence can give several items (for example a forecast update and a risk). Give each change once.
 - Propose every change the update states, even when the record already shows that value or the leave is already approved. DPM marks those as "no change" or "matches your leave" for the author.
 
@@ -72,7 +73,8 @@ export function userMessage(ctx: CheckContext): string {
     author: ctx.author,
     sent: sentOn(ctx.messageAt),
     leaveTargetId: ctx.leave.targetId,
-    approvedLeave: ctx.leave.approved,
+    // Requested and approved leave: saying the same dates again is no change
+    leave: ctx.leave.existing.map((l) => ({ start: l.start, end: l.end, state: l.state })),
     projects,
   };
   return `The author's projects and records, as JSON:
@@ -87,7 +89,7 @@ ${ctx.text}
 const nullableString = z.string().nullable().optional();
 
 export const proposalSchema = z.object({
-  kind: z.enum(["update", "braid_new", "braid_same"]),
+  kind: z.enum(["update", "braid_new", "braid_same", "braid_resolve"]),
   projectId: z.string().nullable(),
   routingReason: z.object({
     basis: z.enum(["target", "reference", "owned_record", "tied_person", "same_quote", "personal", "ambiguous"]),

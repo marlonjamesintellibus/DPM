@@ -21,6 +21,10 @@ export const config = {
 
   // S7, S8
   captureMaxTries: 3,
+  // D19: a transcription or read with no answer for this long goes back to retry
+  staleReadMinutes: 5,
+  // D3: a save that fails on a database error is tried this many times, waiting 1s, then 2s
+  saveMaxTries: 3,
   maxProposalsPerCapture: 20,
 
   // S11, S12: one approver for a decision; a proposer who holds the right may approve their own

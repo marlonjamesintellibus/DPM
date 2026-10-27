@@ -64,7 +64,7 @@ describe("use case 1 story, step 2: Kemar's note becomes the 11 items in the tab
       [2, "forager", "update", "wi-145 state: in_progress -> done", "#145", "high", "pre_accepted"],
       [3, "forager", "update", "wi-151 state: in_progress -> blocked", "Kyle is the contact on #151", "high", "pre_accepted"],
       [4, "forager", "update", "ms-trend forecast: 2026-10-23 -> 2026-10-24", "Kemar owns it", "medium", "needs_ok"],
-      [5, "You", "update", "leave-kemar dates: null -> 2026-10-26/2026-10-30", "Personal", "high", "matches_leave"],
+      [5, "You", "update", "leave-kemar dates: 2026-10-26/2026-10-30 -> 2026-10-26/2026-10-30", "Personal", "high", "matches_leave"],
       [6, "forager", "update", "ho-runbook state: not_done -> handed_over", "His handover", "low", "needs_ok"],
       [7, "forager", "braid_same", 'blocker "Store sales feed access" same_as br-feed-blocker', "Same subject as #151", "high", "pre_accepted"],
       [8, "forager", "braid_new", 'risk "Trend model may slip to 24 Oct" new null', "Same quote as #4", "medium", "needs_ok"],
@@ -192,7 +192,8 @@ describe("check 5: dates resolve against message time", () => {
   it("E13: a weekday and date that disagree resolve with Medium and Needs your OK", () => {
     const ctx = ctxWith("I'm out from Monday the 27th.");
     const { item } = one(update({ projectId: null, targetId: "leave-kemar", field: "dates", newValue: "2026-10-27/..", quote: "I'm out from Monday the 27th" }), ctx);
-    expect(item).toMatchObject({ confidence: "medium", mark: "needs_ok", target: { newValue: "2026-10-27/.." } });
+    // D6: the 27th falls inside his approved leave, so it is a change to it, which he confirms
+    expect(item).toMatchObject({ confidence: "medium", mark: "needs_ok", target: { newValue: "2026-10-27/2026-10-30" }, leave: { fit: "change", leaveId: "lv-kemar-oct" } });
   });
 
   it("the server's date wins over the model's", () => {
@@ -239,6 +240,20 @@ describe("check 8: mark", () => {
     const ctx = ctxWith("I'm out from the 2nd of November.");
     const { item } = one(update({ projectId: null, targetId: "leave-kemar", field: "dates", quote: "I'm out from the 2nd of November" }), ctx);
     expect(item).toMatchObject({ scope: "personal", mark: "needs_ok", target: { newValue: "2026-11-02/.." } });
+  });
+});
+
+describe("D20: handing a step over always needs the author's OK", () => {
+  it("even at High confidence, the runbook handed to Jodian waits for Kemar", () => {
+    const ctx = ctxWith("Handed the runbook over to Jodian this morning.");
+    const { item } = one(update({ targetId: "ho-runbook", field: "state", newValue: "handed_over", quote: "Handed the runbook over to Jodian", confidence: "high" }), ctx);
+    expect(item).toMatchObject({ confidence: "high", mark: "needs_ok" });
+  });
+
+  it("a step started, not handed over, follows confidence as usual", () => {
+    const ctx = ctxWith("Started the runbook handover today.");
+    const { item } = one(update({ targetId: "ho-runbook", field: "state", newValue: "in_progress", quote: "Started the runbook handover", confidence: "high" }), ctx);
+    expect(item?.mark).toBe("pre_accepted");
   });
 });
 

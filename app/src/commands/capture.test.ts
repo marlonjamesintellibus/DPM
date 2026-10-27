@@ -6,6 +6,8 @@ import * as t from "../db/schema";
 import { KEMAR_NOTE, KEMAR_NOTE_AT, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { applyToLog } from "../domain/machines/braid-entry";
+import { loadCheckContext } from "../queries/check-context";
+import { getReview } from "../queries/review";
 import { AT_910, at, seededDb } from "../test/seeded-db";
 import {
   createCapture,
@@ -69,6 +71,25 @@ async function projectsSnapshot() {
     db.select().from(t.leave),
   ]);
   return { workItems, milestones, steps, handovers, entries, sources, leave };
+}
+
+/**
+ * The database as a flaky network sees it: the first `fails` transactions throw before running
+ * ("error"), or run and commit but lose their reply ("lost_reply").
+ */
+function flakyDb(fails: number, how: "error" | "lost_reply" = "error"): Db {
+  let n = 0;
+  return new Proxy(db, {
+    get(target, prop, receiver) {
+      if (prop !== "transaction") return Reflect.get(target, prop, receiver);
+      return async (fn: Parameters<Db["transaction"]>[0]) => {
+        if (n++ >= fails) return target.transaction(fn);
+        if (how === "error") throw new Error("connection reset");
+        await target.transaction(fn);
+        throw new Error("connection reset after commit");
+      };
+    },
+  });
 }
 
 async function refusal(p: Promise<unknown>): Promise<CommandRefused> {
@@ -149,10 +170,10 @@ describe("the story's save (step 4 and 5)", () => {
 
 describe("capture and proposals (5.1)", () => {
   it("E1 the same note arriving twice is dropped and changes nothing", async () => {
-    const again = await createCapture(kemar(), { channel: "whatsapp", kind: "voice", text: KEMAR_NOTE, messageAt: KEMAR_NOTE_AT, receivedAt: at(1), transcriptConfidence: "high" });
+    const again = await createCapture(kemar(), { channel: "atlas", messageId: "atl-msg-0858", kind: "voice", text: KEMAR_NOTE, messageAt: KEMAR_NOTE_AT, receivedAt: at(1), transcriptConfidence: "high" });
     expect(again).toEqual({ captureId: CAP, duplicate: true });
-    const first = await createCapture(kemar(), { channel: "whatsapp", kind: "text", text: "hello", messageAt: at(2), receivedAt: at(2), messageId: "wamid-7" });
-    const retry = await createCapture(kemar(), { channel: "whatsapp", kind: "text", text: "hello", messageAt: at(2), receivedAt: at(3), messageId: "wamid-7" });
+    const first = await createCapture(kemar(), { channel: "atlas", kind: "text", text: "hello", messageAt: at(2), receivedAt: at(2), messageId: "atl-7" });
+    const retry = await createCapture(kemar(), { channel: "atlas", kind: "text", text: "hello", messageAt: at(2), receivedAt: at(3), messageId: "atl-7" });
     expect(first.duplicate).toBe(false);
     expect(retry).toEqual({ captureId: first.captureId, duplicate: true });
     expect(await db.select().from(t.captures)).toHaveLength(2);
@@ -167,7 +188,7 @@ describe("capture and proposals (5.1)", () => {
   });
 
   it("proposes Kemar's note as the seed has it: 11 items, 4 need his OK, dropped proposals audited", async () => {
-    // Typed again in the app: a message id keeps it apart from the WhatsApp copy (E2, not E1)
+    // Typed again in the app: a message id keeps it apart from the Atlas copy (E2, not E1)
     const { captureId } = await createCapture(kemar(), { channel: "app", kind: "text", text: KEMAR_NOTE, messageAt: KEMAR_NOTE_AT, receivedAt: at(0), messageId: "app-1" });
     const bad: RawProposal = { ...KEMAR_PROPOSALS[1], targetId: "wi-999" }; // E10: an invented target
     const r = await proposeItems(as("atlas"), captureId, [...KEMAR_PROPOSALS, bad]);
@@ -182,12 +203,12 @@ describe("capture and proposals (5.1)", () => {
 
   it("E5 a poor voice transcript lowers every item to at most Medium: nothing starts ready", async () => {
     const { captureId } = await createCapture(kemar(), {
-      channel: "whatsapp",
+      channel: "atlas",
       kind: "voice",
       text: KEMAR_NOTE,
       messageAt: KEMAR_NOTE_AT,
       receivedAt: at(0),
-      messageId: "wamid-patois",
+      messageId: "atl-patois",
       transcriptConfidence: "low",
     });
     const r = await proposeItems(as("atlas"), captureId, KEMAR_PROPOSALS);
@@ -290,16 +311,64 @@ describe("review and save (5.2)", () => {
     expect((await workItem("wi-151")).state).toBe("blocked");
   });
 
-  it("E27 a record machine refuses (the milestone changed owner): the whole save is refused and nothing is written", async () => {
+  it("E27, D12 a record machine refuses (the milestone changed owner): the card says why, nothing is written, and it is audited", async () => {
     await review();
     await db.update(t.milestones).set({ ownerId: "alicia" }).where(eq(t.milestones.id, "ms-trend"));
     const before = await projectsSnapshot();
-    const items = (await loadItems(db, CAP)).items;
-    const r = await refusal(saveCapture(kemar(), CAP));
-    expect(r.reason).toMatch(/^Trend model: only the milestone owner changes its forecast/);
+    const r = await saveCapture(kemar(), CAP);
+    expect(r).toMatchObject({ outcome: "conflict", refused: [{ itemId: item(4), reason: expect.stringMatching(/^only the milestone owner changes its forecast.*Edit it or reject it$/) }] });
     expect(await projectsSnapshot()).toEqual(before);
     expect(await captureState()).toBe("reviewing");
-    expect((await loadItems(db, CAP)).items).toEqual(items);
+    const card = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    const four = card.groups.flatMap((g) => g.items).find((i) => i.ordinal === 4)!;
+    expect(four).toMatchObject({ state: "conflict", markLabel: "Can't apply", conflict: { refused: true } });
+    const [logged] = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.extractionId, item(4)), eq(t.auditEntries.action, "SAVE_REFUSED")));
+    expect(logged.actorId).toBe("kemar");
+
+    // Rejecting the refused card lets the rest save
+    await decideExtraction(kemar(), item(4), { type: "reject" });
+    expect((await saveCapture(kemar(), CAP)).outcome).toBe("saved");
+    expect((await workItem("wi-145")).state).toBe("done");
+  });
+
+  it("D3 a database error is retried with the same items, after 1s, and the save goes through", async () => {
+    await review();
+    const slept: number[] = [];
+    const r = await saveCapture({ ...kemar(), db: flakyDb(1) }, CAP, { sleep: async (ms) => void slept.push(ms) });
+    expect(r.outcome).toBe("saved");
+    expect(slept).toEqual([1000]);
+    expect((await workItem("wi-145")).state).toBe("done");
+  });
+
+  it("D3 a save whose reply was lost is not run again: the retry finds it saved", async () => {
+    await review();
+    const r = await saveCapture({ ...kemar(), db: flakyDb(1, "lost_reply") }, CAP, { sleep: async () => {} });
+    expect(r).toMatchObject({ outcome: "saved", retried: true });
+    expect(r.outcome === "saved" && r.applied).toHaveLength(9);
+    expect((await workItem("wi-145")).version).toBe(2); // moved once, not twice
+    const applied = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.captureId, CAP), eq(t.auditEntries.action, "APPLIED")));
+    expect(applied).toHaveLength(9);
+  });
+
+  it("D3 after 3 failed tries the author is told nothing changed, and Save can be pressed again", async () => {
+    await review();
+    const before = await projectsSnapshot();
+    const slept: number[] = [];
+    const r = await saveCapture({ ...kemar(), db: flakyDb(3) }, CAP, { sleep: async (ms) => void slept.push(ms) });
+    expect(r).toEqual({ outcome: "failed", message: "This didn't save, and nothing was changed. Try Save again.", tries: 3 });
+    expect(slept).toEqual([1000, 2000]);
+    expect(await projectsSnapshot()).toEqual(before);
+    expect(await captureState()).toBe("reviewing");
+    const [logged] = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.subjectId, CAP), eq(t.auditEntries.action, "SAVE_ERROR")));
+    expect(logged.detail).toMatchObject({ message: "connection reset", tries: 3 });
+    expect((await saveCapture(kemar(), CAP)).outcome).toBe("saved");
+  });
+
+  it("D12 a refused save is written to the audit after it rolls back (rule 2)", async () => {
+    await openReview(kemar(), CAP);
+    await refusal(saveCapture(kemar(), CAP));
+    const [logged] = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.subjectId, CAP), eq(t.auditEntries.action, "SAVE_REFUSED")));
+    expect(logged).toMatchObject({ actorId: "kemar", detail: { reason: "4 need your OK before this is saved", attempt: 1 } });
   });
 
   it("E77 Kemar leaves Store Insights before saving: items 10 and 11 are withdrawn, the rest saves", async () => {
@@ -337,13 +406,29 @@ describe("review and save (5.2)", () => {
     expect(blocker.sources.map((s) => s.personId)).toEqual(["alicia", "kemar"]);
   });
 
-  it("E26 a target cancelled before save withdraws its item; the rest saves", async () => {
+  it("E26, D2 a target cancelled before save withdraws its item, never a conflict; the rest saves", async () => {
     await review();
     await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-145"));
     const r = await saveCapture(kemar(), CAP);
     if (r.outcome !== "saved") throw new Error("expected a save");
     expect(r.withdrawn).toEqual([item(2)]);
     expect((await workItem("wi-145")).state).toBe("cancelled");
+    const card = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(card.groups.flatMap((g) => g.items).find((i) => i.ordinal === 2)).toMatchObject({ state: "withdrawn", withdrawnNote: "This issue was cancelled" });
+  });
+
+  it("D2 cancelled work is never offered to Atlas", async () => {
+    await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-160"));
+    const ctx = await loadCheckContext(db, { authorId: "kemar", text: "", messageAt: at(0), transcriptConfidence: null });
+    const ids = ctx.projects.flatMap((p) => p.records.map((r) => r.id));
+    expect(ids).toContain("wi-145");
+    expect(ids).not.toContain("wi-160");
+  });
+
+  it("D13 only new BRAID entries and items with no target offer Move; a report on an entry stays with its log", async () => {
+    const r = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    const canMove = Object.fromEntries(r.groups.flatMap((g) => g.items).map((i) => [i.ordinal, i.canMove]));
+    expect(canMove).toEqual({ 1: false, 2: false, 3: false, 4: false, 5: false, 6: false, 7: false, 8: true, 9: false, 10: false, 11: true });
   });
 
   it("Discard withdraws every open item and changes no project", async () => {
@@ -407,7 +492,7 @@ describe("routing (M14)", () => {
   it("E74 moving a record update where its target does not exist is refused; a new BRAID item moves", async () => {
     await openReview(kemar(), CAP);
     const moved = await refusal(routeExtraction(kemar(), item(2), { projectId: "insights" }));
-    expect(moved.reason).toBe("that record is in Forager 2.0; pick a record in Store Insights or report it as a BRAID item instead");
+    expect(moved.reason).toBe("#145 is in Forager 2.0. To log this somewhere else, add it as a BRAID item in that project");
     await refusal(routeExtraction(kemar(), item(7), { projectId: "insights" }));
     await refusal(routeExtraction(kemar(), item(5), { projectId: "forager" })); // personal items stay with him
     expect((await loadItems(db, CAP)).items.find((i) => i.id === item(2))!.draft.projectId).toBe("forager");
@@ -422,13 +507,13 @@ describe("routing (M14)", () => {
 describe("E28 timers (S4)", () => {
   it("reminds after 4 working hours, once, then expires after 7 days with nothing applied", async () => {
     const before = await projectsSnapshot();
-    expect(await runCaptureTimers({ db, now: at(60) })).toEqual({ reminded: [], expired: [] });
-    expect(await runCaptureTimers({ db, now: at(240) })).toEqual({ reminded: [CAP], expired: [] });
+    expect(await runCaptureTimers({ db, now: at(60) })).toEqual({ reminded: [], expired: [], stale: [] });
+    expect(await runCaptureTimers({ db, now: at(240) })).toEqual({ reminded: [CAP], expired: [], stale: [] });
     expect(await inbox("kemar")).toEqual({ [reviewCause(CAP)]: "open" });
-    expect(await runCaptureTimers({ db, now: at(300) })).toEqual({ reminded: [], expired: [] });
-    expect(await runCaptureTimers({ db, now: at(6 * 24 * 60) })).toEqual({ reminded: [], expired: [] });
+    expect(await runCaptureTimers({ db, now: at(300) })).toEqual({ reminded: [], expired: [], stale: [] });
+    expect(await runCaptureTimers({ db, now: at(6 * 24 * 60) })).toEqual({ reminded: [], expired: [], stale: [] });
 
-    expect(await runCaptureTimers({ db, now: at(7 * 24 * 60) })).toEqual({ reminded: [], expired: [CAP] });
+    expect(await runCaptureTimers({ db, now: at(7 * 24 * 60) })).toEqual({ reminded: [], expired: [CAP], stale: [] });
     expect(await captureState()).toBe("expired");
     expect(await itemStates()).toMatchObject({ 1: "no_change", 2: "withdrawn", 4: "withdrawn", 5: "no_change", 11: "withdrawn" });
     expect(await inbox("kemar")).toEqual({ [reviewCause(CAP)]: "auto_closed" });
@@ -440,7 +525,8 @@ describe("E28 timers (S4)", () => {
     await runCaptureTimers({ db, now: at(240) });
     await review();
     await saveCapture(kemar(), CAP);
-    expect(await inbox("kemar")).toEqual({ [reviewCause(CAP)]: "acted" });
+    // M5 (D18): #145 and #208 went Done by voice with nothing linked, so Kemar is asked to link them
+    expect(await inbox("kemar")).toEqual({ [reviewCause(CAP)]: "acted", "done_no_change:wi-145": "open", "done_no_change:wi-208": "open" });
   });
 
   it("counts only hours on working days", () => {

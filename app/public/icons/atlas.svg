@@ -1,0 +1,11 @@
+<svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="12" height="12" viewBox="0 0 12 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="icon/atlas" clip-path="url(#clip0_0_46)">
+<path id="Vector" d="M11 6C11 8.76142 8.76142 11 6 11C3.23858 11 1 8.76142 1 6C1 3.23858 3.23858 1 6 1C8.76142 1 11 3.23858 11 6Z" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" stroke="#71717A"/>
+<path id="Vector_2" d="M1 6H4.09017M4.09017 6H7.90983M4.09017 6C4.09017 4.15517 4.77011 2.37506 6 1C7.22989 2.37506 7.90983 4.15517 7.90983 6M4.09017 6C4.09017 7.84483 4.77011 9.62494 6 11C7.22989 9.62494 7.90983 7.84483 7.90983 6M7.90983 6H11" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" stroke="#71717A"/>
+</g>
+<defs>
+<clipPath id="clip0_0_46">
+<rect width="12" height="12" fill="white"/>
+</clipPath>
+</defs>
+</svg>

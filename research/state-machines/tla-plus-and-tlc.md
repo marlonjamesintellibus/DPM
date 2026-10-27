@@ -44,7 +44,7 @@ The rules in DPM that a quick design or a quick build is most likely to break (k
 | A9.2 Medium and Low confidence never auto-accept | Safety invariant | A new shortcut (for example "auto-save after 5 minutes") that applies an unreviewed update |
 | C4 Inbox items auto-close | Liveness | An inbox item that stays open after its cause is gone |
 | C10 First reply target | Liveness with fairness | A request that waits forever without ever being flagged |
-| C14.5 Same event from 2 channels | Safety invariant | The same update applied twice because it arrived on WhatsApp and in the app |
+| C14.5 Same event from 2 channels | Safety invariant | The same update applied twice because it arrived in Atlas and in the app |
 
 The point is not proof for its own sake. Many of the **OPEN** items in Part F are choices between behaviours. TLC lets us write each option as a setting, run it, and see a concrete step by step trace of what goes wrong with each one before anything is built.
 
@@ -87,7 +87,7 @@ The 10 lectures, and the DPM spec each one prepares you for:
 | 6 Two-Phase Commit | Records, more TLC | Spec 2: SAVE is a commit that needs every update decided first |
 | 7 Paxos Commit | A fault-tolerant protocol, sets | C14.5 and C14.6: the same event from 2 channels, GitHub and DPM disagreeing |
 | 8 Implementation | Temporal formulas, one spec implementing another | C14.2: is roll-up one composed machine or independent machines plus a reducer? |
-| 9 Alternating Bit Protocol | Liveness and fairness, lossy channels | Specs 2, 3 and 4 liveness; WhatsApp messages that arrive late, twice or not at all |
+| 9 Alternating Bit Protocol | Liveness and fairness, lossy channels | Specs 2, 3 and 4 liveness; Atlas messages that arrive late, twice or not at all |
 | 10 Refinement | Refinement mappings | Spec 5 and C14.10, the minimal set of machines |
 
 ## 4. How we model DPM in TLA+ (conventions)
@@ -332,7 +332,7 @@ That trace raises 2 decisions, not 1:
 
 Covers: the capture lifecycle (C1), per update review (accepted, edited, rejected), "Medium or Low cannot auto-accept", "SAVE only when no update needs your OK", Atlas asks at most 1 question (A3 step 3), and the same message arriving on 2 channels (C14.5).
 
-The model is 1 message that may arrive on each channel (for example WhatsApp and the app) and that Atlas extracts into a few updates. Confidence is chosen in `Init`, so TLC tries every mix of High, Medium and Low.
+The model is 1 message that may arrive on each channel (for example Atlas and the app) and that Atlas extracts into a few updates. Confidence is chosen in `Init`, so TLC tries every mix of High, Medium and Low.
 
 `Capture.tla`
 
@@ -345,7 +345,7 @@ The model is 1 message that may arrive on each channel (for example WhatsApp and
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
-CONSTANTS Channels,  \* the same message arriving on, for example, {whatsapp, app}
+CONSTANTS Channels,  \* the same message arriving on, for example, {atlas, app}
           Updates,   \* the updates Atlas extracts, for example {u1, u2}
           Dedup      \* C14.5: is applying an update idempotent across channels?
 
@@ -481,7 +481,7 @@ AtlasReachesPerson ==
 ```
 SPECIFICATION Spec
 CONSTANTS
-    Channels = {whatsapp, app}
+    Channels = {atlas, app}
     Updates = {u1, u2}
     Dedup = FALSE
 INVARIANTS
@@ -953,6 +953,16 @@ Finding: if the cause clears and comes back before the rule runs in between, the
 Stories on the map: "Someone changed it first" (CaptureSave; planted bug: Save writes without checking what the update saw, caught at step 4) and "Alicia's reason item" (InboxItem; planted bug: a closed item is reopened, caught at step 4).
 
 ---
+
+## 9b. Specs 11 to 13: the capture job, leave, BRAID follow ups (decisions D1 to D22, JavaScript only)
+
+Written 26 Oct to check the decisions in `use-cases/01-update-to-plan-machines.md`, section 11, before any code. Each is a JavaScript model in `js/models`; there is no TLA+ text yet.
+
+| Spec | Model | What it holds | Planted bugs it catches |
+|---|---|---|---|
+| 11 CaptureJob | `captureJob.mjs` | Transcribe and read retries, the 5 minute timer, attempt numbers on reads, save retries with a lost reply. ReadEnds and SaveEnds (nothing stuck), ItemsStoredOnce, StoredFromCurrentAttempt, AppliedAtMostOnce, GivingUpIsTold, VoiceFailureAsksForNewNote | No timer on transcribing (the check found this gap in the first draft), no timer at all, "try again" for a voice note, a late answer stored, a retry that applies again, a silent give up |
+| 12 Leave | `leave.mjs` | Matching any live leave, changes to leave, impact items per lead. NoOverlappingLeave, ApprovedDatesKept, LeadsSeeImpact, ImpactOnlyOwnProject, ImpactsCloseWhenDecided, NeverApprovedByCapture | Approved leave only (the old default), no impact, impact across projects, impact left open, a capture that approves |
+| 13 BraidFollowUps | `braidFollowUps.mjs` | Resolving from a message (S13, E93), reports on finished entries, merging into a resolved entry, withdrawing one's own report. BlockerResolvedByOwnerOrLead, ClosedRiskStaysClosed, ReportsGoToLiveEntry, MergeChoiceRecorded, WithdrawKeepsOthers | Anyone's message resolves, unblocking resolves by itself, a closed risk reopens, reports pile on a realised risk, a silent merge, withdrawing removes others' reports |
 
 ## 10. Running the checks
 

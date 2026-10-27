@@ -42,8 +42,9 @@ export const milestoneMachine = defineMachine<MilestoneState, MilestoneEvent, Ct
   arrows: [
     { from: ["planned"], on: "START", to: "in_progress" },
     { from: ["in_progress", "missed"], on: "FINISH", to: "done" },
+    // D5: a planned milestone whose target passes is missed too, so it reads Off track
     {
-      from: ["in_progress"],
+      from: ["planned", "in_progress"],
       on: "TARGET_PASSED",
       to: "missed",
       // E55: the date is read in the org's time zone, which is config, never the server's

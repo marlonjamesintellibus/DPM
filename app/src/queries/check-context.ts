@@ -1,10 +1,11 @@
 // What the server checks read for one author (CheckContext, server checks section 4). Only projects
 // the author can file into are loaded at all, so nothing about other projects reaches Atlas (check 9).
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, ne, notInArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { loadWorld, orgTagsOf } from "../db/records";
 import * as t from "../db/schema";
 import type { CandidateProject, CandidateRecord, CheckContext, ProjectPerson } from "../domain/atlas-checks/types";
+import { LIVE_LEAVE } from "../domain/machines/leave";
 import { candidateProjects } from "../domain/machines/membership";
 import type { Confidence } from "../domain/shared";
 
@@ -21,7 +22,8 @@ export async function loadCheckContext(
   for (const id of candidateIds) {
     const [project] = await conn.select().from(t.projects).where(eq(t.projects.id, id));
     const [workItems, milestones, handovers, memberships, contacts, braid] = await Promise.all([
-      conn.select().from(t.workItems).where(eq(t.workItems.projectId, id)).orderBy(t.workItems.number),
+      // D2: cancelled work is never offered to Atlas; nothing more can happen to it
+      conn.select().from(t.workItems).where(and(eq(t.workItems.projectId, id), ne(t.workItems.state, "cancelled"))).orderBy(t.workItems.number),
       conn.select().from(t.milestones).where(eq(t.milestones.projectId, id)),
       conn.select().from(t.handovers).where(eq(t.handovers.projectId, id)),
       conn
@@ -87,7 +89,7 @@ export async function loadCheckContext(
     .filter((p) => !p.connected && world.memberships.some((m) => m.projectId === p.id && m.personId === input.authorId && m.state === "member"))
     .map((p) => ({ id: p.id, name: p.name }));
 
-  const approved = await conn.select().from(t.leave).where(eq(t.leave.personId, input.authorId));
+  const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, input.authorId));
   return {
     text: input.text,
     messageAt: input.messageAt,
@@ -97,7 +99,10 @@ export async function loadCheckContext(
     notConnected,
     leave: {
       targetId: `leave-${input.authorId}`,
-      approved: approved.filter((l) => l.state !== "requested").map((l) => ({ id: l.id, start: l.startDate, end: l.endDate })),
+      // D6: every live leave, requested or approved, so saying it again matches instead of asking twice
+      existing: leave
+        .filter((l) => LIVE_LEAVE.includes(l.state))
+        .map((l) => ({ id: l.id, start: l.startDate, end: l.endDate, state: l.state, change: l.changeStart && l.changeEnd ? { start: l.changeStart, end: l.changeEnd } : null })),
     },
   };
 }

@@ -63,7 +63,7 @@ Snapshot: Tuesday 20 Oct 2026, America/Jamaica. All names are placeholders (KB P
 | Data guild | none (a team, not a project) | Member | none | No project to file into |
 | UWI Mona study group | none (personal) | Owner | none | Not authorized; never read |
 
-1. **8:58am.** Kemar sends Atlas a WhatsApp voice note, about 30 seconds: "Finished the TikTok ingest yesterday and the Google Trends connector is done too. Still waiting on Kyle for the store feed, so I think the model slips a day. I'm out from Monday the 26th, and Jodian has the runbook already. On Store Insights, the weekly sales export is fixed, and Andre and I agreed to move the refresh to 6am."
+1. **8:58am.** Kemar sends a voice note in Atlas (the messaging app), about 30 seconds: "Finished the TikTok ingest yesterday and the Google Trends connector is done too. Still waiting on Kyle for the store feed, so I think the model slips a day. I'm out from Monday the 26th, and Jodian has the runbook already. On Store Insights, the weekly sales export is fixed, and Andre and I agreed to move the refresh to 6am."
    - The last sentence is new; it is not in the L16 design.
 2. **Atlas routes and extracts.** Candidates come only from projects in groups Kemar belongs to whose owner has connected them to DPM. Each card says why it went to that project.
 
@@ -164,7 +164,7 @@ Marked ASSUMPTION where the knowledge base does not decide it. Each is one const
 
 - Meetings with several speakers (use case 2)
 - Check-in and check-out as scheduled prompts. This update works the same whenever it arrives; the 9am and end of day prompts come next.
-- Real voice capture, transcription, WhatsApp and the Atlas API (captures are seeded or typed in DPM through the same `createCapture` command; build plan B8)
+- Real voice capture, transcription and the Atlas messaging app API (captures are seeded or typed in DPM through the same `createCapture` command; build plan B8)
 - GitHub integration (records are seeded as if synced)
 - Executive and care team Today screens (L3, L4, L8), Dashboard and Table views
 - Atlas asking one clarifying question (C1 needs_clarification). Routing ambiguity is resolved on the review page instead.

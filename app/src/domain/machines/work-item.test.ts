@@ -34,11 +34,12 @@ describe("work item arrows", () => {
     expect(done.record.blockedNote).toBeNull();
   });
 
-  it("blocking carries a note and its BRAID links; unblocking clears them", () => {
+  it("blocking carries a note and its BRAID links; unblocking clears the note and keeps the links (E93)", () => {
     const blocked = apply(item("in_progress"), { type: "BLOCK", note: " waiting on Kyle (Sprouts IT) ", links: ["dep-1", "blk-1"] });
     expect(blocked.record).toMatchObject({ state: "blocked", blockedNote: "waiting on Kyle (Sprouts IT)", blockedLinks: ["dep-1", "blk-1"] });
     const unblocked = apply(blocked.record, { type: "UNBLOCK" });
-    expect(unblocked.record).toMatchObject({ state: "in_progress", blockedNote: null, blockedLinks: [] });
+    // The links say which blockers held this work, so its owner may resolve them (S13)
+    expect(unblocked.record).toMatchObject({ state: "in_progress", blockedNote: null, blockedLinks: ["dep-1", "blk-1"] });
   });
 
   it("refuses a block with no note", () => {

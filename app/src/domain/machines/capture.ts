@@ -9,6 +9,7 @@ import { applyItemEvent, OPEN_ITEM_STATES, UNDECIDED_STATES, type ExtractedItem,
 export const CAPTURE_STATES = [
   "received",
   "transcribing",
+  "transcribe_wait",
   "reading",
   "retry_wait",
   "failed",
@@ -40,13 +41,17 @@ export type CaptureRecord = {
   reminded: boolean;
   /** E5: a poor transcript caps every item's confidence; null for text. */
   transcriptConfidence: Confidence | null;
+  /** D1: which step gave up, so the author is asked for the right thing (a new voice note, or to try again). */
+  failedStep: "transcribe" | "read" | null;
 };
 
 export type CaptureEvent =
   | { type: "START" }
   | { type: "TRANSCRIBED"; confidence: Confidence }
+  | { type: "TRANSCRIBE_FAILED"; why: "no_transcript" | "timeout" | "error" } // D1
   | { type: "READ_FAILED"; why: "model_error" | "timeout" | "bad_output" } // E18, E19
   | { type: "RETRY" } // the retry timer fired
+  | { type: "STALE" } // D19: no answer for config.staleReadMinutes while transcribing or reading
   | { type: "PROPOSALS_READY"; count: number } // count passed the server checks
   | { type: "OPEN_REVIEW" }
   | { type: "SAVE" }
@@ -64,6 +69,8 @@ export type CaptureContext = {
   isMember?: (projectId: string) => boolean;
   /** Time since the capture started waiting for its author. */
   elapsed?: { workingHours: number; days: number };
+  /** Minutes since the capture last moved, for the stale timer (D19). */
+  idleMinutes?: number;
 };
 
 type Ctx = CaptureContext & { record: CaptureRecord };
@@ -110,14 +117,17 @@ export const captureMachine = defineMachine<CaptureState, CaptureEvent, Ctx>({
     { from: ["received"], on: "START", to: "transcribing", guard: ({ record }) => (record.kind === "voice" ? null : "text needs no transcript") },
     { from: ["received"], on: "START", to: "reading" },
     { from: ["transcribing"], on: "TRANSCRIBED", to: "reading" },
+    // D1: a voice note that cannot be transcribed is tried again, then fails and asks for a new one
+    { from: ["transcribing"], on: "TRANSCRIBE_FAILED", to: "transcribe_wait" },
+    { from: ["transcribe_wait"], on: "RETRY", to: "transcribing", guard: triesLeft },
+    { from: ["transcribe_wait"], on: "RETRY", to: "failed" },
     { from: ["reading"], on: "READ_FAILED", to: "retry_wait" },
-    {
-      from: ["retry_wait"],
-      on: "RETRY",
-      to: "reading",
-      guard: ({ record }) => (record.tries < config.captureMaxTries ? null : `tried ${record.tries} times`),
-    },
+    { from: ["retry_wait"], on: "RETRY", to: "reading", guard: triesLeft },
     { from: ["retry_wait"], on: "RETRY", to: "failed" },
+    // D19: a step with no answer for 5 minutes goes back to retry (the process may have stopped).
+    // The model check found the transcribing half: without it a voice note waits there forever
+    { from: ["transcribing"], on: "STALE", to: "transcribe_wait", guard: staleGuard },
+    { from: ["reading"], on: "STALE", to: "retry_wait", guard: staleGuard },
     {
       from: ["reading"],
       on: "PROPOSALS_READY",
@@ -152,6 +162,15 @@ export const captureMachine = defineMachine<CaptureState, CaptureEvent, Ctx>({
   ],
 });
 
+function triesLeft({ record }: Ctx): string | null {
+  return record.tries < config.captureMaxTries ? null : `tried ${record.tries} times`;
+}
+
+function staleGuard({ idleMinutes }: Ctx): string | null {
+  if (idleMinutes === undefined) return "the time since the last move is needed";
+  return idleMinutes >= config.staleReadMinutes ? null : `waiting ${idleMinutes} of ${config.staleReadMinutes} minutes`;
+}
+
 function remindGuard({ record, elapsed }: Ctx): string | null {
   if (record.reminded) return "already reminded";
   if (!elapsed) return "elapsed time is needed";
@@ -159,11 +178,15 @@ function remindGuard({ record, elapsed }: Ctx): string | null {
   return elapsed.workingHours >= due ? null : `waiting ${elapsed.workingHours} of ${due} working hours`;
 }
 
-/** Build plan 5.1: the channel's message id, or a hash of author, text and minute. */
+/**
+ * D14: the channel and its message id. Atlas always sends one; a message without one (DPM's own
+ * chat before it sends ids) falls back to a hash of channel, author, text and minute, so the same
+ * words in Atlas and in the app are two captures (E2).
+ */
 export function captureDedupKey(input: { channel: string; author: string; text: string; sentAt: Date; messageId?: string | null }): string {
   if (input.messageId) return `${input.channel}:${input.messageId}`;
   const minute = input.sentAt.toISOString().slice(0, 16);
-  return `${input.author}:${minute}:${fnv1a(input.text)}`;
+  return `${input.channel}:${input.author}:${minute}:${fnv1a(input.text)}`;
 }
 
 // FNV-1a, 32 bit: stable across runs and machines, which is all a dedup key needs
@@ -192,6 +215,7 @@ export function receiveCapture(input: { dedupKey: string; kind: "text" | "voice"
       moreFound: false,
       reminded: false,
       transcriptConfidence: null,
+      failedStep: null,
     },
   };
 }
@@ -217,13 +241,14 @@ export function applyCaptureEvent(record: CaptureRecord, event: CaptureEvent, ct
   const next: CaptureRecord = { ...record, state: outcome.to };
   switch (event.type) {
     case "START":
-      if (outcome.to === "reading") next.tries = 1;
+      next.tries = 1;
       break;
     case "TRANSCRIBED":
       [next.tries, next.transcriptConfidence] = [1, event.confidence];
       break;
     case "RETRY":
-      if (outcome.to === "reading") next.tries = record.tries + 1;
+      if (outcome.to === "failed") next.failedStep = record.state === "transcribe_wait" ? "transcribe" : "read";
+      else next.tries = record.tries + 1;
       break;
     case "PROPOSALS_READY":
       next.proposals = Math.min(event.count, config.maxProposalsPerCapture);

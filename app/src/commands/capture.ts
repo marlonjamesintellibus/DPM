@@ -6,15 +6,15 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
-import { captureRecordOf, itemOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems } from "../db/records";
+import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems } from "../db/records";
 import * as t from "../db/schema";
 import { runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
-import { planSave, saveOutcome, settleItems, targetKey, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
+import { planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
 import type { Moved } from "../domain/machine";
-import type { BraidActor, BraidEntryState, BraidLog, BraidSource } from "../domain/machines/braid-entry";
+import { applyToLog, type BraidActor, type BraidEntryState, type BraidLog, type BraidSource } from "../domain/machines/braid-entry";
 import {
   applyCaptureEvent,
   captureDedupKey,
@@ -39,18 +39,21 @@ import {
 } from "../domain/machines/extracted-item";
 import { applyHandover, type HandoverRecord } from "../domain/machines/handover";
 import { evaluateCause } from "../domain/machines/inbox-item";
-import { acceptExtractedLeave, type ExtractedLeave, type LeaveRecord } from "../domain/machines/leave";
-import { saveMatch, type MatchRecord } from "../domain/machines/match";
+import { acceptExtractedLeave, changeLeave, fitLeave, type ExtractedLeave, type LeaveRecord } from "../domain/machines/leave";
+import { redirectReport, saveMatch, type MatchRecord } from "../domain/machines/match";
 import { actorIn, isCandidate, type World } from "../domain/machines/membership";
 import { applyMilestone, type MilestoneRecord } from "../domain/machines/milestone";
 import { applyWorkItem, workItemEventTo, type WorkItemEvent, type WorkItemRecord } from "../domain/machines/work-item";
-import { mayReport } from "../domain/rights";
+import { mayReport, mayResolve } from "../domain/rights";
 import { applyRouting, planRoutingAtSave, type Author, type Route, type RoutingEvent } from "../domain/routing";
 import type { Confidence, ExtractedItemDraft, MatchState } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { loadCheckContext } from "../queries/check-context";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
+import { ownsBlockedWork } from "./braid";
+import { syncLeaveImpact } from "./leave";
+import { noticeReporters } from "./notices";
 
 type CaptureRow = typeof t.captures.$inferSelect;
 type Actor = { type: "person" | "atlas" | "rule" | "system"; id: string | null };
@@ -162,6 +165,8 @@ export type Created = { captureId: string; duplicate: boolean };
 /** Stores a message as received. A repeat of one already received (same dedup key) is dropped and changes nothing (E1). */
 export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Created> {
   return runCommand(ctx, async (tx) => {
+    // D14: Atlas always sends its message id; without it a resend could not be told from a new message
+    if (input.channel === "atlas" && !input.messageId) throw new CommandRefused("a message from Atlas needs its message id");
     const dedupKey = captureDedupKey({ channel: input.channel, author: ctx.actorId, text: input.text, sentAt: input.messageAt, messageId: input.messageId });
     const seen = await tx.select({ id: t.captures.id, dedupKey: t.captures.dedupKey }).from(t.captures).where(eq(t.captures.dedupKey, dedupKey));
     const received = receiveCapture({ dedupKey, kind: input.kind }, new Set(seen.map((s) => s.dedupKey)));
@@ -198,52 +203,93 @@ export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Creat
 }
 
 // ---- The Atlas step (build plan 5.1 steps 2 to 5) ----
-// A read is three short transactions around one network call, so no database transaction waits on
-// the model: beginRead (received or retry_wait to reading), then proposeItems or failRead.
+// A read is short transactions around each slow call, so no database transaction waits on a model:
+// beginRead (to transcribing or reading), then finishTranscribe or failTranscribe for a voice note,
+// then proposeItems or failRead. Each step names the attempt it belongs to (beginRead's `tries`):
+// when the stale timer or another worker has moved on, a late answer is dropped (D19).
 
-export type ReadStarted = { state: CaptureState; tries: number; context: CheckContext | null };
+/** A late answer: the capture moved on since this attempt started. Nothing changed. */
+export class ReadSuperseded extends CommandRefused {
+  constructor(captureId: string) {
+    super(`capture ${captureId} moved on since this attempt started; its answer is dropped`);
+    this.name = "ReadSuperseded";
+  }
+}
+
+export type ReadStarted = {
+  state: CaptureState;
+  tries: number;
+  /** reading: what the extractor is given. */
+  context: CheckContext | null;
+  /** transcribing: what Atlas sent with the voice note (its transcript, possibly empty). */
+  voice: { text: string; confidence: Confidence | null } | null;
+};
+
+const atlasActor: Actor = { type: "atlas", id: null };
+
+async function readContextOf(tx: Tx, row: CaptureRow, record: CaptureRecord): Promise<CheckContext> {
+  return loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence });
+}
+
+/** The capture as this attempt left it, or ReadSuperseded when it has moved on. */
+async function attemptOf(tx: Tx, captureId: string, attempt: number, state: CaptureState) {
+  const c = await captureOf(tx, captureId);
+  if (c.record.state !== state || c.record.tries !== attempt) throw new ReadSuperseded(captureId);
+  return c;
+}
 
 /**
- * Starts reading a capture: the first try (START, and TRANSCRIBED for voice) or the next one after
- * a failure (RETRY). After config.captureMaxTries the capture fails instead (E18) and `context` is null.
+ * Starts the next try: the first (START) or the next one after a failure (RETRY). After
+ * config.captureMaxTries the capture fails instead (E18, D1) and both `context` and `voice` are null.
  */
 export function beginRead(ctx: CommandCtx, captureId: string): Promise<ReadStarted> {
   return runCommand(ctx, async (tx) => {
-    const { row, record: before } = await captureOf(tx, captureId);
-    const atlas: Actor = { type: "atlas", id: null };
-    const moves: Moved<CaptureState>[] = [];
-    let record = before;
-    const step = (event: CaptureEvent) => {
-      const r = moveCapture(record, event);
-      record = r.record;
-      moves.push(r.outcome);
+    const { row, record } = await captureOf(tx, captureId);
+    const waiting = record.state === "retry_wait" || record.state === "transcribe_wait";
+    const r = moveCapture(record, { type: waiting ? "RETRY" : "START" });
+    await persistCapture(tx, captureId, row.version, r.record, ctx.now);
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { tries: r.record.tries, ...(r.record.failedStep ? { failedStep: r.record.failedStep } : {}) });
+    return {
+      state: r.record.state,
+      tries: r.record.tries,
+      context: r.record.state === "reading" ? await readContextOf(tx, row, r.record) : null,
+      voice: r.record.state === "transcribing" ? { text: row.text, confidence: row.transcriptConfidence } : null,
     };
-    if (record.state === "retry_wait") step({ type: "RETRY" });
-    else {
-      step({ type: "START" });
-      // A voice note with no reported confidence is treated as unsure, so it can only lower items
-      if (record.state === "transcribing") step({ type: "TRANSCRIBED", confidence: row.transcriptConfidence ?? "medium" });
-    }
-    await persistCapture(tx, captureId, row.version, record, ctx.now);
-    for (const m of moves) await auditCapture(tx, ctx.now, captureId, m, atlas, m.event === "RETRY" ? { tries: record.tries } : undefined);
-    const context =
-      record.state === "reading"
-        ? await loadCheckContext(tx, { authorId: row.authorId, text: row.text, messageAt: row.messageAt, transcriptConfidence: record.transcriptConfidence })
-        : null;
-    return { state: record.state, tries: record.tries, context };
+  });
+}
+
+/** The voice note has a transcript: on to reading (TRANSCRIBED). Returns what the extractor is given. */
+export function finishTranscribe(ctx: CommandCtx, captureId: string, attempt: number, confidence: Confidence): Promise<CheckContext> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record } = await attemptOf(tx, captureId, attempt, "transcribing");
+    const r = moveCapture(record, { type: "TRANSCRIBED", confidence });
+    await persistCapture(tx, captureId, row.version, r.record, ctx.now);
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { confidence });
+    return readContextOf(tx, row, r.record);
+  });
+}
+
+/** D1: no transcript this time; wait, then try again. */
+export function failTranscribe(ctx: CommandCtx, captureId: string, attempt: number, why: "no_transcript" | "timeout" | "error", message: string): Promise<CaptureState> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record } = await attemptOf(tx, captureId, attempt, "transcribing");
+    const r = moveCapture(record, { type: "TRANSCRIBE_FAILED", why });
+    await persistCapture(tx, captureId, row.version, r.record, ctx.now);
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { why, tries: attempt, message });
+    return r.record.state;
   });
 }
 
 /** What Atlas reported about a read, kept in the audit so the model can be measured (phase 4). */
-export type ReadMeta = { model: string; usage?: unknown; malformed?: unknown[]; message?: string };
+export type ReadMeta = { model: string; usage?: unknown; malformed?: unknown[]; message?: string; attempt?: number };
 
 /** The model failed, timed out or sent something unreadable: wait, then try again (E18, E19). */
-export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" | "timeout" | "bad_output", meta: ReadMeta): Promise<CaptureState> {
+export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" | "timeout" | "bad_output", meta: ReadMeta & { attempt: number }): Promise<CaptureState> {
   return runCommand(ctx, async (tx) => {
-    const { row, record } = await captureOf(tx, captureId);
+    const { row, record } = await attemptOf(tx, captureId, meta.attempt, "reading");
     const r = moveCapture(record, { type: "READ_FAILED", why });
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
-    await auditCapture(tx, ctx.now, captureId, r.outcome, { type: "atlas", id: null }, { why, tries: record.tries, ...meta });
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { why, tries: record.tries, ...meta });
     return r.record.state;
   });
 }
@@ -258,8 +304,9 @@ export type Proposed = { state: CaptureState; items: ExtractedItem[]; dropped: D
  */
 export function proposeItems(ctx: CommandCtx, captureId: string, proposals: readonly RawProposal[], meta?: ReadMeta): Promise<Proposed> {
   return runCommand(ctx, async (tx) => {
-    const { row, record: received } = await captureOf(tx, captureId);
-    const atlas: Actor = { type: "atlas", id: null };
+    // A read names its attempt; recorded proposals (tests, the seed) start a received capture here
+    const { row, record: received } = meta?.attempt !== undefined ? await attemptOf(tx, captureId, meta.attempt, "reading") : await captureOf(tx, captureId);
+    const atlas = atlasActor;
     const moves: Moved<CaptureState>[] = [];
     let record = received;
     const step = (event: CaptureEvent) => {
@@ -407,7 +454,7 @@ function parseLeave(value: string | null, personId: string): ExtractedLeave | nu
 }
 
 function leaveRecords(rows: (typeof t.leave.$inferSelect)[]): LeaveRecord[] {
-  return rows.map((l) => ({ id: l.id, personId: l.personId, start: l.startDate, end: l.endDate, state: l.state }));
+  return rows.map(leaveRecordOf);
 }
 
 /**
@@ -476,6 +523,55 @@ function milestoneRecordOf(row: typeof t.milestones.$inferSelect): MilestoneReco
   return { id: row.id, projectId: row.projectId, ownerId: row.ownerId, state: row.state, targetDate: row.targetDate, forecastDate: row.forecastDate };
 }
 
+// ---- rematchExtraction (D18, M16 on review) ----
+
+export type Rematch = { type: "different" } | { type: "pick"; entryId: string };
+
+/**
+ * D18: the author corrects Atlas's match on review. "Not the same" makes a same-as report a new
+ * entry; "Pick an entry" points it at another open entry of the same kind in the same project.
+ * Choosing is confirming, so the item counts as accepted.
+ */
+export function rematchExtraction(ctx: CommandCtx, extractionId: string, to: Rematch): Promise<ExtractedItem> {
+  return runCommand(ctx, async (tx) => {
+    const { row, item } = await reviewing(tx, extractionId, ctx.actorId);
+    const braid = item.draft.braid;
+    if (!braid || item.draft.kind === "braid_resolve") throw new CommandRefused("only a BRAID report has a match to change");
+    if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state) || item.state === "rejected") throw new CommandRefused(`this item is ${item.state}`);
+    let draft: ExtractedItemDraft;
+    let saw: string | null;
+    if (to.type === "different") {
+      const { seenState: _seen, ...rest } = braid;
+      draft = { ...item.draft, kind: "braid_new", braid: { ...rest, match: "new", matchEntryId: null } };
+      saw = null;
+    } else {
+      const [entry] = await tx.select().from(t.braidEntries).where(eq(t.braidEntries.id, to.entryId));
+      if (!entry || entry.projectId !== item.draft.projectId) throw new CommandRefused("pick an entry on this project's log");
+      if (entry.kind !== braid.kind) throw new CommandRefused(`kinds never merge: this report is a ${braid.kind}, that entry a ${entry.kind}`);
+      if (["none", "merged", "withdrawn"].includes(entry.state)) throw new CommandRefused(`"${entry.title}" is ${entry.state}`);
+      draft = { ...item.draft, kind: "braid_same", braid: { ...braid, title: entry.title, match: "same_as", matchEntryId: entry.id, seenState: entry.state } };
+      saw = entry.state;
+    }
+    let next: ExtractedItem = { ...item, draft, saw, value: draft.braid!.title, touched: true, conflict: null };
+    if (next.state === "pre_accepted" || next.state === "needs_ok" || next.state === "conflict") next = moveItem(next, { type: "ACCEPT" }).item;
+    await persistItems(tx, [item], [next], new Map([[row.id, row.version]]), ctx.now);
+    await audit(tx, ctx.now, {
+      actorType: "person",
+      actorId: ctx.actorId,
+      action: to.type === "different" ? "MATCH_DIFFERENT" : "MATCH_PICK",
+      machine: "match",
+      subjectType: "extraction",
+      subjectId: item.id,
+      fromState: braid.match,
+      toState: draft.braid!.match,
+      captureId: row.captureId,
+      extractionId: item.id,
+      detail: { from: braid.matchEntryId, to: draft.braid!.matchEntryId },
+    });
+    return next;
+  });
+}
+
 // ---- routeExtraction (M14) ----
 
 export type RouteTo = { projectId: string } | "keep_private";
@@ -536,9 +632,10 @@ export function routeExtraction(ctx: CommandCtx, extractionId: string, to: Route
     const r = applyRouting(route, event, author, world, { kind: draft.kind, targetProjectId: pinned });
     const outcome = moved(r.outcome);
     const name = (id: string | null) => world.projects.find((p) => p.id === id)?.name ?? "that project";
-    // Check 10 (E74): this slice has no "pick a target" step yet, so the move is refused with the way out
+    // D13, E74: an update to a record stays in that record's project (G2); the review offers no Move for it
     if (r.recheck === "pick_target") {
-      throw new CommandRefused(`that record is in ${name(targetProjectId)}; pick a record in ${name(r.route.projectId)} or report it as a BRAID item instead`);
+      const what = draft.target?.type === "work_item" ? ((await tx.select({ n: t.workItems.number }).from(t.workItems).where(eq(t.workItems.id, draft.target.id)))[0]?.n ?? "That record") : "That record";
+      throw new CommandRefused(`${what} is in ${name(targetProjectId)}. To log this somewhere else, add it as a BRAID item in that project`);
     }
     if (r.recheck === "rematch") throw new CommandRefused(`that entry is on ${name(targetProjectId)}'s log; a same-as report can only join it there`);
     if (draft.braid && r.route.projectId !== null) {
@@ -575,10 +672,22 @@ export function routeExtraction(ctx: CommandCtx, extractionId: string, to: Route
 
 // ---- saveCapture (M2 SAVE, M4 Apply) ----
 
+const s0 = (items: readonly ExtractedItem[], id: string) => items.find((i) => i.id === id)!;
+
+function savedBefore({ items }: { items: ExtractedItem[] }): SaveResult {
+  const of = (state: ItemState) => items.filter((i) => i.state === state).map((i) => i.id);
+  return { outcome: "saved", retried: true, applied: of("applied"), noChange: of("no_change"), keptPrivate: [], withdrawn: of("withdrawn"), projects: [], evaluations: new Map() };
+}
+
 export type SaveResult =
-  | { outcome: "conflict"; conflicts: SaveConflict[]; withdrawn: string[] }
+  /** Nothing applied: items changed since the author saw them, or (D12) their record refuses the change. */
+  | { outcome: "conflict"; conflicts: SaveConflict[]; refused: { itemId: string; reason: string }[]; withdrawn: string[] }
+  /** D3: every try failed on a database error. Nothing was changed; the author may press Save again. */
+  | { outcome: "failed"; message: string; tries: number }
   | {
       outcome: "saved";
+      /** D3: an earlier try had saved it and only the reply was lost; nothing ran again. */
+      retried?: boolean;
       applied: string[];
       noChange: string[];
       keptPrivate: string[];
@@ -595,7 +704,27 @@ type SaveScope = {
   capture: CaptureRow;
   world: World;
   byId: Map<string, ExtractedItem>;
+  /** Blocked work and the blockers reported in the same words (M5): item id to entry ids. */
+  blockLinks: Map<string, string[]>;
 };
+
+/**
+ * M5: "Still waiting on Kyle for the store feed" blocks #151 and reports the blocker, from the same
+ * words. Saving links the two, so the blocker knows whose work it holds (S13, E93).
+ */
+function blockLinksOf(items: readonly ExtractedItem[], plan: { writes: readonly PlannedWrite[]; braid: readonly BraidIntent[] }): Map<string, string[]> {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const overlaps = (a: ExtractedItem, b: ExtractedItem) => a.draft.spans.some((x) => b.draft.spans.some((y) => x.start < y.end && y.start < x.end));
+  const out = new Map<string, string[]>();
+  for (const w of plan.writes.filter((w) => w.target.type === "work_item" && w.target.field === "state" && w.value === "blocked")) {
+    const item = byId.get(w.itemId)!;
+    const entries = plan.braid
+      .filter((b) => b.kind === "blocker" && b.event !== "RESOLVE" && b.projectId === item.draft.projectId && overlaps(item, byId.get(b.itemId)!))
+      .map((b) => (b.event === "ADD_SOURCE" ? b.matchEntryId! : `br-${b.itemId}`));
+    if (entries.length) out.set(w.itemId, entries);
+  }
+  return out;
+}
 
 const person = (id: string): Actor => ({ type: "person", id });
 
@@ -609,7 +738,7 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
   const gone = (what: string): never => {
     throw new CommandRefused(`${what} no longer exists; reject item ${item.draft.ordinal} or discard the update`);
   };
-  if (kind === "braid_same" && braid?.matchEntryId) {
+  if ((kind === "braid_same" || kind === "braid_resolve") && braid?.matchEntryId) {
     const [entry] = await tx.select({ state: t.braidEntries.state }).from(t.braidEntries).where(eq(t.braidEntries.id, braid.matchEntryId));
     return entry ? entry.state : gone(`"${braid.title}"`);
   }
@@ -630,11 +759,15 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
       return row ? row.state : gone("that handover step");
     }
     case "leave": {
-      // Leave is read only here: it already "has" the value when approved leave covers it (M8)
+      // Leave already "has" the value when live leave, requested or approved, covers it (M8, D6)
+      // A change compares against the leave's dates as they are now, so a leave that moved meanwhile is a conflict
       const extracted = parseLeave(item.value, authorId);
       if (!extracted) return null;
       const leaves = leaveRecords(await tx.select().from(t.leave).where(eq(t.leave.personId, authorId)));
-      return acceptExtractedLeave(extracted, leaves).kind === "no_change" ? item.value : null;
+      const fit = fitLeave(extracted, leaves);
+      if (fit.kind === "matches") return item.value;
+      if (fit.kind === "change") return `${fit.from.start}/${fit.from.end}`;
+      return null;
     }
   }
 }
@@ -650,7 +783,10 @@ async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string | null>
       let event: WorkItemEvent | null;
       if (w.target.field === "blocked_note") event = { type: "UPDATE_BLOCKED_NOTE", note: w.value };
       else if (!SETTABLE_WORK_STATES.includes(w.value)) event = null;
-      else event = workItemEventTo(row.state, w.value as WorkItemState, item.draft.target?.note ?? "");
+      else {
+        const links = s.blockLinks.get(item.id);
+        event = workItemEventTo(row.state, w.value as WorkItemState, item.draft.target?.note ?? "", links ? [...new Set([...row.blockedLinks, ...links])] : undefined);
+      }
       if (!event) throw new CommandRefused(`${label} cannot go from ${row.state} to ${w.value}`);
       const r = applyWorkItem(workItemRecordOf(row), event, actorIn(s.authorId, row.projectId, s.world.memberships));
       if (!r.outcome.ok) throw new CommandRefused(`${label}: ${r.outcome.reason}`);
@@ -732,78 +868,157 @@ async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string | null>
     case "leave": {
       const extracted = parseLeave(w.value, s.authorId);
       if (!extracted) throw new CommandRefused("leave needs real dates");
-      const leaves = leaveRecords(await tx.select().from(t.leave).where(eq(t.leave.personId, s.authorId)));
-      const r = acceptExtractedLeave(extracted, leaves);
+      const rows = await tx.select().from(t.leave).where(eq(t.leave.personId, s.authorId));
+      const r = acceptExtractedLeave(extracted, leaveRecords(rows));
       if (r.kind === "refused") throw new CommandRefused(r.reason);
+      let leaveId: string | null = null;
       if (r.kind === "request") {
-        // M8: a capture only ever asks for leave; approving it is someone else's act
-        const id = `lv-${item.id}`;
-        await tx.insert(t.leave).values({ id, personId: r.request.personId, startDate: r.request.start, endDate: r.request.end, state: r.request.state, createdAt: now, updatedAt: now });
-        await recordAudit(s, item.id, { action: "REQUESTED", machine: "leave", subjectType: "leave", subjectId: id, toState: "requested", detail: { start: r.request.start, end: r.request.end } });
+        // M8: a capture only ever asks for leave; approving it is an admin's act (D6)
+        leaveId = `lv-${item.id}`;
+        await tx.insert(t.leave).values({ id: leaveId, personId: r.request.personId, startDate: r.request.start, endDate: r.request.end, state: r.request.state, createdAt: now, updatedAt: now });
+        await recordAudit(s, item.id, { action: "REQUESTED", machine: "leave", subjectType: "leave", subjectId: leaveId, toState: "requested", detail: { start: r.request.start, end: r.request.end } });
+      } else if (r.kind === "change") {
+        // D6: a request just moves; approved leave keeps its dates while the change waits for an admin
+        const row = rows.find((x) => x.id === r.leaveId)!;
+        const next = changeLeave(leaveRecordOf(row), r.to);
+        const updated = await tx
+          .update(t.leave)
+          .set({ startDate: next.start, endDate: next.end, changeStart: next.change?.start ?? null, changeEnd: next.change?.end ?? null, version: nextVersion(t.leave.version), updatedAt: now })
+          .where(and(eq(t.leave.id, row.id), eq(t.leave.version, row.version)))
+          .returning({ id: t.leave.id });
+        expectOne(updated, `leave ${row.id}`);
+        leaveId = row.id;
+        await recordAudit(s, item.id, { action: "CHANGE_ASKED", machine: "leave", subjectType: "leave", subjectId: row.id, fromState: row.state, toState: row.state, detail: { from: { start: row.startDate, end: row.endDate }, to: r.to } });
       }
+      if (leaveId) await syncLeaveImpact(tx, now, leaveId, { actorId: s.authorId });
       return null; // personal: no project is touched
     }
   }
 }
 
-/** Saves the BRAID reports of one project onto its log (M15 REPORT, ADD_SOURCE through M16 saveMatch). */
-async function applyBraid(s: SaveScope, projectId: string, intents: { itemId: string; event: "REPORT" | "ADD_SOURCE"; title: string }[]) {
+/**
+ * Saves the BRAID items of one project onto its log: REPORT and ADD_SOURCE through M16 saveMatch, and
+ * (D7) RESOLVE, which resolves the entry when the speaker may and otherwise proposes it to those who
+ * may. D8: a report on an entry that has finished goes where redirectReport says.
+ */
+async function applyBraid(s: SaveScope, projectId: string, intents: readonly BraidIntent[]) {
   const { log: before, versions } = await loadBraidLog(s.tx, projectId);
-  const actor: BraidActor = { id: s.authorId, role: actorIn(s.authorId, projectId, s.world.memberships).role };
+  const role = actorIn(s.authorId, projectId, s.world.memberships).role;
+  const actor: BraidActor = { id: s.authorId, role };
   const today = todayOf(s.now);
   const sourceItems = new Map<string, string>();
   const audits: Parameters<typeof recordAudit>[] = [];
+  const resolved: string[] = [];
   let log: BraidLog = before;
+  const auditOf = (item: ExtractedItem, action: string, entryId: string, from: string | null, detail: Record<string, unknown> = {}): Parameters<typeof recordAudit> => [
+    s,
+    item.id,
+    { action, machine: "braid_entry", subjectType: "braid_entry", subjectId: entryId, fromState: from, toState: log[entryId].state, detail: { kind: log[entryId].kind, title: log[entryId].title, sources: log[entryId].sources.length, ...detail } },
+  ];
   for (const b of intents) {
     const item = s.byId.get(b.itemId)!;
     const braid = item.draft.braid!;
-    const state: MatchState = b.event === "ADD_SOURCE" ? "same_as" : braid.match === "related_to" ? "related_to" : "new";
-    // The author confirmed this match when they accepted the item (or left it ready and saved)
-    const match: MatchRecord = {
-      itemId: item.id,
-      projectId,
-      kind: braid.kind,
-      speakerId: s.authorId,
-      state,
-      entryId: state === "new" ? null : braid.matchEntryId,
-      confirmed: true,
-      seen: state === "same_as" ? (item.saw as BraidEntryState | null) : null,
-      conflictsWith: [],
-      savedTo: null,
-    };
     const source: BraidSource = { id: `src-${item.id}`, personId: s.authorId, captureId: s.capture.id, span: item.draft.spans[0] ?? null, at: s.capture.messageAt.toISOString() };
+
+    if (b.event === "RESOLVE") {
+      const entry = log[braid.matchEntryId!];
+      const owns = await ownsBlockedWork(s.tx, entry, s.authorId);
+      const isOwner = entry.kind === "blocker" ? owns : entry.ownerId === s.authorId;
+      const may = role !== null && mayResolve({ role, isOwner }, entry.kind);
+      const r = applyToLog(log, entry.id, may ? { type: "RESOLVE" } : { type: "PROPOSE_RESOLVE" }, { actor: { ...actor, ownsBlockedWork: owns }, today });
+      if (!r.outcome.ok) throw new CommandRefused(`"${entry.title}": ${r.outcome.reason}`);
+      const from = log[entry.id].state;
+      log = r.log;
+      if (may) resolved.push(entry.id);
+      audits.push(auditOf(item, r.outcome.event, entry.id, from));
+      continue;
+    }
+
+    let state: MatchState = b.event === "ADD_SOURCE" ? "same_as" : braid.match === "related_to" ? "related_to" : "new";
+    let entryId = state === "new" ? null : braid.matchEntryId;
+    let seen = state === "same_as" ? (item.saw as BraidEntryState | null) : null;
+    let kind = braid.kind;
+    let raisedAgainFrom: string | null = null;
+    if (state === "same_as" && entryId) {
+      const go = redirectReport(log, entryId);
+      if (go.to === "entry") [entryId, seen, kind] = [go.entryId, log[go.entryId].state, log[go.entryId].kind];
+      if (go.to === "new_raised_again") [state, raisedAgainFrom, entryId, seen] = ["new", go.fromId, null, null];
+    }
+    // The author confirmed this match when they accepted the item (or left it ready and saved)
+    const match: MatchRecord = { itemId: item.id, projectId, kind, speakerId: s.authorId, state, entryId, confirmed: true, seen, conflictsWith: [], savedTo: null };
     const r = saveMatch(match, log, { newEntryId: `br-${item.id}`, title: b.title, ownerId: null, source }, { actor, today });
     if (!r.ok) throw new CommandRefused(r.outcome === "conflict" ? `"${braid.title}" changed since you saw it (now ${r.now})` : `"${braid.title}": ${r.reason}`);
     const from = r.outcome === "created" ? "none" : log[r.entryId].state;
     log = r.log;
+    if (raisedAgainFrom) {
+      // D8: a closed risk reported again is a new proposal, linked so the leads see it was closed before
+      const fresh = log[r.entryId];
+      const old = log[raisedAgainFrom];
+      log = { ...log, [fresh.id]: { ...fresh, links: [...fresh.links, { relation: "raised_from", entryId: old.id }] }, [old.id]: { ...old, links: [...old.links, { relation: "related", entryId: fresh.id }] } };
+    }
     sourceItems.set(source.id, item.id);
-    audits.push([
-      s,
-      item.id,
-      {
-        action: b.event,
-        machine: "braid_entry",
-        subjectType: "braid_entry",
-        subjectId: r.entryId,
-        fromState: from,
-        toState: log[r.entryId].state,
-        detail: { kind: braid.kind, title: log[r.entryId].title, sources: log[r.entryId].sources.length },
-      },
-    ]);
+    audits.push(auditOf(item, b.event, r.entryId, from, raisedAgainFrom ? { raisedAgainFrom } : r.entryId !== braid.matchEntryId && b.event === "ADD_SOURCE" ? { redirectedFrom: braid.matchEntryId } : {}));
   }
   await persistBraidLog(s.tx, before, log, versions, s.now, { extractionIdBySource: sourceItems });
   for (const a of audits) await recordAudit(...a);
+  for (const id of resolved) await noticeReporters(s.tx, s.now, log[id], s.authorId, { act: "resolved" });
 }
+
+export type SaveOptions = {
+  /** Waits between tries; tests pass a fake. Default 1s, then 2s. */
+  sleep?: (ms: number) => Promise<void>;
+};
+
+export const SAVE_FAILED_MESSAGE = "This didn't save, and nothing was changed. Try Save again.";
 
 /**
  * Save (L16). One transaction across every project the items are routed to: either every confirmed
  * item is applied or, on any conflict, none is and the review reopens with both values shown.
+ * D3: a database error rolls the try back and Save tries again with the same item IDs, up to
+ * config.saveMaxTries; then the author is told nothing changed. A refusal is not retried: it is
+ * returned as it is and written to the audit (rule 2, D12).
  */
-export function saveCapture(ctx: CommandCtx, captureId: string): Promise<SaveResult> {
+export async function saveCapture(ctx: CommandCtx, captureId: string, options: SaveOptions = {}): Promise<SaveResult> {
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= config.saveMaxTries; attempt++) {
+    try {
+      return await saveOnce(ctx, captureId, attempt);
+    } catch (e) {
+      if (e instanceof CommandRefused) {
+        await logSaveProblem(ctx, captureId, "SAVE_REFUSED", { reason: e.reason, attempt });
+        throw e;
+      }
+      lastError = e;
+      if (attempt < config.saveMaxTries) await sleep(1000 * 2 ** (attempt - 1));
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  await logSaveProblem(ctx, captureId, "SAVE_ERROR", { message, tries: config.saveMaxTries });
+  return { outcome: "failed", message: SAVE_FAILED_MESSAGE, tries: config.saveMaxTries };
+}
+
+// Written in its own transaction, after the save's was rolled back. If even this fails, the
+// author still gets the refusal or the "didn't save" message.
+async function logSaveProblem(ctx: CommandCtx, captureId: string, action: "SAVE_REFUSED" | "SAVE_ERROR", detail: Record<string, unknown>) {
+  try {
+    await runCommand(ctx, (tx) =>
+      audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action, machine: "capture", subjectType: "capture", subjectId: captureId, captureId, detail }),
+    );
+  } catch {
+    // Nothing more to do: the database is not taking writes
+  }
+}
+
+function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<SaveResult> {
   return runCommand(ctx, async (tx) => {
     const { row, record } = await ownCapture(tx, captureId, ctx.actorId);
-    // E3: the second session sees when the first one saved; nothing is applied twice
-    if (record.state === "saved") throw new CommandRefused(`already saved at ${clock(row.updatedAt)}; nothing was applied twice`);
+    if (record.state === "saved") {
+      // D3: an earlier try went through and only its reply was lost
+      if (attempt > 1) return savedBefore(await loadItems(tx, captureId));
+      // E3: the second session sees when the first one saved; nothing is applied twice
+      throw new CommandRefused(`already saved at ${clock(row.updatedAt)}; nothing was applied twice`);
+    }
     const authorId = row.authorId;
     const by = person(authorId);
     const [{ items: loaded, versions }, { author, world }] = await Promise.all([loadItems(tx, captureId), authorOf(tx, authorId)]);
@@ -829,10 +1044,10 @@ export function saveCapture(ctx: CommandCtx, captureId: string): Promise<SaveRes
     const saving = moveCapture(record, { type: "SAVE" }, { authorActive: await isActive(tx, authorId), items, isMember });
     const captureMoves: Moved<CaptureState>[] = [saving.outcome];
 
-    // D2, E26: a target cancelled since the author last saw it withdraws the item rather than conflicting
+    // D2, E26: an update to cancelled work is withdrawn, never a conflict: there is nothing to resolve
     for (const item of items.filter(isReady)) {
       const target = item.draft.target;
-      if (target?.type !== "work_item" || item.saw === "cancelled") continue;
+      if (target?.type !== "work_item") continue;
       const [wi] = await tx.select({ state: t.workItems.state }).from(t.workItems).where(eq(t.workItems.id, target.id));
       if (wi?.state === "cancelled") withdraw(item.id, "target_cancelled", { workItemId: target.id });
     }
@@ -842,17 +1057,42 @@ export function saveCapture(ctx: CommandCtx, captureId: string): Promise<SaveRes
       const key = targetKey(item);
       if (key !== null && !(key in current)) current[key] = await readCurrent(tx, item, authorId);
     }
-    const plan = planSave(saving.record, items, current);
+    let plan = planSave(saving.record, items, current);
     if (plan.outcome === "refused") throw new CommandRefused(plan.reason);
+    // D12: every write is checked against its record's machine before anything is written. A
+    // refusal goes back to its card, and all or nothing (S3) means the rest waits with it
+    const refusals = new Map<string, string>();
+    if (plan.outcome === "apply") {
+      for (const w of plan.writes) {
+        const reason = (await editRule(tx, s0(items, w.itemId), authorId))(w.value);
+        if (reason) refusals.set(w.itemId, `${reason}. Edit it or reject it`);
+      }
+      if (refusals.size) {
+        const refused = plan.writes.filter((w) => refusals.has(w.itemId));
+        plan = { outcome: "conflict", conflicts: refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null })) };
+      }
+    }
     const finish = saveOutcome(plan)!;
     const settled = settleItems(items, plan);
     const finished = moveCapture(saving.record, finish);
     captureMoves.push(finished.outcome);
 
     const writeAll = async (extra: (s: SaveScope) => Promise<void>) => {
-      const s: SaveScope = { tx, now: ctx.now, authorId, capture: row, world, byId: new Map(items.map((i) => [i.id, i])) };
+      const s: SaveScope = {
+        tx,
+        now: ctx.now,
+        authorId,
+        capture: row,
+        world,
+        byId: new Map(items.map((i) => [i.id, i])),
+        blockLinks: plan.outcome === "apply" ? blockLinksOf(items, plan) : new Map(),
+      };
       await extra(s);
-      const final = settled.map((i) => (i.state === "conflict" && i.conflict ? { ...i, conflict: { ...i.conflict, reason: conflictReason(i) } } : i));
+      const final = settled.map((i) => {
+        if (i.state !== "conflict" || !i.conflict) return i;
+        const refusal = refusals.get(i.id);
+        return { ...i, conflict: refusal ? { ...i.conflict, reason: refusal, refused: true } : { ...i.conflict, reason: conflictReason(i) } };
+      });
       await persistItems(tx, loaded, final, versions, ctx.now);
       for (const m of itemMoves) await auditItem(tx, ctx.now, captureId, m.item, m.outcome, by, m.detail);
       for (const i of final) {
@@ -868,7 +1108,11 @@ export function saveCapture(ctx: CommandCtx, captureId: string): Promise<SaveRes
     // All or nothing (S3, E24, E83): a conflict writes the items and the capture, nothing else
     if (plan.outcome === "conflict") {
       await writeAll(async () => {});
-      return { outcome: "conflict", conflicts: plan.conflicts, withdrawn: itemMoves.map((m) => m.item.id) };
+      for (const [itemId, reason] of refusals) {
+        await audit(tx, ctx.now, { actorType: "person", actorId: authorId, action: "SAVE_REFUSED", machine: "extracted_item", subjectType: "extraction", subjectId: itemId, captureId, extractionId: itemId, detail: { reason } });
+      }
+      const refused = [...refusals].map(([itemId, reason]) => ({ itemId, reason }));
+      return { outcome: "conflict", conflicts: plan.conflicts, refused, withdrawn: itemMoves.map((m) => m.item.id) };
     }
 
     const touched = new Set<string>();
@@ -878,7 +1122,7 @@ export function saveCapture(ctx: CommandCtx, captureId: string): Promise<SaveRes
         const projectId = await applyWrite(s, w);
         if (projectId) touched.add(projectId);
       }
-      const byProject = new Map<string, { itemId: string; event: "REPORT" | "ADD_SOURCE"; title: string }[]>();
+      const byProject = new Map<string, BraidIntent[]>();
       for (const b of plan.braid) byProject.set(b.projectId, [...(byProject.get(b.projectId) ?? []), b]);
       for (const [projectId, intents] of [...byProject].sort(([a], [b]) => a.localeCompare(b))) {
         await applyBraid(s, projectId, intents);
@@ -922,17 +1166,32 @@ export function elapsedSince(from: Date, now: Date): { workingHours: number; day
   return { workingHours, days: daysBetween(dateInZone(from, config.timeZone), dateInZone(now, config.timeZone)) };
 }
 
+const MINUTE_MS = 60_000;
+
 /**
- * Reminds the author once, then expires the review. Each capture moves at most once per run, so a
- * reminder always lands before expiry (ReminderBeforeExpiry). Expiry withdraws every open item and
- * applies nothing (NothingAfterExpiry).
+ * The capture timers. A transcription or read with no answer for config.staleReadMinutes goes back
+ * to retry (D19). A review is reminded once, then expired: each capture moves at most once per run,
+ * so a reminder always lands before expiry (ReminderBeforeExpiry). Expiry withdraws every open item
+ * and applies nothing (NothingAfterExpiry).
  */
-export function runCaptureTimers(ctx: { db: Db; now: Date }): Promise<{ reminded: string[]; expired: string[] }> {
+export function runCaptureTimers(ctx: { db: Db; now: Date }): Promise<{ reminded: string[]; expired: string[]; stale: string[] }> {
   return runCommand({ ...ctx, actorId: "rule" }, async (tx) => {
-    const waiting = await tx.select().from(t.captures).where(inArray(t.captures.state, ["proposed", "reviewing"]));
     const reminded: string[] = [];
     const expired: string[] = [];
+    const stale: string[] = [];
     const rule: Actor = { type: "rule", id: null };
+
+    const working = await tx.select().from(t.captures).where(inArray(t.captures.state, ["transcribing", "reading"]));
+    for (const row of working) {
+      const idleMinutes = Math.floor((ctx.now.getTime() - row.updatedAt.getTime()) / MINUTE_MS);
+      const r = applyCaptureEvent(captureRecordOf(row), { type: "STALE" }, { idleMinutes });
+      if (!r.outcome.ok) continue; // still within the 5 minutes
+      await persistCapture(tx, row.id, row.version, r.record, ctx.now);
+      await auditCapture(tx, ctx.now, row.id, r.outcome, rule, { idleMinutes, tries: row.tries });
+      stale.push(row.id);
+    }
+
+    const waiting = await tx.select().from(t.captures).where(inArray(t.captures.state, ["proposed", "reviewing"]));
     for (const row of waiting) {
       const record = captureRecordOf(row);
       const r = applyCaptureEvent(record, { type: record.reminded ? "EXPIRE" : "REMIND" }, { elapsed: elapsedSince(row.receivedAt, ctx.now) });
@@ -943,6 +1202,6 @@ export function runCaptureTimers(ctx: { db: Db; now: Date }): Promise<{ reminded
       await syncReminder(tx, ctx.now, row.authorId, row.id, r.outcome.event === "REMIND");
       (r.outcome.event === "REMIND" ? reminded : expired).push(row.id);
     }
-    return { reminded, expired };
+    return { reminded, expired, stale };
   });
 }

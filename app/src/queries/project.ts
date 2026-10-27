@@ -197,6 +197,7 @@ export type ProjectWorkItem = {
   /** Null when it has no due date: no target, no status (E50). */
   status: Status | null;
   statusLabel: string;
+  startDate: IsoDate | null;
   dueDate: IsoDate | null;
   blockedNote: string | null;
   milestoneId: string | null;
@@ -365,6 +366,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       stateLabel: WORK_STATE_LABEL[w.state],
       status,
       statusLabel: status ? STATUS_LABEL[status] : "No due date",
+      startDate: w.startDate,
       dueDate: w.dueDate,
       blockedNote: w.blockedNote,
       milestoneId: w.milestoneId,
