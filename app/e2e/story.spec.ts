@@ -191,6 +191,24 @@ test("7. Andre approves Kemar's decision in the inbox; it is on the Store Insigh
   await expect(decision).toContainText("Andre and I agreed to move the refresh to 6am");
 });
 
+test("Phase C. Alicia asks why Forager is Off track; Kemar asks when the refresh was decided", async () => {
+  await viewAs("alicia", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Why is Forager off track?");
+  await box.press("Enter");
+  // Her set status, with the reason she saved in step 6 and the entries it links
+  await expect(page.getByText(/Forager 2\.0 is Off track: Alicia set it on .+, with the reason/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Store sales feed access/ }).first()).toHaveAttribute("href", "/projects/forager?view=table&log=blocker");
+
+  await viewAs("kemar", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  await box.fill("When did we decide to move the refresh?");
+  await box.press("Enter");
+  await expect(page.getByText(/Andre approved "Move the daily refresh to 6am" on Store Insights/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /Move the daily refresh to 6am/ })).toHaveAttribute("href", "/projects/insights?view=table&log=decision");
+});
+
 test("8. Each person sees only their part of Kemar's note", async () => {
   // Alicia sees the Forager quotes, never the Store Insights sentence
   await viewAs("alicia", "/projects/forager?view=table");

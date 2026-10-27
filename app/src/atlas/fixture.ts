@@ -17,7 +17,8 @@ export function createFixtureExtractor(recordings: ReadonlyMap<string, readonly 
     async extract(ctx) {
       const proposals = recordings.get(ctx.text);
       const asked = proposals ? null : ruleQuestion(ctx);
-      if (asked) return { proposals: [], question: asked, malformed: [], model: "fixture", usage: null };
+      // Phase C: the rule's subject goes to the checks as Atlas would say it, by its id
+      if (asked) return { proposals: [], question: asked.subject ? { ...asked, subjectId: asked.subject.id } : asked, malformed: [], model: "fixture", usage: null };
       const commands = proposals ? [] : ruleCommands(ctx);
       if (commands.length) return { proposals: [], question: null, commands, malformed: [], model: "fixture", usage: null };
       if (!proposals) throw new AtlasReadFailed("model_error", "Atlas is not connected (no OPENROUTER_API_KEY) and has no recording of this message");

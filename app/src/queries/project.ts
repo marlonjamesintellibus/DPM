@@ -200,7 +200,11 @@ export type ProjectWorkItem = {
   statusLabel: string;
   startDate: IsoDate | null;
   dueDate: IsoDate | null;
+  /** The owner's forecast (section 20, U6); the due date stays the plan. What "why" reads (phase C). */
+  forecastDate: IsoDate | null;
   blockedNote: string | null;
+  /** The entries on this project's BRAID log it waits on (U1); what holds it up (phase C) reads them here. */
+  blockedLinks: readonly string[];
   milestoneId: string | null;
 };
 
@@ -421,7 +425,9 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       statusLabel: status ? STATUS_LABEL[status] : "No due date",
       startDate: w.startDate,
       dueDate: w.dueDate,
+      forecastDate: w.forecastDate,
       blockedNote: w.blockedNote,
+      blockedLinks: w.blockedLinks,
       milestoneId: w.milestoneId,
     };
   };

@@ -12,6 +12,7 @@ import type { AnswerBuilder } from "./shared";
 import { smallTalk } from "./small-talk";
 import { unclear } from "./unclear";
 import { updates } from "./updates";
+import { why } from "./why";
 
 export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   needs_me: needsMe,
@@ -21,6 +22,7 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   project_status: standing,
   updates,
   mentions,
+  why,
   small_talk: smallTalk,
   other,
   unclear,

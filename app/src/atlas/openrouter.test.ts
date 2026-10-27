@@ -69,12 +69,20 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-11's words and order (unchanged in read-12 to read-14); a change to them is a new prompt version", () => {
+  it("the topics come from domain/topics in read-14's words and order (phase C added why); a change to them is a new prompt version", () => {
     expect(PROMPT_VERSION).toBe("read-14");
     expect(SYSTEM_PROMPT).toContain(
-      "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
+      "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
     );
-    expect(questionSchema.shape.topic.options).toEqual(["needs_me", "my_work", "due", "blocked", "project_status", "updates", "mentions", "small_talk", "other", "unclear"]);
+    expect(questionSchema.shape.topic.options).toEqual(["needs_me", "my_work", "due", "blocked", "project_status", "updates", "mentions", "why", "small_talk", "other", "unclear"]);
+  });
+
+  it("phase C: a why question names its subject by a listed id, null for a person (WY1, WY8)", () => {
+    expect(SYSTEM_PROMPT).toContain("subjectId, for topic why only: the id of the listed project, record or BRAID entry the question is about");
+    expect(SYSTEM_PROMPT).toContain('A why about a person ("Why is Kemar late?") is topic why with subjectId null');
+    expect(questionSchema.safeParse({ asked: "Why?", topic: "why", projectId: null, subjectId: "wi-151" }).success).toBe(true);
+    // QA7 still holds for a question that leaves it out
+    expect(questionSchema.safeParse({ asked: "Why?", topic: "why", projectId: null }).success).toBe(true);
   });
 
   it("phase R: how the team writes is read as written, and what Atlas writes is standard English (JA1 to JA4, JA7, CD20)", () => {
