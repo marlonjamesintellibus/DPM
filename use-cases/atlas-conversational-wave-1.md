@@ -117,7 +117,7 @@ Every machine was modelled as the plan draws it, with a planted bug for each pro
 
 ## 5. Merged with main (27 Oct 2026)
 
-- Main's section 19 and 20 work was merged into this branch first. Conflicts in `prompt.ts` (now `read-9`, with section 20's dependency guidance and phase R's Patois guidance), `chat.ts` (main's set-aside summary and phase S's feedback), `review.ts` (imports) and `timers.ts` (both the dependency check and eval candidate expiry run) were resolved keeping both sides.
-- Migrations: phase S's two became one, `0008_learning_from_use`, generated again after main's `0007_dependency_expected`.
-- After the merge: typecheck and lint clean, 1,068 unit tests and the 12-step browser story pass, and the full eval passes 92 of 93 on `read-9` (the miss is Andre's decision, as before, D23).
+- Main's section 19 and 20 work (U1 to U4) was merged into this branch three times as it landed. Conflicts in `prompt.ts` (now `read-11`, with section 20's guidance and phase R's Patois guidance), `chat.ts` (main's set-aside summary and phase S's feedback), `review.ts` (imports) and `timers.ts` (both the dependency check and eval candidate expiry run) were resolved keeping both sides.
+- Migrations: phase S's two became one, `0009_learning_from_use`, generated again after main's `0007_dependency_expected` and `0008_outcomes_proposed`.
+- After the last merge: typecheck and lint clean, 1,099 unit tests and the 12-step browser story pass. The full eval passed 92 of 93 on `read-9` and 95 of 97 on `read-10` (Andre's decision, as before, D23, and Kemar's note once, which passed 3 of 3 when run again).
 - This report is folded into the plan: build notes and G51 to G55 in section 18 of the machines doc; in `atlas-conversational-plan.md`, a "Built" note for phases A, R and S, a "Model check" list in every other phase, the new config keys and decisions CD30 to CD33. This file stays as the record of the wave.

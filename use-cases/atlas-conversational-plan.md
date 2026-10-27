@@ -798,7 +798,7 @@ The team writes and speaks the way it talks: "mi done wid di feed", "di access s
 
 ### Built (wave 1)
 
-- Prompt (`read-9` with section 20): Patois read as written, quotes exact, replies in standard English (CD20). Check 4 treats Patois hedges ("mi tink", "mebbe", "nuh sure") as hedges; "soon done" and "a go finish" drop a done value to Medium (JA2).
+- Prompt (`read-11` with section 20): Patois read as written, quotes exact, replies in standard English (CD20). Check 4 treats Patois hedges ("mi tink", "mebbe", "nuh sure") as hedges; "soon done" and "a go finish" drop a done value to Medium (JA2).
 - JA7 in code: `namesProject` counts a project name or alias only with its capital or next to one of its record numbers; routing is always strict, so "mi done wid forager" goes to choose_project. A message with no capitals at all still counts a name in any case (QA8). People's names follow W-D1 and W-D4.
 - Rules: greetings are stripped with or without a comma (CQ13); "unu", "wen", "weh" and "anybody" ask only with "?", because Patois yes or no questions are shaped like statements.
 - 19 `ja-` eval cases.
@@ -840,7 +840,7 @@ logged ──WITHDRAWN (the person changes a thumbs down to up)──▶ deleted
 
 ### Built (wave 1)
 
-- Thumbs up or down with "What was wrong?" under every answer; "Help improve Atlas" on `people`, off by default, in the sidebar account menu and offered after a thumbs down. Migration `0008_learning_from_use`.
+- Thumbs up or down with "What was wrong?" under every answer; "Help improve Atlas" on `people`, off by default, in the sidebar account menu and offered after a thumbs down. Migration `0009_learning_from_use`.
 - M36 as drawn above, in `domain/machines/eval-candidate.ts`: ACCEPT and DISMISS recheck the OK, every final state drops the original words, and the timer event is EXPIRE. Once only means one live candidate per cause per answer; a deleted one can be logged again. ACCEPT refuses text that matches the stored words or holds a real (non-seed) name; the maintainer writes the anonymised case.
 - Numbers: `pnpm atlas:usage`. There is no maintainer role or screen yet, so whoever runs it is the maintainer (`--as`). Maintainers see every count (W-D3); `--org` is an org's executive view, which hides any number from fewer than 5 people and any it would give by subtraction. Numbers for B, F, J, K and L wait on those phases.
 - Model check: a candidate can hold another person's words (a thumbs down on a group answer, phase I); guard LOGGED on everyone whose words it holds before phase I is built.

@@ -1213,7 +1213,7 @@ What comes after this (acting from answers, why questions, clarifications, commi
 - Topics: each topic is its own pair of files, `domain/topics/<topic>.ts` (id, rule words, prompt line, suggestions) and `queries/answers/<topic>.ts` (the answer). New: my_work, due (plan phase A, CQ17 to CQ19), updates, mentions, small_talk. project_status for one named project gives the next milestone, the live blocker and risk counts and what needs the asker there; other lists everything Atlas answers.
 - Rule order without a model: small_talk, mentions, blocked, due, updates, my_work, project_status, needs_me. Small talk is answered by the rule, never worded by Atlas, and never opens or closes a follow-up; the server keeps it only when the whole message is small talk (CQ13).
 - Names: one rule in `domain/names.ts` for mentions and for routing by a tied person (W-D1, W-D4).
-- Atlas: prompt `read-9` (with section 20's `read-7` and the conversational plan's phase R). 13 eval cases for these topics; config `updatesMaxDays` 7 and `mentionsDays` 14.
+- Atlas: prompt `read-11` (with section 20's U2 to U4 and the conversational plan's phase R). 13 eval cases for these topics; config `updatesMaxDays` 7 and `mentionsDays` 14.
 - Tests: CQ1 to CQ13 and CQ16 to CQ19 as domain and database tests; the browser story asks "What am I working on?".
 
 ### Found while building it
