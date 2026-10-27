@@ -25,6 +25,7 @@ import type { ItemState, WithdrawReason } from "../domain/machines/extracted-ite
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { ConversationState } from "../domain/machines/conversation";
+import type { EvalCandidateDetail, EvalCandidateState, EvalCause } from "../domain/machines/eval-candidate";
 import type { KindRequestState } from "../domain/machines/kind-request";
 import type { Answer, AskedQuestion } from "../domain/question";
 import type { LeaveState } from "../domain/machines/leave";
@@ -65,6 +66,8 @@ export const people = pgTable("people", {
   title: text("title"),
   /** The org-level lens (KB A7.2); project rights come from project_memberships. Null for outside contacts. */
   orgRole: text("org_role").$type<"executive" | "delivery_lead" | "employee" | "care_team">(),
+  /** Phase S: "Help improve Atlas", off until they turn it on. Only then are their words kept as eval candidates (LF1). */
+  helpImproveAtlas: boolean("help_improve_atlas").notNull().default(false),
   createdAt: created(),
   updatedAt: updated(),
 });
@@ -440,6 +443,57 @@ export const extractions = pgTable(
     updatedAt: updated(),
   },
   (t) => [uniqueIndex("extractions_capture_ordinal").on(t.captureId, t.ordinal), index("extractions_project").on(t.projectId)],
+);
+
+// ---- Learning from use (phase S) ----
+
+/**
+ * A thumbs up or down on an answer, with "What was wrong?" (conversational plan, section 21). One per
+ * person per answer, which they can change; tied to the answer's "as of", however late it is given (LF6).
+ * Only the asker sees an answer, so only they give feedback on it.
+ */
+export const answerFeedback = pgTable(
+  "answer_feedback",
+  {
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    personId: text("person_id").notNull().references(() => people.id),
+    rating: text("rating").$type<"up" | "down">().notNull(),
+    /** Their words; kept with their answer, never shown to anyone else. */
+    wrong: text("wrong"),
+    topic: text("topic").notNull(),
+    answerAsOf: instant("answer_as_of").notNull(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [primaryKey({ columns: [t.captureId, t.personId] })],
+);
+
+/** M36. A candidate for the eval set; the text only while logged and while the person allows it (LF1, LF2). */
+export const evalCandidates = pgTable(
+  "eval_candidates",
+  {
+    id: text("id").primaryKey(),
+    personId: text("person_id").notNull().references(() => people.id),
+    cause: text("cause").$type<EvalCause>().notNull(),
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    extractionId: text("extraction_id"),
+    /** Rule 6: one candidate per cause per answer or item ("thumbs_down:cap-1", "moved:cap-1-8"). */
+    dedupKey: text("dedup_key").notNull().unique(),
+    state: text("state").$type<EvalCandidateState>().notNull(),
+    text: text("text"),
+    detail: jsonb("detail").$type<EvalCandidateDetail>(),
+    loggedAt: instant("logged_at"),
+    decidedBy: text("decided_by"),
+    decidedAt: instant("decided_at"),
+    note: text("note"),
+    caseText: text("case_text"),
+    expected: text("expected"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("eval_candidates_person").on(t.personId, t.state)],
 );
 
 // ---- Notices (D15) ----

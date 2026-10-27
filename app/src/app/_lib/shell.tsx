@@ -4,6 +4,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import type { NavItem } from "@/components/shell/sidebar";
 import { getDb } from "@/db/client";
 import * as t from "@/db/schema";
+import { helpImproveAtlas } from "@/queries/chat";
 import { projectReader } from "@/queries/project";
 import { asOfLabel, requestNow } from "./clock";
 import { currentViewer, VIEWERS } from "./viewer";
@@ -29,7 +30,7 @@ export async function ViewerShell({ breadcrumb, activeHref, children }: { breadc
         ],
         clients: customers.map((c) => ({ label: c, href: `/projects?client=${encodeURIComponent(c)}`, count: projects.filter((p) => p.customer === c).length })),
         internal,
-        viewer: { name: viewer.name, title: viewer.title, initials: viewer.initials },
+        viewer: { name: viewer.name, title: viewer.title, initials: viewer.initials, helpImproveAtlas: await helpImproveAtlas(db, viewer.id) },
         activeHref,
       }}
       header={{

@@ -38,6 +38,7 @@ import {
 } from "@/commands/capture";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
+import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonWithAtlas, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
 import { getDb } from "@/db/client";
@@ -117,6 +118,18 @@ export async function acceptFromChat(captureId: string, itemId: string): Promise
     }
     await decideExtraction(ctx, itemId, { type: "accept" });
   }, "Accepted.");
+}
+
+// ---- Learning from use (phase S) ----
+
+/** A thumbs up or down on an answer, with "What was wrong?"; giving it again changes it (LF6). */
+export async function rateAnswer(captureId: string, rating: "up" | "down", wrong?: string): Promise<ActionResult> {
+  return run((ctx) => giveFeedback(ctx, captureId, { rating, wrong }), wrong?.trim() ? "Thanks. That helps." : "Thanks.");
+}
+
+/** "Help improve Atlas": off deletes their candidates still waiting (LF2). */
+export async function setHelpImproveAtlasAction(on: boolean): Promise<ActionResult> {
+  return run((ctx) => setHelpImproveAtlas(ctx, on), on ? "On. What Atlas gets wrong or cannot answer goes to the team building DPM." : "Off. Anything of yours they had not looked at yet is deleted.");
 }
 
 // ---- Conversations (M18, section 16) ----

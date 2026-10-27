@@ -10,10 +10,10 @@ import { startReview } from "@/app/actions";
 import { getDb } from "@/db/client";
 import type { Answer } from "@/domain/question";
 import { suggestionsAfter } from "@/domain/topics";
-import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
+import { getConversationList, getThread, helpImproveAtlas, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
 import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
-import { AcceptItem, CopyReply, Suggestions } from "./reply-tools";
+import { AcceptItem, AnswerFeedback, CopyReply, Suggestions } from "./reply-tools";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
@@ -37,6 +37,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
   if (thread && !thread.found) notFound();
   const open = thread?.found ? thread : null;
   const reading = !!open?.turns.some((c) => READING.has(c.state) || wording(c.answer, at));
+  const helpOn = await helpImproveAtlas(db, viewerId);
   return (
     <div className="flex min-h-0 flex-1">
       <RefreshWhile active={reading} />
@@ -67,7 +68,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
           {open ? (
             <>
               {open.conversation.state === "archived" && <p className="type-caption text-fg-3">This conversation is archived. Sending a message brings it back.</p>}
-              <Messages thread={open} at={at} />
+              <Messages thread={open} at={at} helpOn={helpOn} />
             </>
           ) : (
             <AtlasLine>
@@ -99,10 +100,10 @@ function ConversationLink({ c, open }: { c: ConversationRow; open: boolean }) {
 }
 
 /** Every message and Atlas's reply to each, with the notices that belong here, in time order. */
-function Messages({ thread, at }: { thread: Thread; at: Date }) {
+function Messages({ thread, at, helpOn }: { thread: Thread; at: Date; helpOn: boolean }) {
   const last = thread.turns.at(-1)?.id;
   const items = [
-    ...thread.turns.map((c) => ({ at: c.messageAt.getTime(), key: c.id, node: <Turn key={c.id} capture={c} at={at} last={c.id === last} /> })),
+    ...thread.turns.map((c) => ({ at: c.messageAt.getTime(), key: c.id, node: <Turn key={c.id} capture={c} at={at} last={c.id === last} helpOn={helpOn} /> })),
     ...thread.notices.map((n) => ({
       at: n.at.getTime(),
       key: n.id,
@@ -159,7 +160,7 @@ function YourMessage({ capture }: { capture: ChatCapture }) {
  * Sections 15 and 17: the reply to a question. Atlas's words (or DPM's own) over cards drawn from the
  * asker's data, then the time it was given, Copy, and on the latest reply one or two follow-ups.
  */
-function AnswerBlock({ answer, last }: { answer: Answer; last: boolean }) {
+function AnswerBlock({ capture, answer, last, helpOn }: { capture: ChatCapture; answer: Answer; last: boolean; helpOn: boolean }) {
   const copy = [answer.text, ...answer.cards.map((c) => `- ${c.title}${c.detail ? `: ${c.detail}` : ""}`), ...(answer.more ? [answer.more.label] : [])].join("\n");
   return (
     <AtlasLine>
@@ -197,16 +198,17 @@ function AnswerBlock({ answer, last }: { answer: Answer; last: boolean }) {
           )}
         </ul>
       )}
-      <span className="flex items-center gap-2 type-micro text-fg-3">
+      <span className="flex flex-wrap items-center gap-2 type-micro text-fg-3">
         <span>As of {clockTime(new Date(answer.asOf))}</span>
         <CopyReply text={copy} />
+        <AnswerFeedback captureId={capture.id} given={capture.feedback} helpOn={helpOn} />
       </span>
       {last && <Suggestions asks={suggestionsAfter(answer.topic)} />}
     </AtlasLine>
   );
 }
 
-function Turn({ capture, at, last }: { capture: ChatCapture; at: Date; last: boolean }) {
+function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; last: boolean; helpOn: boolean }) {
   const waiting = capture.state === "proposed" || capture.state === "reviewing";
   const reading = READING.has(capture.state);
   const rows = [
@@ -230,7 +232,7 @@ function Turn({ capture, at, last }: { capture: ChatCapture; at: Date; last: boo
     return (
       <>
         <YourMessage capture={capture} />
-        <AnswerBlock answer={capture.answer} last={last} />
+        <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />
       </>
     );
   }
@@ -274,7 +276,7 @@ function Turn({ capture, at, last }: { capture: ChatCapture; at: Date; last: boo
           </Link>
         )}
       </AtlasLine>
-      {capture.answer && <AnswerBlock answer={capture.answer} last={last} />}
+      {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
     </>
   );
 }

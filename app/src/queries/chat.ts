@@ -43,6 +43,8 @@ export type ChatCapture = {
   line: string;
   /** Section 15: DPM's answer, when the message asked something, as given then. */
   answer: Answer | null;
+  /** Phase S: their thumbs up or down on that answer, and what was wrong. */
+  feedback: { rating: "up" | "down"; wrong: string | null } | null;
 };
 
 /** D15: what Atlas told the viewer about their reports ("Alicia approved your risk: ..."), newest first. */
@@ -216,6 +218,21 @@ function answerOf(stored: unknown): Answer | null {
   };
 }
 
+/** Phase S: the viewer's own "Help improve Atlas", off until they turn it on. */
+export async function helpImproveAtlas(conn: Conn, viewerId: string): Promise<boolean> {
+  const [p] = await conn.select({ on: t.people.helpImproveAtlas }).from(t.people).where(eq(t.people.id, viewerId));
+  return p?.on ?? false;
+}
+
+/** Phase S: the author's own feedback on the answer; only ever theirs. */
+async function feedbackOf(conn: Conn, captureId: string, authorId: string): Promise<ChatCapture["feedback"]> {
+  const [f] = await conn
+    .select({ rating: t.answerFeedback.rating, wrong: t.answerFeedback.wrong })
+    .from(t.answerFeedback)
+    .where(and(eq(t.answerFeedback.captureId, captureId), eq(t.answerFeedback.personId, authorId)));
+  return f ?? null;
+}
+
 /** One message and what Atlas made of it, counted per project as the review counts them. */
 async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<ChatCapture> {
   const items = (await conn.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id)).orderBy(t.extractions.ordinal)).map(itemOf);
@@ -251,5 +268,6 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     needsProject: counts.needsProject,
     line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
     answer: answerOf(capture.answer),
+    feedback: capture.answer ? await feedbackOf(conn, capture.id, capture.authorId) : null,
   };
 }

@@ -14,6 +14,7 @@
     "db:reset": "tsx scripts/db-reset.ts",
     "atlas:live": "tsx --env-file=.env.local scripts/atlas-live.ts",
     "atlas:eval": "tsx --env-file=.env.local scripts/atlas-eval.ts",
+    "atlas:usage": "tsx --env-file-if-exists=.env.local scripts/atlas-usage.ts",
     "e2e": "playwright test"
   },
   "dependencies": {
