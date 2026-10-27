@@ -6,6 +6,7 @@ import { applyCaptureEvent, type CaptureRecord } from "./machines/capture";
 import { checkQuestion, ruleQuestion, topicOf } from "./question";
 import { suggestionsAfter } from "./topics";
 import { namesPerson } from "./topics/mentions";
+import { aboutAsker, ownedMatches, ownedPhrase, peopleAsks, whoIsMeant } from "./topics/people";
 import { GREETING } from "./topics/small-talk";
 import { whyAsks, whyField, whyWords } from "./topics/why";
 
@@ -19,7 +20,7 @@ describe("the rule, without a model (QA8)", () => {
     ["What's blocked on Forager?", "blocked", "forager"],
     ["Is GQ & Academy on track?", "project_status", "gq"],
     ["how is forager doing", "project_status", "forager"],
-    ["What did Andre say about pricing?", "other", null],
+    ["What did Andre say about pricing?", "people", null],
   ] as const)("%s is a question about %s", (text, topic, projectId) => {
     expect(ruleQuestion(ctx(text))).toEqual({ asked: text, topic, projectId });
   });
@@ -119,8 +120,8 @@ describe("section 18: the new topics by the rule", () => {
     ["Was I mentioned on Forager?", "mentions"],
     ["Any mentions?", "mentions"],
     ["Has anyone named me?", "mentions"],
-    // A question about another person is not in this plan (section 18): never answered as the asker's mentions
-    ["Did Kemar mention the vendor?", "other"],
+    // Phase H, PP8: what another person said is never answered, and never as the asker's mentions
+    ["Did Kemar mention the vendor?", "people"],
   ] as const)("mentions only about the asker: %s is %s", (text, topic) => {
     expect(ruleQuestion(ctx(text))?.topic).toBe(topic);
   });
@@ -497,5 +498,130 @@ describe("phase C: which of the four answers the words ask for", () => {
     ["Why was the trend model moved?", null],
   ] as const)("WY6: %s is about its %s", (asked, field) => {
     expect(whyField(asked)).toBe(field);
+  });
+});
+
+describe("phase H: questions about people, by the rule (PP1 to PP8)", () => {
+  it.each([
+    ["What is Kemar working on?", "people"],
+    ["What's Kemar Brown working on?", "people"],
+    ["What’s on Jodian’s plate?", "people"],
+    ["What is Jodian doing?", "people"],
+    ["What are Kemar and Jodian working on?", "people"],
+    ["Is Kemar overloaded?", "people"],
+    ["How busy is Jodian?", "people"],
+    ["What's Kemar's workload?", "people"],
+    ["Who owns the store feed?", "people"],
+    ["Who is working on #151?", "people"],
+    ["Who has #152?", "people"],
+    ["Who owns the feed blocker?", "people"],
+    ["Whose is the trend model?", "people"],
+    ["What did Andre say about pricing?", "people"],
+    ["Show me Kemar's updates", "people"],
+    // Phase R
+    ["Wah Kemar a work pon?", "people"],
+    ["Wah deh pon Jodian plate?", "people"],
+    ["A who own di store feed?", "people"],
+    // The asker's own, and other topics, keep theirs
+    ["What am I working on?", "my_work"],
+    ["What should I be working on?", "my_work"],
+    ["What's on my plate?", "my_work"],
+    ["Wah mi a work pon?", "my_work"],
+    ["Who has mentioned me?", "mentions"],
+    ["What's new with Kyle?", "updates"],
+    ["What are today's updates?", "updates"],
+    ["Why is Kemar late?", "why"],
+    ["What's blocked on Forager?", "blocked"],
+    ["Has Kyle sent the feed?", "other"],
+  ] as const)("%s is %s", (text, topic) => {
+    expect(topicOf(text)).toBe(topic);
+  });
+
+  it("the three answers: whose a record is, what someone said (never), or what they have", () => {
+    expect(peopleAsks("Who owns the store feed?")).toBe("owner");
+    expect(peopleAsks("A who own di store feed?")).toBe("owner");
+    expect(peopleAsks("What did Andre say about pricing?")).toBe("said");
+    expect(peopleAsks("Did Kemar mention the vendor?")).toBe("said");
+    expect(peopleAsks("What is Kemar working on?")).toBe("work");
+    expect(peopleAsks("Is Kemar overloaded?")).toBe("work");
+  });
+
+  it("PP5: what an owner is asked of, without its article", () => {
+    expect(ownedPhrase("Who owns the store feed?")).toBe("store feed");
+    expect(ownedPhrase("A who own di store feed?")).toBe("store feed");
+    expect(ownedPhrase("Who is working on #151?")).toBe("#151");
+    expect(ownedPhrase("Who's the owner of the Trend model")).toBe("trend model");
+    expect(ownedPhrase("What is Kemar working on?")).toBeNull();
+  });
+
+  it("PP5: a number or the whole title, then the phrase said, then every word of it", () => {
+    const things = [
+      { title: "Store sales feed access", number: "#151" },
+      { title: "Store feed connector", number: "#152" },
+      { title: "Trend model", number: null },
+      { title: "Trend scoring model", number: "#147" },
+    ];
+    expect(ownedMatches("#151", things).map((x) => x.title)).toEqual(["Store sales feed access"]);
+    expect(ownedMatches("store feed", things).map((x) => x.title)).toEqual(["Store feed connector"]);
+    expect(ownedMatches("trend model", things).map((x) => x.title)).toEqual(["Trend model"]);
+    expect(ownedMatches("sales feed", things).map((x) => x.title)).toEqual(["Store sales feed access"]);
+    expect(ownedMatches("feed", things).map((x) => x.title)).toEqual(["Store sales feed access", "Store feed connector"]);
+    expect(ownedMatches("store feed on forager", things).map((x) => x.title)).toEqual(["Store feed connector"]);
+    expect(ownedMatches("#999", things)).toEqual([]);
+    expect(ownedMatches("pricing", things)).toEqual([]);
+  });
+
+  const SHARED = [
+    { id: "kemar", name: "Kemar Brown" },
+    { id: "jodian", name: "Jodian Taylor" },
+    { id: "kyle", name: "Kyle" },
+    { id: "mark", name: "Mark Lee" },
+  ];
+
+  it("who is meant, by the one rule for names: a full name, a first name in any case, a contact's one name", () => {
+    expect(whoIsMeant("What is Kemar working on?", SHARED)).toEqual({ kind: "one", id: "kemar" });
+    expect(whoIsMeant("what is kemar brown working on", SHARED)).toEqual({ kind: "one", id: "kemar" });
+    expect(whoIsMeant("What's on Jodian's plate?", SHARED)).toEqual({ kind: "one", id: "jodian" });
+    expect(whoIsMeant("What is Kyle doing?", SHARED)).toEqual({ kind: "one", id: "kyle" });
+    // W-D1: a name that is also a word needs its capital
+    expect(whoIsMeant("what will mark be doing", SHARED)).toEqual({ kind: "nobody" });
+    expect(whoIsMeant("What is Mark doing?", SHARED)).toEqual({ kind: "one", id: "mark" });
+    // The first named, and a full name before a first name
+    expect(whoIsMeant("What are Jodian and Kemar working on?", SHARED)).toEqual({ kind: "one", id: "jodian" });
+    expect(whoIsMeant("What are Jodian and Kemar Brown working on?", SHARED)).toEqual({ kind: "one", id: "kemar" });
+  });
+
+  it("PP1: a name outside the people searched is nobody, the same as a name nobody has", () => {
+    expect(whoIsMeant("What is Andre working on?", SHARED)).toEqual({ kind: "nobody" });
+    expect(whoIsMeant("What is Zed working on?", SHARED)).toEqual({ kind: "nobody" });
+    expect(whoIsMeant("What is she working on?", SHARED)).toEqual({ kind: "nobody" });
+  });
+
+  it("PP2: a first name two of them share is unsure, and only they are listed; a full name settles it", () => {
+    const two = [...SHARED, { id: "kemar-s", name: "Kemar Smith" }];
+    expect(whoIsMeant("What is Kemar working on?", two)).toEqual({ kind: "which", ids: ["kemar", "kemar-s"] });
+    expect(whoIsMeant("What is Kemar Smith working on?", two)).toEqual({ kind: "one", id: "kemar-s" });
+  });
+
+  it("PP4: the asker by their own name is my_work, through checkQuestion", () => {
+    const people = [
+      { personId: "kemar", name: "Kemar Brown", role: "member" as const, tie: "Data engineer" },
+      { personId: "jodian", name: "Jodian Taylor", role: "member" as const, tie: "Intern" },
+    ];
+    const projects = [{ ...PROJECTS[0], people }];
+    const kemar = { id: "kemar", name: "Kemar Brown" };
+    expect(aboutAsker("What is Kemar working on?", kemar, projects)).toBe(true);
+    expect(aboutAsker("What is Jodian working on?", kemar, projects)).toBe(false);
+    expect(aboutAsker("What did Kemar say?", kemar, projects)).toBe(false);
+    const check = (asked: string) => checkQuestion({ asked, topic: "people", projectId: null }, { text: asked, projects, author: kemar })?.topic;
+    expect(check("What is Kemar working on?")).toBe("my_work");
+    expect(check("What's on Kemar Brown's plate?")).toBe("my_work");
+    expect(check("What is Jodian working on?")).toBe("people");
+    // Without the author (an older caller), the topic stands
+    expect(checkQuestion({ asked: "What is Kemar working on?", topic: "people", projectId: null }, { text: "What is Kemar working on?", projects })?.topic).toBe("people");
+  });
+
+  it("suggests what to ask next", () => {
+    expect(suggestionsAfter("people")).toEqual(["What's blocked?", "What's due this week?"]);
   });
 });

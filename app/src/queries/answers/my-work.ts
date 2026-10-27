@@ -2,10 +2,20 @@
 // Blocked first, then In progress, then To do, each by due date; the milestones they own that are not
 // done; and the live BRAID entries they own. Read through getProject per project they can read, so
 // work on a project they have left is never listed (CQ3), and each card opens its project.
+import type { ProjectWorkItem } from "../project";
 import { needsYou } from "./needs-me";
 import { capped, dayDate, forecastText, listed, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder, type DraftCard } from "./shared";
 
 const ORDER = ["blocked", "in_progress", "to_do"] as const;
+
+/** Blocked first, then In progress, then To do, each by due date. Phase H lists someone else's work the same way. */
+export function workOrder(a: ProjectWorkItem, b: ProjectWorkItem): number {
+  return (
+    ORDER.indexOf(a.state as (typeof ORDER)[number]) - ORDER.indexOf(b.state as (typeof ORDER)[number]) ||
+    (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") ||
+    workTitle(a).localeCompare(workTitle(b))
+  );
+}
 
 export const myWork: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
   const views = await projectsAsked(conn, viewerId, projectId, now);
@@ -14,12 +24,7 @@ export const myWork: AnswerBuilder = async (conn, viewerId, { projectId }, now) 
       .filter((w) => w.owner?.id === viewerId && w.state !== "done" && w.state !== "cancelled")
       .map((w) => ({ v, w })),
   );
-  work.sort(
-    (a, b) =>
-      ORDER.indexOf(a.w.state as (typeof ORDER)[number]) - ORDER.indexOf(b.w.state as (typeof ORDER)[number]) ||
-      (a.w.dueDate ?? "9999").localeCompare(b.w.dueDate ?? "9999") ||
-      workTitle(a.w).localeCompare(workTitle(b.w)),
-  );
+  work.sort((a, b) => workOrder(a.w, b.w));
   const milestones = views.flatMap((v) => milestonesOf(v).filter((m) => m.owner?.id === viewerId && m.state !== "done").map((m) => ({ v, m })));
   milestones.sort((a, b) => a.m.forecastDate.localeCompare(b.m.forecastDate));
   const entries = views.flatMap((v) => v.braid.entries.filter((e) => e.owner?.id === viewerId && e.onLog).map((e) => ({ v, e })));

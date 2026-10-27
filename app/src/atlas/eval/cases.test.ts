@@ -39,6 +39,17 @@ describe("evaluation cases", () => {
     }
   });
 
+  it("phase H: the rule (no model) reads each people case as it should, PP4 included", async () => {
+    const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
+    const people = EVAL_CASES.filter((c) => c.id.startsWith("h-"));
+    expect(people.length).toBeGreaterThanOrEqual(9);
+    for (const c of people) {
+      const ctx = caseContext(c, contexts);
+      const score = scoreCase(c, [], ctx, ruleQuestion(ctx));
+      expect([score.missing, score.forbidden], c.id).toEqual([[], []]);
+    }
+  });
+
   it("Andre's data has nothing of Forager's, and Alicia's has her two projects", async () => {
     const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
     expect(contexts.andre.projects.map((p) => p.id)).toEqual(["insights"]);

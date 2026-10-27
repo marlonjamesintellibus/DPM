@@ -8,6 +8,7 @@ import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
+import { aboutAsker } from "./topics/people";
 import { GREETING, smallTalk } from "./topics/small-talk";
 import { subjectById, subjectIn, type WhySubject } from "./topics/why";
 import { undo } from "./topics/undo";
@@ -37,14 +38,19 @@ export type AskedQuestion = {
  * QA3, QA6: only the asker's own projects; QA5: an unknown topic is "other"; the words must be theirs.
  * CQ13: small talk only when the whole message is, so a greeting with an update is the update alone.
  */
-export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<CheckContext, "text" | "projects" | "earlier">): AskedQuestion | null {
+export function checkQuestion(
+  raw: RawQuestion | null | undefined,
+  ctx: Pick<CheckContext, "text" | "projects" | "earlier"> & Partial<Pick<CheckContext, "author">>,
+): AskedQuestion | null {
   if (!raw) return null;
-  const topic = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
-  if (topic === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
+  const said = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
+  if (said === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
   // Phase L: "Undo that" is the asker's command only as the whole message, whatever Atlas read
-  if (topic === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
+  if (said === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
   const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
+  // Phase H, PP4: Kemar asking "What is Kemar working on?" asks about his own work
+  const topic = said === "people" && ctx.author && aboutAsker(asked, ctx.author, ctx.projects) ? "my_work" : said;
   const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
   // Phase C, WY1: a subject outside the asker's lists is no subject, never a sign that it exists
   const subject = topic === "why" ? subjectById(raw.subjectId, ctx.projects) : null;

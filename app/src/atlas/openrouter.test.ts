@@ -69,10 +69,10 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-15's words and order (phase C added why; phase L why_filed, correction and undo); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-15");
+  it("the topics come from domain/topics in read-wave3-h's words and order (phase C added why; phase L why_filed, correction and undo; phase H people); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-wave3-h");
     expect(SYSTEM_PROMPT).toContain(
-      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
     expect(questionSchema.shape.topic.options).toEqual([
       "needs_me",
@@ -82,6 +82,7 @@ describe("the request", () => {
       "project_status",
       "updates",
       "mentions",
+      "people",
       "why",
       "why_filed",
       "correction",
@@ -95,6 +96,14 @@ describe("the request", () => {
   it("phase C: a why question names its subject by a listed id, null for a person (WY1, WY8)", () => {
     expect(SYSTEM_PROMPT).toContain("subjectId, for topic why only: the id of the listed project, record or BRAID entry the question is about");
     expect(SYSTEM_PROMPT).toContain('A why about a person ("Why is Kemar late?") is topic why with subjectId null');
+  });
+
+  it("phase H: another person's work or who owns something is people; the author by name is my_work; messages are never shared (PP4, PP5, PP8)", () => {
+    expect(SYSTEM_PROMPT).toContain("DPM answers with what they have on record, never a reason about them.");
+    expect(SYSTEM_PROMPT).toContain('or about who owns something ("Who owns the store feed?") is topic people');
+    expect(SYSTEM_PROMPT).toContain('About the author by their own name ("What is Kemar working on?" from Kemar) it is my_work.');
+    expect(SYSTEM_PROMPT).toContain("DPM never shares anyone's messages.");
+    expect(questionSchema.safeParse({ asked: "What is Kemar working on?", topic: "people", projectId: null }).success).toBe(true);
     expect(questionSchema.safeParse({ asked: "Why?", topic: "why", projectId: null, subjectId: "wi-151" }).success).toBe(true);
     // QA7 still holds for a question that leaves it out
     expect(questionSchema.safeParse({ asked: "Why?", topic: "why", projectId: null }).success).toBe(true);

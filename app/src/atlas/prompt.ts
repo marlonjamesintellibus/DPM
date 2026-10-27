@@ -23,8 +23,10 @@ import { CONFIDENCES } from "../domain/shared";
 // commands, and a record change said about a line is an item. Each command says who decides it (rule 10):
 // a report of someone else's decision is never the author's. Phase C, the why topic and its subjectId (WY1
 // to WY8). Phase L, "Undo that", "Why did you file that?" and corrections that teach Atlas a name (M30, M31).
-// read-15 (W2-D2): with no answer open, nothing is a command.
-export const PROMPT_VERSION = "read-15";
+// read-15 (W2-D2): with no answer open, nothing is a command. Wave 3, phase H: the people topic, what
+// someone else has or who owns something (PP1 to PP8); about the author by name it is my_work (PP4), and a
+// why about a person is answered with what they have (WY8).
+export const PROMPT_VERSION = "read-wave3-h";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -83,7 +85,10 @@ Questions
 - projectId: the listed project the question names, or null. Never a project that is not listed.
 - A why question is topic why: why something has its status ("Why is Forager at risk?"), what holds it up ("What's holding up the trend model?"), when it was decided ("When did we decide to drop the TikTok scrape?") or why it changed ("Why was #145 moved to Friday?"). It asks, even when it names a change: it is never an update.
 - subjectId, for topic why only: the id of the listed project, record or BRAID entry the question is about (a decision is a BRAID entry). null when it names none of them; never an id that is not listed. For every other topic subjectId is null.
-- A why about a person ("Why is Kemar late?") is topic why with subjectId null. DPM answers about records, not people.
+- A why about a person ("Why is Kemar late?") is topic why with subjectId null. DPM answers with what they have on record, never a reason about them.
+- A question about another person's work ("What is Kemar working on?", "What's on Jodian's plate?", "Is Kemar overloaded?") or about who owns something ("Who owns the store feed?") is topic people, with the person or the thing in asked as they said it. DPM works out who is meant and shows only what the asker may see.
+- About the author by their own name ("What is Kemar working on?" from Kemar) it is my_work.
+- Asking what someone said, sent or wrote ("What did Andre say about pricing?") is topic people too. DPM never shares anyone's messages.
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.

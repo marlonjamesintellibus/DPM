@@ -209,6 +209,28 @@ test("Phase C. Alicia asks why Forager is Off track; Kemar asks when the refresh
   await expect(page.getByRole("link", { name: /Move the daily refresh to 6am/ })).toHaveAttribute("href", "/projects/insights?view=table&log=decision");
 });
 
+test("Phase H. Alicia asks what Kemar is working on and who owns the store feed; Andre asks about Jodian, whom he shares no project with", async () => {
+  await viewAs("alicia", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What is Kemar working on?");
+  await box.press("Enter");
+  // Only what they share (CD9): his Forager work, never his Store Insights export
+  await expect(page.getByText(/^Kemar Brown has \d+ open work items?.* on projects you share; /)).toBeVisible();
+  await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveAttribute("href", "/projects/forager");
+  await expect(page.getByRole("link", { name: /#208 Weekly sales export/ })).toHaveCount(0);
+  await box.fill("Who owns the store feed?");
+  await box.press("Enter");
+  await expect(page.getByText("Kemar Brown owns #152 Store feed connector on Forager 2.0.")).toBeVisible();
+
+  // PP1: the same words as for a name nobody has
+  await viewAs("andre", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  await box.fill("What is Jodian working on?");
+  await box.press("Enter");
+  await expect(page.getByText("I can't tell you about them. Ask about someone you share a project with, by their name.")).toBeVisible();
+});
+
 test("8. Each person sees only their part of Kemar's note", async () => {
   // Alicia sees the Forager quotes, never the Store Insights sentence
   await viewAs("alicia", "/projects/forager?view=table");

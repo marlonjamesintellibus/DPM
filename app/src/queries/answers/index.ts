@@ -8,6 +8,7 @@ import { mentions } from "./mentions";
 import { myWork } from "./my-work";
 import { needsMe } from "./needs-me";
 import { other } from "./other";
+import { people } from "./people";
 import { standing } from "./project-status";
 import type { AnswerBuilder } from "./shared";
 import { smallTalk } from "./small-talk";
@@ -25,6 +26,7 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   project_status: standing,
   updates,
   mentions,
+  people,
   why,
   why_filed: whyFiled,
   correction,
