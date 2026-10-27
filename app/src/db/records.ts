@@ -248,6 +248,7 @@ export async function loadBraidLog(conn: Conn, projectId: string): Promise<{ log
       switchReason: e.switchReason,
       stateBeforeSwitch: e.stateBeforeSwitch,
       expectedOn: e.expectedOn,
+      outcomesProposed: e.outcomesProposed,
     };
   }
   return { log, versions: new Map(entries.map((e) => [e.id, e.version])) };
@@ -280,6 +281,7 @@ function entryColumns(e: BraidEntryRecord) {
     switchReason: e.switchReason,
     stateBeforeSwitch: e.stateBeforeSwitch,
     expectedOn: e.expectedOn,
+    outcomesProposed: e.outcomesProposed,
   };
 }
 

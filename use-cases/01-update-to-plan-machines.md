@@ -1351,7 +1351,7 @@ open | waiting ──TIMER day after expectedOn (no outcome proposed)──▶ s
 
 D7 stands: only the PM or Lead decides these kinds. What changes is that a message can say so to them, as "it's cleared" already does for blockers.
 
-- New item kind `braid_outcome` with `outcome` (closed or realised for a risk, confirmed or broken for an assumption, met or late for a dependency) and `matchEntryId`. The author always confirms it (as E93).
+- `braid_resolve` gains `outcome` (closed or realised for a risk, confirmed or broken for an assumption, met or late for a dependency) with `matchEntryId`. The author always confirms it (as E93). (Planned as a new kind `braid_outcome`; see U3 built.)
 - On save: an author with the resolve right gets RESOLVE(outcome) as now; anyone else sends PROPOSE_OUTCOME.
 - Check 12 becomes: a capture may report, add a source, resolve where the author holds the right, or propose a resolution or outcome; never approve or decline.
 
@@ -1374,8 +1374,19 @@ inbox cause confirm_outcome:<entry> for the PM and Leads while outcomesProposed 
 | OC6 | A realised risk | Realised. Making it an issue stays the PM's kind switch (section 13); Atlas does not also propose an issue unless the words report a new problem |
 | OC7 | Outcome for a blocker or issue | Still `braid_resolve` (D7), unchanged |
 | OC8 | The proposer withdraws their capture item before save | Nothing sent, as now |
-| OC9 | The entry is merged or switched before the decider acts | The proposal follows the entry it became (as reports do, section 13) |
+| OC9 | The entry is merged or switched before the decider acts | The proposal follows the entry it became (as reports do, section 13). (Not built yet: a merge or switch leaves the proposal on the old entry, which is no longer live, so its item closes; whoever said it can say it again) |
 | OC10 | Health or judgement in the reason | Check 13 as now |
+
+### U3 built (27 Oct 2026)
+
+- **Model first:** `research/state-machines/js/models/braidOutcome.mjs` (2,576 states): OutcomeOnlyByLead, ProposalKeepsState, ConfirmMatchesCause and NoStaleProposals pass; three planted bugs each fail (a member's words end the risk; ending it leaves the proposals; nobody is asked). The model settled OC3: one proposal per person, a later one replacing theirs.
+- **Changed while building:** no new item kind. `braid_resolve` gains `outcome`, so the review, save, compare-and-set and audit paths blockers already use carry over. A resolve on a risk, assumption or dependency must say how it ended.
+- **M15:** PROPOSE_OUTCOME from open, mitigating, holding and waiting, for a member without the resolve right, in the kind's own outcomes; `outcomesProposed` on the record (migration `0008`); RESOLVE and KEEP_OPEN clear it; KEEP_OPEN widened to these states; cause `confirm_outcome` for the PM and Leads. The D10 follow-up moved into M15 (`followUpOf`, `withFollowUp`), so a PM who says "that risk happened" gets the same drafted issue as one who presses the button.
+- **Checks:** a missing or wrong outcome is refused ("say whether the risk closed or realised"); OC4 already so is No change; OC5 an entry still proposed, or already ended another way, is refused.
+- **Atlas:** prompt `read-8`. A listed risk, assumption or dependency that ended is a braid_resolve with its outcome; only when the words say it ended. "Never approve, resolve or close anything" became "never approve or decline; saying something ended only tells those who decide it".
+- **Screens:** Kemar's card says "Propose to Alicia, the PM: it's gone"; Alicia's own says "Mark it realised". Her inbox says "Kemar says it's gone; Jodian says it happened: Only Kemar can run the pipeline", with a button per outcome (the one said first) and Keep open. Keeping it open tells each person who said it ended.
+- **Evaluation:** `dependency-met`, `risk-closed`, `risk-realised` and `assumption-broken` added. `pipeline-evidence` now accepts either evidence or a proposed close: "Jodian ran the pipeline on her own" disproves "Only Kemar can run the pipeline", and Alicia still decides. The whole set passes 60 of 61 with GPT-6.1 Sol; the miss is `andre-decision` (D23), as before.
+- **Tests:** OC1 to OC5 in the machine (and in the property test over random events), the checks and against PGlite (`commands/braid-outcome.test.ts`), with OC6 (D10 follow-up) and keep-open notices. 866 unit tests and the 11-step browser story pass.
 
 ### U4. A reversed decision supersedes the old one
 

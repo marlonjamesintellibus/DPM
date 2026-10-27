@@ -8,6 +8,7 @@ import type { CaptureEvent, CaptureState } from "./machines/capture";
 import { applyItemEvent, isReady, UNDECIDED_STATES, type ExtractedItem, type ItemState } from "./machines/extracted-item";
 import type { BraidKind } from "./rights";
 import type { TargetType } from "./shared";
+import type { ResolveOutcome } from "./machines/braid-entry";
 
 /**
  * The record and field an item compares against: an update's target field, or the matched entry's
@@ -40,6 +41,8 @@ export type BraidIntent = {
   matchEntryId: string | null;
   /** Section 20, U2: a new dependency's promised date. */
   expectedOn?: string | null;
+  /** Section 20, U3: how a risk, assumption or dependency ended (RESOLVE). */
+  outcome?: ResolveOutcome;
 };
 
 export type SaveConflict = { itemId: string; key: string; saw: string | null; current: string | null };
@@ -103,7 +106,7 @@ export function planSave(
     const key = targetKey(item);
     const now = key === null ? null : valueOf(key);
     // Compare and set: a field that moved to anything but the item's new value is a conflict
-    const alreadyTrue = (kind === "update" && now === item.value) || (kind === "braid_resolve" && now === "resolved");
+    const alreadyTrue = (kind === "update" && now === item.value) || (kind === "braid_resolve" && now === (entry?.outcome ?? "resolved"));
     if (key !== null && now !== item.saw && !alreadyTrue) {
       conflicts.push({ itemId: item.id, key, saw: item.saw, current: now });
     } else if (kind === "update" && target && key !== null && item.value !== null) {
@@ -121,6 +124,7 @@ export function planSave(
         title: item.value ?? entry.title,
         matchEntryId: kind === "braid_same" || kind === "braid_resolve" ? entry.matchEntryId : null,
         ...(kind === "braid_new" && entry.expectedOn ? { expectedOn: entry.expectedOn } : {}),
+        ...(kind === "braid_resolve" && entry.outcome ? { outcome: entry.outcome } : {}),
       });
     } else {
       throw new Error(`item ${item.id}: nothing to apply`);

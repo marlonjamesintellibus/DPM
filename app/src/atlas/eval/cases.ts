@@ -9,6 +9,7 @@
 //                                      a dependency with a promised date adds "@<date>" (section 20, U2)
 //   same:<entryId>                     another report of an open entry
 //   resolve:<entryId>                  says a blocker or issue is cleared (D7)
+//   outcome:<entryId>=<outcome>        says a risk, assumption or dependency ended, and how (section 20, U3)
 // A key ending in * matches by prefix. An expected entry that is a list is met by any one of them.
 // ask (section 15): what the message asks, after the checks. A case without it must ask nothing.
 import type { EarlierTurn } from "../../domain/atlas-checks/types";
@@ -85,7 +86,7 @@ export const EVAL_CASES: EvalCase[] = [
     about: "work moving again, and the blocker cleared (D7, E93)",
     text: "Kyle sent the access, so #151 is moving again. Working on it now.",
     expect: ["upd:wi-151.state=in_progress", "resolve:br-feed-blocker"],
-    allow: ["same:br-feed-dependency"],
+    allow: ["same:br-feed-dependency", "outcome:br-feed-dependency=met"],
   },
   {
     id: "reopen",
@@ -177,6 +178,35 @@ export const EVAL_CASES: EvalCase[] = [
     allow: ["upd:ms-trend.forecast*"],
     forbidWords: ["the author", "by tomorrow"],
   },
+  // Section 20, U3: how a risk, assumption or dependency ended; a member's words only propose it
+  {
+    id: "dependency-met",
+    about: "a dependency delivered, and the blocker it caused cleared",
+    text: "Kyle finally gave us the store feed access.",
+    expect: ["outcome:br-feed-dependency=met", "resolve:br-feed-blocker"],
+    allow: ["upd:wi-151.state=in_progress", "upd:wi-151.state=done"],
+  },
+  {
+    id: "risk-closed",
+    about: "a risk that is gone",
+    text: "The pipeline risk is gone now, Jodian can run it on her own.",
+    expect: ["outcome:br-pipeline-risk=closed"],
+    allow: ["same:br-pipeline-risk"],
+  },
+  {
+    id: "risk-realised",
+    about: "a risk that happened",
+    text: "Jodian couldn't run the pipeline without me yesterday, so that risk happened.",
+    expect: ["outcome:br-pipeline-risk=realised"],
+    allow: ["new:issue:forager"],
+  },
+  {
+    id: "assumption-broken",
+    about: "an assumption that broke",
+    text: "Turns out the buyers aren't available the week of the 26th.",
+    expect: ["outcome:br-buyers-assumption=broken"],
+    allow: ["new:issue:forager", "new:risk:forager"],
+  },
   {
     id: "own-promise",
     about: "the author's own promise is not proposed (phase E)",
@@ -205,7 +235,8 @@ export const EVAL_CASES: EvalCase[] = [
     id: "pipeline-evidence",
     about: "evidence on an existing risk",
     text: "Jodian ran the pipeline on her own yesterday, no help from me.",
-    expect: ["same:br-pipeline-risk"],
+    // Section 20, U3: "Only Kemar can run the pipeline" is disproved, so proposing it closed is also right; Alicia decides
+    expect: [["same:br-pipeline-risk", "outcome:br-pipeline-risk=closed"]],
     allow: ["upd:ho-runbook.state=*"],
   },
   {
@@ -278,7 +309,7 @@ export const EVAL_CASES: EvalCase[] = [
     about: "a PM resolves a blocker (S13, D7)",
     text: "Kyle sent the store feed access this morning, so that blocker is gone.",
     expect: ["resolve:br-feed-blocker"],
-    allow: ["upd:wi-151.state=in_progress"],
+    allow: ["upd:wi-151.state=in_progress", "upd:wi-151.state=done", "outcome:br-feed-dependency=met"],
   },
   {
     id: "alicia-not-her-forecast",

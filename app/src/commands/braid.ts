@@ -15,6 +15,7 @@ import {
   braidReminderDue,
   dependencyDueFrom,
   draftEntry,
+  withFollowUp,
   decidersFor,
   isOnLog,
   type BraidActor,
@@ -206,23 +207,27 @@ export function resolveBraidEntry(ctx: CommandCtx, entryId: string, outcome?: Re
     const result = moved(r.outcome);
     let next = r.log;
     // D10: what follows is drafted for a PM or Lead to confirm in one step, never put on the log by the rule
-    const follow = followUpOf(next[entryId]);
-    if (follow && event.type === "RESOLVE") {
-      const id = `${entryId}-raised`;
-      if (!next[id]) {
-        const draft = { ...draftEntry({ id, projectId: loaded.projectId, kind: follow, title: entry.title }), links: [{ relation: "raised_from" as const, entryId }] };
-        next = { ...next, [id]: draft, [entryId]: { ...next[entryId], links: [...next[entryId].links, { relation: "related" as const, entryId: id }] } };
-      }
-    }
+    if (event.type === "RESOLVE") next = withFollowUp(next, entryId);
     const committed = await commit(tx, ctx, loaded, next, result, event.type === "RESOLVE" ? { outcome: outcome ?? null } : {});
     if (event.type === "RESOLVE") await noticeReporters(tx, ctx.now, next[entryId], ctx.actorId, { act: "resolved" });
     return committed;
   });
 }
 
-/** The owner of the blocked work, or a PM or Lead, says a proposed clearing is wrong; the blocker stays. */
+/**
+ * The owner of the blocked work, or a PM or Lead, says a proposed clearing is wrong; the blocker stays.
+ * Section 20, U3: a PM or Lead keeps a risk, assumption or dependency open, and whoever said it ended is told (OC2).
+ */
 export function keepOpen(ctx: CommandCtx, entryId: string, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
-  return act(ctx, entryId, { type: "KEEP_OPEN" }, opts);
+  return runCommand(ctx, async (tx) => {
+    const loaded = await loadEntry(tx, ctx, entryId, opts);
+    const said = loaded.entry.outcomesProposed.map((x) => x.by);
+    const r = applyToLog(loaded.log, entryId, { type: "KEEP_OPEN" }, braidCtx(ctx, loaded.actor, loaded.policy));
+    const committed = await commit(tx, ctx, loaded, r.log, moved(r.outcome));
+    const by = (await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, ctx.actorId)))[0]?.name.split(" ")[0] ?? "A PM or Lead";
+    await notice(tx, ctx.now, said, `${by} kept "${loaded.entry.title}" open.`, { type: "braid_entry", id: entryId, projectId: loaded.projectId, act: "kept_open" });
+    return committed;
+  });
 }
 
 /** The PM has seen the "New blocker" item. */
@@ -284,13 +289,6 @@ export function reportBraidEntry(ctx: CommandCtx, projectId: string, input: { ki
     const r = applyToLog(start, id, { type: "REPORT", source }, braidCtx(ctx, loaded.actor, loaded.policy));
     return commit(tx, ctx, { ...loaded, log }, r.log, moved(r.outcome), { reportedDirectly: true });
   });
-}
-
-/** D10: a risk realised becomes an issue; an assumption broken or a dependency late raises a risk. */
-function followUpOf(entry: BraidEntryRecord): BraidKind | null {
-  if (entry.kind === "risk" && entry.state === "realised") return "issue";
-  if ((entry.kind === "assumption" && entry.state === "broken") || (entry.kind === "dependency" && entry.state === "late")) return "risk";
-  return null;
 }
 
 /** D10: a PM or Lead confirms the follow up Atlas drafted, as it is or with a better title. It lands where their right puts it. */

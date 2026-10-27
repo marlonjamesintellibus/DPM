@@ -16,6 +16,7 @@ describe("evaluation cases", () => {
         const [type, rest] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
         if (type === "upd") expect(records, `${c.id}: ${key}`).toContain(rest.slice(0, rest.indexOf(".")));
         if (type === "same" || type === "resolve") expect(entries, `${c.id}: ${key}`).toContain(rest);
+        if (type === "outcome") expect(entries, `${c.id}: ${key}`).toContain(rest.split("=")[0]);
         if (type === "new") expect(projects, `${c.id}: ${key}`).toContain(rest.split(":")[1].split("@")[0]);
       }
     }

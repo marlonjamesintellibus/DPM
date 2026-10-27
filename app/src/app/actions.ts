@@ -25,6 +25,7 @@ import {
   type KindAnswer,
 } from "@/commands/braid";
 import { withArticle } from "@/domain/shared";
+import type { ResolveOutcome } from "@/domain/machines/braid-entry";
 import type { BraidKind } from "@/domain/rights";
 import {
   createCapture,
@@ -226,9 +227,12 @@ export async function resolveEntry(entryId: string): Promise<ActionResult> {
   return run((ctx) => resolveBraidEntry(ctx, entryId), "Resolved.");
 }
 
-/** Section 20, U2: a PM or Lead ends a due dependency, met or late. Late drafts its follow up (D10). */
-export async function endDependency(entryId: string, outcome: "met" | "late"): Promise<ActionResult> {
-  return run((ctx) => resolveBraidEntry(ctx, entryId, outcome), outcome === "met" ? "Marked met." : "Marked late.");
+/**
+ * Section 20, U2 and U3: a PM or Lead ends a risk, assumption or dependency as it ended. Realised, broken
+ * and late draft their follow up (D10).
+ */
+export async function endEntry(entryId: string, outcome: ResolveOutcome): Promise<ActionResult> {
+  return run((ctx) => resolveBraidEntry(ctx, entryId, outcome), `Marked ${outcome}.`);
 }
 
 /** Section 20, U2: a PM or Lead gives a dependency a new expected date. */

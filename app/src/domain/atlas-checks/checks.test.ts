@@ -568,3 +568,39 @@ describe("a promised date on a new dependency (section 20, U2)", () => {
     expect(promise("Kyle may not update the harvest docs by tomorrow", undefined, "risk")?.braid?.expectedOn).toBeUndefined();
   });
 });
+
+// Section 20, U3: a risk, assumption or dependency that ended is a braid_resolve with how it ended
+describe("outcomes from a message (section 20, U3)", () => {
+  const ended = (outcome: string | null, matchEntryId = "br-pipeline-risk", state?: string) => {
+    const ctx = ctxWith("The pipeline risk is gone, Jodian can run it on her own.");
+    if (state) ctx.projects = ctx.projects.map((p) => ({ ...p, braid: p.braid.map((e) => (e.id === matchEntryId ? { ...e, state } : e)) }));
+    return one(
+      { kind: "braid_resolve", projectId: "forager", routingReason: { basis: "target", evidence: "pipeline", label: "The pipeline risk" }, matchEntryId, outcome, quote: "The pipeline risk is gone", confidence: "high", rationale: "You say the risk is gone." },
+      ctx,
+    );
+  };
+
+  it("keeps the outcome, and the author confirms it", () => {
+    const { item } = ended("closed");
+    expect(item?.braid).toMatchObject({ kind: "risk", matchEntryId: "br-pipeline-risk", outcome: "closed" });
+    expect(item?.mark).toBe("needs_ok");
+  });
+
+  it("refuses a missing outcome, or one of another kind", () => {
+    expect(ended(null).dropped?.reason).toBe("say whether the risk closed or realised");
+    expect(ended("met").dropped?.reason).toBe("say whether the risk closed or realised");
+  });
+
+  it("OC4: already so is No change", () => {
+    expect(ended("closed", "br-pipeline-risk", "closed").item?.mark).toBe("no_change");
+  });
+
+  it("OC5: still waiting for approval, or already ended another way, is refused", () => {
+    expect(ended("closed", "br-pipeline-risk", "proposed").dropped?.reason).toBe(`"Only Kemar can run the pipeline" isn't on the log yet; its PM or Lead decides it first`);
+    expect(ended("closed", "br-pipeline-risk", "realised").dropped?.reason).toBe(`"Only Kemar can run the pipeline" has already ended`);
+  });
+
+  it("a dependency is met or late", () => {
+    expect(ended("met", "br-feed-dependency").item?.braid).toMatchObject({ kind: "dependency", outcome: "met" });
+  });
+});

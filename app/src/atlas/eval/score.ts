@@ -7,7 +7,8 @@ import type { EvalCase } from "./cases";
 
 export function itemKey(i: ExtractedItemDraft): string {
   if (i.target) return `upd:${i.target.id}.${i.target.field}=${i.target.newValue}`;
-  if (i.kind === "braid_resolve") return `resolve:${i.braid?.matchEntryId}`;
+  // Section 20, U3: a risk, assumption or dependency says how it ended
+  if (i.kind === "braid_resolve") return i.braid?.outcome ? `outcome:${i.braid.matchEntryId}=${i.braid.outcome}` : `resolve:${i.braid?.matchEntryId}`;
   if (i.braid?.match === "same_as") return `same:${i.braid.matchEntryId}`;
   // Section 20, U2: a dependency's promised date, as the server read it
   return `new:${i.braid?.kind}:${i.projectId ?? "none"}${i.braid?.expectedOn ? `@${i.braid.expectedOn}` : ""}`;

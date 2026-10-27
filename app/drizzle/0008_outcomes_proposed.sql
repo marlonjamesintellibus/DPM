@@ -1,0 +1,1 @@
+ALTER TABLE "braid_entries" ADD COLUMN "outcomes_proposed" jsonb DEFAULT '[]'::jsonb NOT NULL;

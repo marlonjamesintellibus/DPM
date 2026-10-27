@@ -14,6 +14,7 @@ import Leave from './models/leave.mjs';
 import BraidFollowUps from './models/braidFollowUps.mjs';
 import BraidKindSwitch from './models/braidKindSwitch.mjs';
 import DependencyDue from './models/dependencyDue.mjs';
+import BraidOutcome from './models/braidOutcome.mjs';
 
 // A smaller BRAID log for the Match plants that would otherwise explode
 // (repeated merges reshuffle sources into many combinations): 1 report, 2 entries
@@ -65,6 +66,8 @@ export const ROWS = [
   { spec: 'BraidKindSwitch', setting: 'as given', model: BraidKindSwitch(), expectFail: [] },
   // DependencyDue is section 20, U2: someone else's promise as a dependency with an expected date
   { spec: 'DependencyDue', setting: 'as given', model: DependencyDue(), expectFail: [] },
+  // BraidOutcome is section 20, U3: a message proposes an outcome; only a PM or Lead ends the entry
+  { spec: 'BraidOutcome', setting: 'as given', model: BraidOutcome(), expectFail: [] },
 ];
 
 // Planted bugs: each one must make a full check fail (the Atlas map's "make plants")
@@ -136,4 +139,7 @@ export const PLANTS = [
   { spec: 'DependencyDue', setting: 'bug: a later report moves the date', model: DependencyDue({ Bug: 'reportMovesDate' }), expectFail: ['DateMovesOnlyByLead'] },
   { spec: 'DependencyDue', setting: 'bug: the due item opens while it is still proposed', model: DependencyDue({ Bug: 'dueWhileProposed' }), expectFail: ['DueMatchesCause', 'DueOnlyOnLog'] },
   { spec: 'DependencyDue', setting: 'bug: a new date leaves the due item open', model: DependencyDue({ Bug: 'keepDue' }), expectFail: ['DueMatchesCause'] },
+  { spec: 'BraidOutcome', setting: "bug: a member's words end the risk", model: BraidOutcome({ Bug: 'proposalEnds' }), expectFail: ['OutcomeOnlyByLead'] },
+  { spec: 'BraidOutcome', setting: 'bug: ending it leaves the proposals on it', model: BraidOutcome({ Bug: 'keepProposals' }), expectFail: ['NoStaleProposals'] },
+  { spec: 'BraidOutcome', setting: 'bug: nobody is asked about a proposal', model: BraidOutcome({ Bug: 'noConfirmItem' }), expectFail: ['ConfirmMatchesCause'] },
 ];

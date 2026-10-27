@@ -7,6 +7,7 @@ import { itemOf } from "../db/records";
 import { weekday } from "../domain/dates";
 import * as t from "../db/schema";
 import { saveBlockers } from "../domain/machines/capture";
+import type { ResolveOutcome } from "../domain/machines/braid-entry";
 import { displayMark, type ExtractedItem, type ItemState, type WithdrawReason } from "../domain/machines/extracted-item";
 import { landsAs, type BraidKind, type ProjectRole } from "../domain/rights";
 import { mayReadCapture } from "../domain/routing";
@@ -175,6 +176,10 @@ export function setAsideLine(s: SetAside): string {
   return n ? `${plural(n, "part", "parts")} not used` : "";
 }
 
+/** Section 20, U3: what a PM or Lead's own words do, and how a member's are put to them. */
+export const OUTCOME_ACT: Record<ResolveOutcome, string> = { closed: "Close it", realised: "Mark it realised", confirmed: "Mark it confirmed", broken: "Mark it broken", met: "Mark it met", late: "Mark it late" };
+export const OUTCOME_SAID: Record<ResolveOutcome, string> = { closed: "it's gone", realised: "it happened", confirmed: "it held", broken: "it broke", met: "it was delivered", late: "it's late" };
+
 const WITHDRAWN_NOTE: Record<WithdrawReason, string | null> = {
   target_cancelled: "This issue was cancelled",
   left_project: "You are no longer in this project",
@@ -289,6 +294,13 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       if (d.kind === "braid_resolve") {
         const entry = entries.find((e) => e.id === d.braid!.matchEntryId);
         const role = authorRole(d.projectId);
+        // Section 20, U3: a risk, assumption or dependency ends as said by a PM or Lead; anyone else tells them
+        const outcome = d.braid.outcome;
+        if (outcome) {
+          if (role === "pm" || role === "lead") return OUTCOME_ACT[outcome];
+          const pm = memberships.find((m) => m.projectId === d.projectId && m.role === "pm" && m.state === "member" && m.personId !== capture.authorId);
+          return `${pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM"}: ${OUTCOME_SAID[outcome]}`;
+        }
         const owns = entry?.ownerId === capture.authorId || authorsHeld.some((w) => w.blockedLinks.includes(d.braid!.matchEntryId ?? ""));
         return role === "pm" || role === "lead" || owns ? "Resolve it" : "Tell the owner and the PM it is cleared";
       }
@@ -352,7 +364,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
             entryId: d.braid.matchEntryId,
             label:
               d.kind === "braid_resolve"
-                ? `Resolves: ${matchEntry?.title ?? d.braid.title}`
+                ? `${d.braid.outcome ? "Ends" : "Resolves"}: ${matchEntry?.title ?? d.braid.title}`
                 : d.braid.match === "new"
                   ? "New"
                   : `${d.braid.match === "same_as" ? "Same as" : "Related to"}: ${matchEntry?.title ?? d.braid.title}`,
