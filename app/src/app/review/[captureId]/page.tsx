@@ -30,7 +30,8 @@ async function Review({ params }: { params: PageProps<"/review/[captureId]">["pa
   const from = review.capture.kind === "voice" ? `your voice note at ${time}` : `your message at ${time}`;
   const state = review.capture.state;
   return (
-    <ViewerShell breadcrumb={["Today", "Review my update"]} activeHref="/">
+    // "Today" goes back to the chat, in the conversation this message came from
+    <ViewerShell breadcrumb={[{ label: "Today", href: `/?view=chat${review.capture.conversationId ? `&c=${review.capture.conversationId}` : ""}` }, "Review my update"]} activeHref="/">
       <PageHead title="Review my update">
         <span className="px-2.5 py-1 type-body text-fg-2">
           From {from}. {review.footer.split(". ")[0].replace(/\.$/, "")}.{" "}

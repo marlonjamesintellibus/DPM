@@ -1,8 +1,12 @@
+import Link from "next/link";
 import { AskAtlasLink } from "./ask-atlas";
 import { Icon } from "./icon";
 
+/** A crumb with an href goes back there ("Today" from a review goes back to its chat). */
+export type Crumb = string | { label: string; href: string };
+
 export type HeaderProps = {
-  breadcrumb: string[];
+  breadcrumb: Crumb[];
   asOf: string;
   roleLabel: string;
   /** The View as menu (L0); a plain button when not given. */
@@ -16,14 +20,23 @@ export function Header({ breadcrumb, asOf, roleLabel, roleMenu }: HeaderProps) {
   return (
     <header className="flex items-center gap-3 border-b border-line px-5 py-3">
       <nav aria-label="Breadcrumb" className="flex items-center gap-3">
-        {parents.map((crumb) => (
-          <span key={crumb} className="flex items-center gap-3">
-            <span className="type-body text-fg-3">{crumb}</span>
-            <Icon name="chevron-right" />
-          </span>
-        ))}
+        {parents.map((crumb) => {
+          const label = typeof crumb === "string" ? crumb : crumb.label;
+          return (
+            <span key={label} className="flex items-center gap-3">
+              {typeof crumb === "string" ? (
+                <span className="type-body text-fg-3">{label}</span>
+              ) : (
+                <Link href={crumb.href} className="type-body text-fg-3 hover:text-fg-1 hover:underline">
+                  {label}
+                </Link>
+              )}
+              <Icon name="chevron-right" />
+            </span>
+          );
+        })}
         <span aria-current="page" className="type-body-medium text-fg-1">
-          {current}
+          {typeof current === "string" ? current : current.label}
         </span>
       </nav>
       <div className="flex-1" />

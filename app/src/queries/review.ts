@@ -91,6 +91,8 @@ export type Review = {
     messageAt: Date;
     receivedAt: Date;
     state: string;
+    /** Section 16: the conversation the message is in, so the review can go back to it. */
+    conversationId: string | null;
   };
   author: PersonRef;
   /** The author's projects, for Move and for picking a project (M14). */
@@ -497,6 +499,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       messageAt: capture.messageAt,
       receivedAt: capture.receivedAt,
       state: capture.state,
+      conversationId: capture.conversationId,
     },
     author: author ?? { id: capture.authorId, name: capture.authorId },
     projects: authorProjects,
