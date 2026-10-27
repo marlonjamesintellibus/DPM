@@ -32,6 +32,7 @@ import {
   decideExtraction,
   discardCapture,
   openReview,
+  pickRecordExtraction,
   rematchExtraction,
   routeExtraction,
   saveCapture,
@@ -39,6 +40,7 @@ import {
   type Rematch,
 } from "@/commands/capture";
 import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
+import { answerClarification } from "@/commands/clarification";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
@@ -158,6 +160,17 @@ export async function cancelChatCommand(commandId: string): Promise<ActionResult
   return command((ctx) => cancelCommand(ctx, commandId));
 }
 
+// ---- Asking when unsure (phase D, M21) ----
+
+/** A button under Atlas's question: the option is checked again now (CL5); a second tap says how it ended. */
+export async function answerClarificationAction(clarificationId: string, option: string): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await answerClarification(ctx, clarificationId, option)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
 // ---- Learning from use (phase S) ----
 
 /**
@@ -215,6 +228,11 @@ export async function decideItem(itemId: string, decision: ExtractionDecision): 
 
 export async function rematchItem(itemId: string, to: Rematch): Promise<ActionResult> {
   return run((ctx) => rematchExtraction(ctx, itemId, to));
+}
+
+/** Phase D: which record an unsure update means, chosen on the review; choosing is confirming. */
+export async function pickRecord(itemId: string, recordId: string): Promise<ActionResult> {
+  return run((ctx) => pickRecordExtraction(ctx, itemId, recordId));
 }
 
 export async function moveItem(itemId: string, to: { projectId: string } | "keep_private"): Promise<ActionResult> {

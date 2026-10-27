@@ -6,7 +6,7 @@
 // Action that runs the capture commands as the author; nothing is applied until Save (S3). An update
 // with one item is decided and saved on its card in one step (section 19).
 import { useMemo, useState, useTransition } from "react";
-import { decideAndSave, decideItem, discardUpdate, moveItem, rematchItem, saveUpdate, type ActionResult } from "@/app/actions";
+import { decideAndSave, decideItem, discardUpdate, moveItem, pickRecord, rematchItem, saveUpdate, type ActionResult } from "@/app/actions";
 import { Card, FieldRow } from "@/components/ui/card";
 import { ActionNote, Button, KindChip } from "@/components/ui/controls";
 import { Icon } from "@/components/shell/icon";
@@ -356,6 +356,23 @@ function ItemCard({
             )}
           </span>
           {open && single && needsProject && <span className="type-caption text-warn">Pick a project first</span>}
+          {/* Phase D: Atlas was not sure which record the words mean; choosing one here is confirming it */}
+          {item.closeMatches && (item.closeMatches.chosen === "chat" ? (
+            <span className="type-caption text-fg-3">You chose this one in the chat</span>
+          ) : (
+            open &&
+            !item.closeMatches.chosen &&
+            item.closeMatches.others.length > 0 && (
+              <span className="flex flex-wrap items-center gap-1.5 type-caption text-fg-2" onClick={(e) => e.stopPropagation()}>
+                Or did you mean
+                {item.closeMatches.others.map((o) => (
+                  <Button key={o.id} variant="secondary" disabled={pending} onClick={() => run(() => pickRecord(item.id, o.id))}>
+                    {o.label}
+                  </Button>
+                ))}
+              </span>
+            )
+          ))}
         </div>
         {open && single ? (
           <div className="flex flex-col items-stretch gap-1.5" onClick={(e) => e.stopPropagation()}>

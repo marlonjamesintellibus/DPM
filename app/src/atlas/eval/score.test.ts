@@ -34,6 +34,19 @@ describe("scoreCase", () => {
     expect(scoreCase({ ...c, text: "#208 done, mi check it." }, [{ ...done, quote: "#208 done" }], KEMAR_CONTEXT)).toMatchObject({ pass: false, forbidden: ["upd:wi-208.state=done at high"] });
   });
 
+  it("phase D: the records a vague update is unsure between must be the ones expected; a sure case must not be unsure", async () => {
+    const { seededDb } = await import("../../test/seeded-db");
+    const { caseContext, evalContexts } = await import("./contexts");
+    const ctx = caseContext(byId("d-vague-feed"), await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false })));
+    const feed = { kind: "update" as const, projectId: "forager", routingReason: { basis: "target" as const, evidence: "store feed", label: "#151" }, targetId: "wi-151", field: "state", newValue: "in_progress", quote: "Worked on the store feed today", confidence: "medium" as const, rationale: "" };
+    expect(scoreCase(byId("d-vague-feed"), [{ ...feed, targetOptions: ["wi-151", "wi-152"] }], ctx)).toMatchObject({ pass: true, unsure: "records:wi-151,wi-152", hit: 2, expected: 2 });
+    expect(scoreCase(byId("d-vague-feed"), [feed], ctx)).toMatchObject({ pass: false, missing: ["unsure records:wi-151,wi-152"] });
+    const named = byId("d-named-feed");
+    const sure = { ...feed, targetId: "wi-152", quote: "#152 is in progress" };
+    expect(scoreCase(named, [sure], ctx)).toMatchObject({ pass: true, unsure: null });
+    expect(scoreCase(named, [{ ...sure, targetOptions: ["wi-152", "wi-151"] }], ctx)).toMatchObject({ pass: false, forbidden: ["unsure records:wi-151,wi-152"] });
+  });
+
   it("phase B: exactly the commands expected count; one more, or one where none is expected, fails", () => {
     const c = byId("b-approve-all");
     const one = (line: number) => ({ act: "approve", lines: [line], reason: null });

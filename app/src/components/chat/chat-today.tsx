@@ -15,6 +15,7 @@ import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
+import { ClarifyButtons } from "./clarify";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
@@ -245,7 +246,9 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
       <>
         <YourMessage capture={capture} />
         {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
+        {capture.answered && <AtlasLine>{capture.answered}</AtlasLine>}
         <CommandsBlock capture={capture} />
+        <ClarifyBlock capture={capture} />
       </>
     );
   }
@@ -297,7 +300,20 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
       </AtlasLine>
       {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
       <CommandsBlock capture={capture} />
+      <ClarifyBlock capture={capture} />
     </>
+  );
+}
+
+/** Phase D, M21: Atlas asks which one it means, with the options as buttons; once answered, what came of it. */
+function ClarifyBlock({ capture }: { capture: ChatCapture }) {
+  const c = capture.clarification;
+  if (!c) return null;
+  return (
+    <AtlasLine>
+      <span>{c.question}</span>
+      {c.state === "asked" ? <ClarifyButtons id={c.id} options={c.options} /> : c.outcome && <span className="type-caption text-fg-3">{c.outcome}</span>}
+    </AtlasLine>
   );
 }
 

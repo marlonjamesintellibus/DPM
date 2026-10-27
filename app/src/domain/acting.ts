@@ -2,8 +2,7 @@
 // answer's lines and says what it decides ("Approve the Kyle risk"): an act and the lines it could mean.
 // What Atlas says is untrusted, like a question (section 15): checkCommands keeps a command only for one
 // line of the open answer that offers that act to the asker (AC6, AC9), one card per line (AC8, CD1),
-// and never guesses between lines (AC7). Phase D's clarification is not built, so for now DPM says which
-// lines it could mean and asks for the name. A change to a record said in words ("Mark the second one
+// and never guesses between lines (AC7): DPM asks which, over the lines it could mean (phase D, M21). A change to a record said in words ("Mark the second one
 // done") is never a command here: it is an update in items, reviewed as any other.
 import type { CheckContext, OpenAnswer } from "./atlas-checks/types";
 import { WORD_ACTS, type WordAct } from "./machines/chat-command";
@@ -22,8 +21,8 @@ export type SaidCommand = { act: WordAct; line: number; reason: string | null };
 export type CommandNote =
   /** AC6: there is no answer open in this conversation, or it has no lines. */
   | { kind: "no_answer" }
-  /** AC6, AC7: no line fits, or more than one could; `lines` are the ones it could mean. */
-  | { kind: "which"; lines: readonly number[] }
+  /** AC6, AC7: no line fits, or more than one could; `lines` are the ones it could mean, `act` and `reason` what it said. */
+  | { kind: "which"; lines: readonly number[]; act: WordAct; reason: string | null }
   /** The line offers no such act to the asker ("Approve #145"). */
   | { kind: "not_offered"; act: WordAct; line: number }
   /** The model check's fix lines_now: the only lines it could mean are on projects the asker can no longer read. */
@@ -57,7 +56,7 @@ export function checkCommands(raw: readonly RawCommand[] | null | undefined, ope
     const offering = named.filter((n) => open.lines.some((l) => l.line === n && l.acts.includes(act)));
     const lines = offering.length ? offering : named;
     if (lines.length !== 1) {
-      note ??= { kind: "which", lines };
+      note ??= { kind: "which", lines, act, reason: c.reason?.trim() || null };
       continue;
     }
     const line = open.lines.find((l) => l.line === lines[0])!;
@@ -82,7 +81,8 @@ function either(names: readonly string[]): string {
 
 /**
  * What the chat says when a reply made no card. `names` are the titles of the lines it could mean that
- * the asker may still read; a line they can no longer read is never named (P10).
+ * the asker may still read; a line they can no longer read is never named (P10). When 2 or 3 of them are
+ * left, phase D asks which instead (M21), and this is not said.
  */
 export function commandNoteText(note: CommandNote, names: readonly string[]): string {
   switch (note.kind) {

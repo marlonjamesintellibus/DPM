@@ -81,6 +81,12 @@ export type ExtractedItemDraft = {
   ask?: { ownerId: string };
   /** Section 20, U7: work with no record, proposed to the PM and Leads (M37), owned by the author. */
   newWork?: { title: string; state: NewWorkState };
+  /**
+   * Phase D: an update whose words fit two or more of the author's records ("Worked on the feed" when #151
+   * and #152 both fit). ids: every record they could mean, each one the checks accept, the target first.
+   * chosen: where the author said which (M21 in the chat, or the review); until then it needs their OK.
+   */
+  closeMatches?: { ids: string[]; chosen: "chat" | "review" | null };
 };
 
 /** The states new work may start in: what the author said they are doing. */

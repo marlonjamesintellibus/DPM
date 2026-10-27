@@ -39,7 +39,15 @@ export type CaseScore = {
   asked: string | null;
   /** Phase B: what the reply decides after the checks: "approve@1", or the note when it made no card. */
   commands: string[];
+  /** Phase D: the records DPM would ask the author to choose between, "records:wi-151,wi-152", or null. */
+  unsure: string | null;
 };
+
+/** Phase D: the first item in the message whose words fit 2 or 3 records, as the question would offer them (M21). */
+function unsureKey(items: readonly ExtractedItemDraft[]): string | null {
+  const first = [...items].sort((a, b) => (a.spans[0]?.start ?? 0) - (b.spans[0]?.start ?? 0)).find((i) => i.closeMatches && i.closeMatches.ids.length <= 3);
+  return first ? `records:${[...first.closeMatches!.ids].sort().join(",")}` : null;
+}
 
 /** Phase B: a note's key, "note:which@1,2". */
 function noteKey(note: CommandNote): string {
@@ -84,6 +92,10 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   const commands = [...decided.kept.map((k) => `${k.act}@${k.line}`), ...(decided.note ? [noteKey(decided.note)] : [])];
   for (const k of c.commands ?? []) if (!commands.includes(k)) missing.push(k);
   for (const k of commands) if (!(c.commands ?? []).includes(k)) forbidden.push(`decides ${k}`);
+  // Phase D: exactly the records it is unsure between; a case without them must be sure
+  const unsure = unsureKey(items);
+  if (c.unsure && unsure !== c.unsure) missing.push(`unsure ${c.unsure}${unsure ? ` (got ${unsure})` : ""}`);
+  if (!c.unsure && unsure) forbidden.push(`unsure ${unsure}`);
   if (c.ask) {
     const topics = Array.isArray(c.ask.topic) ? c.ask.topic : [c.ask.topic];
     const projects = Array.isArray(c.ask.projectId) ? c.ask.projectId : [c.ask.projectId];
@@ -97,8 +109,8 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
   return {
     id: c.id,
     pass: missing.length === 0 && forbidden.length === 0,
-    expected: c.expect.length + (c.ask ? 1 : 0) + (c.commands?.length ?? 0) + (c.correct ? 1 : 0),
-    hit: c.expect.length + (c.ask ? 1 : 0) + (c.commands?.length ?? 0) + (c.correct ? 1 : 0) - missing.length,
+    expected: c.expect.length + (c.ask ? 1 : 0) + (c.commands?.length ?? 0) + (c.correct ? 1 : 0) + (c.unsure ? 1 : 0),
+    hit: c.expect.length + (c.ask ? 1 : 0) + (c.commands?.length ?? 0) + (c.correct ? 1 : 0) + (c.unsure ? 1 : 0) - missing.length,
     missing,
     extra,
     forbidden,
@@ -106,5 +118,6 @@ export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: C
     keys,
     asked,
     commands,
+    unsure,
   };
 }

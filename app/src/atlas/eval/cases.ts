@@ -18,6 +18,8 @@
 // commands (phase B): what a reply decides on the open answer, after the checks: "<act>@<line>" per card,
 //   or "note:<kind>[@<lines>]" when it made none ("note:which@1,2"). A case without it must decide nothing.
 // correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
+// unsure (phase D, M21): what DPM asks the author which of, after the checks: "records:<id>,<id>" for an
+//   update whose words fit 2 or 3 records. A case without it must leave no record unsure.
 import type { EarlierTurn, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
@@ -59,6 +61,8 @@ export type EvalCase = {
   answer?: OpenAnswer;
   /** Phase B: what the reply decides, after the checks (see the keys above). */
   commands?: string[];
+  /** Phase D: the records DPM asks the author to choose between (see the keys above). */
+  unsure?: string;
 };
 
 // Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
@@ -1054,5 +1058,29 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["*"],
     correct: { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" },
+  },
+  // Phase D: a vague update whose words fit two of the author's records names both; DPM asks which (M21).
+  // One that names its record never asks
+  {
+    id: "d-vague-feed",
+    about: "the store feed fits #151 and #152: both are options, the change is proposed once",
+    text: "Worked on the store feed today.",
+    expect: [["upd:wi-151.state=in_progress", "upd:wi-152.state=in_progress"]],
+    allow: ["same:br-feed-blocker"],
+    unsure: "records:wi-151,wi-152",
+  },
+  {
+    id: "d-vague-feed-patois",
+    about: "the same vague update in Patois",
+    text: "Mi did a work pon di store feed today.",
+    expect: [["upd:wi-151.state=in_progress", "upd:wi-152.state=in_progress"]],
+    allow: ["same:br-feed-blocker"],
+    unsure: "records:wi-151,wi-152",
+  },
+  {
+    id: "d-named-feed",
+    about: "words that name the record are never unsure",
+    text: "Worked on the store feed connector today, #152 is in progress.",
+    expect: ["upd:wi-152.state=in_progress"],
   },
 ];

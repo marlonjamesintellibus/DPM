@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { config } from "../config";
 import { landsAs, type BraidKind } from "../rights";
 import type { Confidence, ExtractedItemDraft } from "../shared";
-import { runChecks } from "./checks";
+import { retarget, runChecks } from "./checks";
 import { KEMAR_CONTEXT, KEMAR_NOTE, KEMAR_PROPOSALS } from "./kemar-note.fixture";
 import type { CheckContext, RawProposal } from "./types";
 
@@ -690,5 +690,53 @@ describe("a decision that reverses another (section 20, U4)", () => {
 
   it("only a new decision replaces a decision", () => {
     expect(reversal("approved", "insights", { braidKind: "risk" }).item?.braid?.supersedes).toBeUndefined();
+  });
+});
+
+describe("phase D: an update whose words fit two or three records", () => {
+  // #152 joins Kemar's Forager records, so "the store feed" fits #151 and #152
+  const forager = KEMAR_CONTEXT.projects.find((p) => p.id === "forager")!;
+  const withConnector = (text: string): CheckContext => ({
+    ...ctxWith(text),
+    projects: KEMAR_CONTEXT.projects.map((p) =>
+      p.id === "forager"
+        ? { ...p, records: [...forager.records, { type: "work_item" as const, id: "wi-152", number: "#152", title: "Store feed connector", ownerId: "kemar", values: { state: "to_do", blocked_note: null } }] }
+        : p,
+    ),
+  });
+  const TEXT = "Worked on the store feed today.";
+  const vague = (p: Partial<RawProposal> = {}) =>
+    update({ quote: "Worked on the store feed today", targetId: "wi-151", field: "state", newValue: "in_progress", confidence: "medium", routingReason: { basis: "target", evidence: "store feed", label: "#151" }, ...p });
+
+  it("keeps every record the words could mean, the target first, and holds the item for the author's OK even when it would be no change", () => {
+    const { item } = one(vague({ targetOptions: ["wi-151", "wi-152"] }), withConnector(TEXT));
+    expect(item).toMatchObject({ target: { id: "wi-151", oldValue: "in_progress", newValue: "in_progress" }, mark: "needs_ok", closeMatches: { ids: ["wi-151", "wi-152"], chosen: null } });
+  });
+
+  it("only records the checks accept: one outside the author's projects, a milestone with no such field, or one Atlas invented is left out", () => {
+    const { item } = one(vague({ targetOptions: ["wi-151", "wi-152", "s1", "ms-trend", "no-such"] }), withConnector(TEXT));
+    expect(item?.closeMatches?.ids).toEqual(["wi-151", "wi-152"]);
+    const alone = one(vague({ targetOptions: ["wi-151", "s1", "ms-trend"] }), withConnector(TEXT)).item;
+    expect(alone?.closeMatches).toBeUndefined();
+    expect(alone?.mark).toBe("no_change");
+  });
+
+  it("someone else's record can be one of them; choosing it asks its owner (U5)", () => {
+    const { item } = one(vague({ targetOptions: ["wi-151", "wi-160"] }), withConnector(TEXT));
+    expect(item?.closeMatches?.ids).toEqual(["wi-151", "wi-160"]);
+  });
+
+  it("retarget reads the item again for the chosen record, as things stand now", () => {
+    const ctx = withConnector(TEXT);
+    const { item } = one(vague({ targetOptions: ["wi-151", "wi-152", "wi-160"] }), ctx);
+    const to152 = retarget(item!, "wi-152", ctx);
+    expect(to152).toMatchObject({ draft: { ordinal: 1, projectId: "forager", routing: "routed", routingReason: "#152", target: { id: "wi-152", oldValue: "to_do", newValue: "in_progress" }, closeMatches: { ids: ["wi-151", "wi-152", "wi-160"] } } });
+    expect("draft" in to152 && to152.draft.spans).toEqual(item!.spans);
+    // Jodian's #160: saving asks her (U5)
+    expect(retarget(item!, "wi-160", ctx)).toMatchObject({ draft: { target: { id: "wi-160" }, ask: { ownerId: "jodian" } } });
+    // CL5: cancelled since (no longer a candidate record), or never one of the options
+    const gone = { ...ctx, projects: ctx.projects.map((p) => (p.id === "forager" ? { ...p, records: p.records.filter((r) => r.id !== "wi-152") } : p)) };
+    expect(retarget(item!, "wi-152", gone)).toEqual({ refused: "that record is no longer one of yours" });
+    expect(retarget(item!, "wi-145", ctx)).toEqual({ refused: "that is not one of the records it could mean" });
   });
 });

@@ -7,7 +7,7 @@ import { AtlasReadFailed } from "./extractor";
 import { createFixtureExtractor } from "./fixture";
 import { atlasFromEnv, withFallback } from "./index";
 import { createOpenRouter, DEFAULT_MODEL, OPENROUTER_URL, parseItems } from "./openrouter";
-import { PROMPT_VERSION, proposeItemsTool, questionSchema, SYSTEM_PROMPT, userMessage } from "./prompt";
+import { PROMPT_VERSION, proposalSchema, proposeItemsTool, questionSchema, SYSTEM_PROMPT, userMessage } from "./prompt";
 
 const KEY = "sk-or-test-not-a-real-key";
 
@@ -70,7 +70,7 @@ describe("the request", () => {
   });
 
   it("the topics come from domain/topics in read-15's words and order (phase C added why; phase L why_filed, correction and undo); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-15");
+    expect(PROMPT_VERSION).toBe("read-wave3-d");
     expect(SYSTEM_PROMPT).toContain(
       'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
@@ -170,6 +170,15 @@ describe("the request", () => {
     expect(section).toContain('"Approve all of them": one command for each line'); // AC8
     expect(section).toContain('"Mark the second one done"'); // a record change stays a proposal
     expect(section).toContain('Words that only report another person\'s decision ("Alicia approved the Kyle risk") are "other"'); // rule 10
+  });
+
+  it("phase D: a vague update names every record it could mean in targetOptions, and DPM asks which (M21)", () => {
+    expect(SYSTEM_PROMPT).toContain("targetOptions every record the words could mean, targetId among them. DPM asks the author which.");
+    expect(SYSTEM_PROMPT).toContain("never when the words name the record or only one fits");
+    const r = proposalSchema.safeParse({ ...KEMAR_PROPOSALS[2], targetOptions: ["wi-151", "wi-152"] });
+    expect(r.success && r.data.targetOptions).toEqual(["wi-151", "wi-152"]);
+    // Older answers without it keep their shape
+    expect(proposalSchema.safeParse(KEMAR_PROPOSALS[2]).success).toBe(true);
   });
 
   it("describes every proposal field the checks read", () => {

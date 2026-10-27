@@ -35,12 +35,12 @@ describe("checkCommands", () => {
   });
 
   it("AC6: the second one of an answer with one line, or no line at all, asks which", () => {
-    expect(checkCommands([{ act: "approve", lines: [2] }], { ...OPEN, lines: OPEN.lines.slice(0, 1) })).toEqual({ kept: [], note: { kind: "which", lines: [] } });
-    expect(checkCommands([{ act: "approve", lines: [] }], OPEN).note).toEqual({ kind: "which", lines: [] });
+    expect(checkCommands([{ act: "approve", lines: [2] }], { ...OPEN, lines: OPEN.lines.slice(0, 1) })).toEqual({ kept: [], note: { kind: "which", lines: [], act: "approve", reason: null } });
+    expect(checkCommands([{ act: "approve", lines: [] }], OPEN).note).toEqual({ kind: "which", lines: [], act: "approve", reason: null });
   });
 
   it("AC7: two lines it could mean are never guessed", () => {
-    expect(checkCommands([{ act: "approve", lines: [1, 2] }], OPEN)).toEqual({ kept: [], note: { kind: "which", lines: [1, 2] } });
+    expect(checkCommands([{ act: "approve", lines: [1, 2] }], OPEN)).toEqual({ kept: [], note: { kind: "which", lines: [1, 2], act: "approve", reason: null } });
   });
 
   it("of the lines it could mean, only one offers the act: that one", () => {
@@ -85,11 +85,12 @@ describe("checkCommands", () => {
 describe("what the chat says when a reply made no card", () => {
   it.each([
     [{ kind: "no_answer" }, [], "There's no answer here to act on yet. Ask me first, for example What needs me today?"],
-    [{ kind: "which", lines: [] }, [], "I'm not sure which one you mean. Say it again with its name."],
-    [{ kind: "which", lines: [1, 2] }, ["Trend model may slip", "Kyle to send the history"], 'Did you mean "Trend model may slip" or "Kyle to send the history"? Say it again with its name.'],
-    [{ kind: "which", lines: [1, 2, 3] }, ["A", "B", "C"], 'Did you mean "A", "B" or "C"? Say it again with its name.'],
+    // Phase D asks which over 2 or 3 lines in the chat (M21); these words are for when it cannot ask there
+    [{ kind: "which", lines: [], act: "approve", reason: null }, [], "I'm not sure which one you mean. Say it again with its name."],
+    [{ kind: "which", lines: [1, 2], act: "approve", reason: null }, ["Trend model may slip", "Kyle to send the history"], 'Did you mean "Trend model may slip" or "Kyle to send the history"? Say it again with its name.'],
+    [{ kind: "which", lines: [1, 2, 3], act: "approve", reason: null }, ["A", "B", "C"], 'Did you mean "A", "B" or "C"? Say it again with its name.'],
     // P10: a line the asker can no longer read is not named; one name left is not a choice
-    [{ kind: "which", lines: [1, 2] }, ["A"], "I'm not sure which one you mean. Say it again with its name."],
+    [{ kind: "which", lines: [1, 2], act: "approve", reason: null }, ["A"], "I'm not sure which one you mean. Say it again with its name."],
     [{ kind: "not_offered", act: "approve", line: 4 }, ["#152 Store feed connector"], 'You can\'t approve "#152 Store feed connector" here.'],
     [{ kind: "not_offered", act: "approve", line: 4 }, [], "That answer is out of date. Ask again."],
     [{ kind: "out_of_date" }, [], "That answer is out of date. Ask again."],

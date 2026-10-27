@@ -330,16 +330,15 @@ describe("a reply in words (a confirm card)", () => {
     expect((await capture(fresh.captureId)).commandNote).toBe("There's no answer here to act on yet. Ask me first, for example What needs me today?");
   });
 
-  it("AC7: words that fit two lines name both and ask again (phase D's clarification is not built)", async () => {
+  it("AC7: words that fit two lines make no card; phase D asks which, with both as options (M21)", async () => {
     const a = await kemarRisk("Trend model may slip to 24 Oct");
     const b = await kemarRisk("Trend model may need more data");
     const { conversationId } = await aliciaAsks(a);
     const reply = await say("alicia", "Approve the trend model risk", 2, conversationId);
-    // Both lines, in the order the answer showed them (both raised the same minute, so either may be first)
-    const note = (await capture(reply.captureId)).commandNote!;
-    expect(note).toMatch(/^Did you mean "Kemar raised a risk: Trend model may (slip to 24 Oct|need more data)" or "Kemar raised a risk: Trend model may (slip to 24 Oct|need more data)"\? Say it again with its name\.$/);
-    expect(note).toContain("slip to 24 Oct");
-    expect(note).toContain("need more data");
+    expect((await capture(reply.captureId)).commandNote).toBeNull();
+    const [asked] = await db.select().from(t.clarifications).where(eq(t.clarifications.captureId, reply.captureId));
+    expect(asked).toMatchObject({ about: "line", act: "approve", state: "asked" });
+    expect(asked.options.map((o) => o.label).sort()).toEqual(["Kemar raised a risk: Trend model may need more data", "Kemar raised a risk: Trend model may slip to 24 Oct"]);
     expect(await commandsOf(reply.captureId)).toEqual([]);
     expect([(await entry(a)).state, (await entry(b)).state]).toEqual(["proposed", "proposed"]);
   });

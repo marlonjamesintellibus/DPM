@@ -8,7 +8,7 @@ import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
-import { runChecks } from "../domain/atlas-checks/checks";
+import { retarget, runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
 import { planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
@@ -59,6 +59,7 @@ import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, today
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
+import { answerInWords, askIfUnsure, closeWithCapture, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
@@ -388,6 +389,24 @@ export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" 
   });
 }
 
+/**
+ * Phase D, CL2: a reply whose words answer Atlas's open question in this conversation (M21) ends its read
+ * here, before any model is asked: nothing to propose, and it was answered. False when the words are not an
+ * answer; they are then read as a new message and the question stays (CL1).
+ */
+export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number): Promise<boolean> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
+    const answered = await answerInWords(tx, ctx.now, row);
+    if (!answered) return false;
+    const r = moveCapture(record, { type: "PROPOSALS_READY", count: 0, asked: true });
+    await persistCapture(tx, captureId, row.version, r.record, ctx.now);
+    if (answered.note) await tx.update(t.captures).set({ commandNote: answered.note }).where(eq(t.captures.id, captureId));
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { items: 0, clarification: answered.id, attempt });
+    return true;
+  });
+}
+
 export type Proposed = { state: CaptureState; items: ExtractedItem[]; dropped: DroppedProposal[]; moreFound: boolean; answer?: Answer | null };
 
 /**
@@ -474,10 +493,12 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       });
     }
     // Phase B: one card per line it decides, each only on a line the asker may still read (AC6 to AC9)
-    if (decides) {
-      const { note } = await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer);
-      if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
-    }
+    const decided = decides ? await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer) : null;
+    // Phase D, M21 CHECKS_DONE: unsure which project, record or line it means, DPM asks in the author's own chat
+    const clarified = await askIfUnsure(tx, ctx.now, { ...row, state: record.state }, items, decided?.which ?? null, checkCtx);
+    // Words that could mean several lines are said only when no question asks which (AC6, AC7)
+    const note = [decided?.note, clarified?.about === "line" ? null : decided?.which?.text].filter(Boolean).join(" ");
+    if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
     // Phase L: "Undo that" and a correction are the asker's own commands; they run now, as the asker
     const question = asked ? await actOn(tx, ctx.now, row.authorId, captureId, asked) : null;
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
@@ -544,6 +565,8 @@ export function openReview(ctx: CommandCtx, captureId: string): Promise<CaptureS
     const r = moveCapture(record, { type: "OPEN_REVIEW" }, { authorActive: await isActive(tx, row.authorId) });
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     await auditCapture(tx, ctx.now, captureId, r.outcome, { type: "person", id: ctx.actorId });
+    // Phase D, CL3: the review card holds the choice Atlas asked about in the chat (M21 REVIEW_OPENED)
+    await handToReview(tx, ctx.now, captureId, ctx.actorId);
     return r.record.state;
   });
 }
@@ -557,6 +580,7 @@ export function discardCapture(ctx: CommandCtx, captureId: string): Promise<{ wi
     const withdrawn = await withdrawAll(tx, ctx.now, captureId, "discarded", by);
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     await auditCapture(tx, ctx.now, captureId, r.outcome, by);
+    await closeWithCapture(tx, ctx.now, captureId, { actorType: "person", actorId: ctx.actorId });
     await syncReminder(tx, ctx.now, row.authorId, captureId, false, true);
     return { withdrawn };
   });
@@ -781,69 +805,123 @@ async function targetProjectOf(tx: Tx, draft: ExtractedItemDraft): Promise<strin
 export function routeExtraction(ctx: CommandCtx, extractionId: string, to: RouteTo): Promise<ExtractedItem> {
   return runCommand(ctx, async (tx) => {
     const { row, item, capture } = await reviewing(tx, extractionId, ctx.actorId);
-    if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
-    const { author, world } = await authorOf(tx, ctx.actorId);
-    const draft = item.draft;
-    const route = routeOf(draft);
-    const event: RoutingEvent =
-      to === "keep_private"
-        ? { type: "KEEP_PRIVATE" }
-        : route.state === "routed"
-          ? { type: "MOVE", projectId: to.projectId }
-          : route.state === "choose_project"
-            ? { type: "PICK", projectId: to.projectId }
-            : { type: "FILE", projectId: to.projectId };
-    const targetProjectId = await targetProjectOf(tx, draft);
-    // A related_to link points at an entry, not at a record, so it never pins the project
-    const pinned = draft.kind === "braid_new" ? null : targetProjectId;
-    const r = applyRouting(route, event, author, world, { kind: draft.kind, targetProjectId: pinned });
-    const outcome = moved(r.outcome);
-    const name = (id: string | null) => world.projects.find((p) => p.id === id)?.name ?? "that project";
-    // D13, E74: an update to a record stays in that record's project (G2); the review offers no Move for it
-    if (r.recheck === "pick_target") {
-      const what = draft.target?.type === "work_item" ? ((await tx.select({ n: t.workItems.number }).from(t.workItems).where(eq(t.workItems.id, draft.target.id)))[0]?.n ?? "That record") : "That record";
-      throw new CommandRefused(`${what} is in ${name(targetProjectId)}. To log this somewhere else, add it as a BRAID item in that project`);
-    }
-    if (r.recheck === "rematch") throw new CommandRefused(`that entry is on ${name(targetProjectId)}'s log; a same-as report can only join it there`);
-    if (draft.braid && r.route.projectId !== null) {
-      const role = actorIn(ctx.actorId, r.route.projectId, world.memberships).role;
-      if (role && !mayReport(role, draft.braid.kind)) throw new CommandRefused(`on ${name(r.route.projectId)}, a ${role} may not report a ${draft.braid.kind}`);
-    }
+    return routeItemIn(tx, ctx, row, item, capture.row.text, to);
+  });
+}
 
-    const { options: _options, ...rest } = draft;
-    const next: ExtractedItemDraft = { ...rest, projectId: r.route.projectId, routing: r.route.state, routingReason: r.route.reason };
-    if (r.route.state === "choose_project") next.options = [...r.route.options];
-    if (next.braid?.match === "related_to" && targetProjectId !== r.route.projectId) {
-      // Links never cross projects: in its new project the report starts as a new entry
-      const { seenState: _seen, ...braid } = next.braid;
-      next.braid = { ...braid, match: "new", matchEntryId: null };
+type ExtractionRow = typeof t.extractions.$inferSelect;
+/** Who acts on an item, and when: the author, as a command or Atlas's question in the chat (phase D) runs it. */
+type By = Pick<CommandCtx, "now" | "actorId">;
+
+/**
+ * M14 on one item, in the caller's transaction: the review's Move, Pick a project and Keep private, and
+ * phase D's answer in the chat (`chosenIn` "chat": the review then shows it as chosen there).
+ */
+export async function routeItemIn(tx: Tx, ctx: By, row: ExtractionRow, item: ExtractedItem, captureText: string, to: RouteTo, chosenIn?: "chat"): Promise<ExtractedItem> {
+  if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
+  const { author, world } = await authorOf(tx, ctx.actorId);
+  const draft = item.draft;
+  const route = routeOf(draft);
+  const event: RoutingEvent =
+    to === "keep_private"
+      ? { type: "KEEP_PRIVATE" }
+      : route.state === "routed"
+        ? { type: "MOVE", projectId: to.projectId }
+        : route.state === "choose_project"
+          ? { type: "PICK", projectId: to.projectId }
+          : { type: "FILE", projectId: to.projectId };
+  const targetProjectId = await targetProjectOf(tx, draft);
+  // A related_to link points at an entry, not at a record, so it never pins the project
+  const pinned = draft.kind === "braid_new" ? null : targetProjectId;
+  const r = applyRouting(route, event, author, world, { kind: draft.kind, targetProjectId: pinned });
+  const outcome = moved(r.outcome);
+  const name = (id: string | null) => world.projects.find((p) => p.id === id)?.name ?? "that project";
+  // D13, E74: an update to a record stays in that record's project (G2); the review offers no Move for it
+  if (r.recheck === "pick_target") {
+    const what = draft.target?.type === "work_item" ? ((await tx.select({ n: t.workItems.number }).from(t.workItems).where(eq(t.workItems.id, draft.target.id)))[0]?.n ?? "That record") : "That record";
+    throw new CommandRefused(`${what} is in ${name(targetProjectId)}. To log this somewhere else, add it as a BRAID item in that project`);
+  }
+  if (r.recheck === "rematch") throw new CommandRefused(`that entry is on ${name(targetProjectId)}'s log; a same-as report can only join it there`);
+  if (draft.braid && r.route.projectId !== null) {
+    const role = actorIn(ctx.actorId, r.route.projectId, world.memberships).role;
+    if (role && !mayReport(role, draft.braid.kind)) throw new CommandRefused(`on ${name(r.route.projectId)}, a ${role} may not report a ${draft.braid.kind}`);
+  }
+
+  const { options: _options, ...rest } = draft;
+  const next: ExtractedItemDraft = { ...rest, projectId: r.route.projectId, routing: r.route.state, routingReason: chosenIn === "chat" && r.route.state === "routed" ? "You chose it in the chat" : r.route.reason };
+  if (r.route.state === "choose_project") next.options = [...r.route.options];
+  if (next.braid?.match === "related_to" && targetProjectId !== r.route.projectId) {
+    // Links never cross projects: in its new project the report starts as a new entry
+    const { seenState: _seen, ...braid } = next.braid;
+    next.braid = { ...braid, match: "new", matchEntryId: null };
+  }
+  const after: ExtractedItem = { ...item, draft: next };
+  await persistItems(tx, [item], [after], new Map([[row.id, row.version]]), ctx.now);
+  await audit(tx, ctx.now, {
+    actorType: "person",
+    actorId: ctx.actorId,
+    action: outcome.event,
+    machine: "routing",
+    subjectType: "extraction",
+    subjectId: item.id,
+    fromState: outcome.from,
+    toState: outcome.to,
+    captureId: row.captureId,
+    extractionId: item.id,
+    // Phase L, CD14: the word Atlas routed it by, so moves of the same word can be counted
+    detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason, ...(draft.routedBy ? { word: draft.routedBy.word } : {}) },
+  });
+  // Phase S: Atlas put it in the wrong project, so the update is a candidate for the eval set (LF1)
+  if (outcome.event === "MOVE") {
+    const detail = { kind: draft.kind, fromProject: draft.projectId, toProject: next.projectId };
+    await logCandidate(tx, ctx.now, ctx.actorId, { cause: "moved", captureId: row.captureId, extractionId: item.id, text: captureText, detail });
+    // UN10, CD14: the second move of the same word to the same project proposes it as a correction
+    if (draft.routedBy && next.projectId) {
+      await proposeFromMoves(tx, ctx.now, ctx.actorId, { ...draft.routedBy, toProject: next.projectId, captureId: row.captureId });
     }
-    const after: ExtractedItem = { ...item, draft: next };
-    await persistItems(tx, [item], [after], new Map([[row.id, row.version]]), ctx.now);
-    await audit(tx, ctx.now, {
-      actorType: "person",
-      actorId: ctx.actorId,
-      action: outcome.event,
-      machine: "routing",
-      subjectType: "extraction",
-      subjectId: item.id,
-      fromState: outcome.from,
-      toState: outcome.to,
-      captureId: row.captureId,
-      extractionId: item.id,
-      // Phase L, CD14: the word Atlas routed it by, so moves of the same word can be counted
-      detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason, ...(draft.routedBy ? { word: draft.routedBy.word } : {}) },
-    });
-    // Phase S: Atlas put it in the wrong project, so the update is a candidate for the eval set (LF1)
-    if (outcome.event === "MOVE") {
-      const detail = { kind: draft.kind, fromProject: draft.projectId, toProject: next.projectId };
-      await logCandidate(tx, ctx.now, ctx.actorId, { cause: "moved", captureId: row.captureId, extractionId: item.id, text: capture.row.text, detail });
-      // UN10, CD14: the second move of the same word to the same project proposes it as a correction
-      if (draft.routedBy && next.projectId) {
-        await proposeFromMoves(tx, ctx.now, ctx.actorId, { ...draft.routedBy, toProject: next.projectId, captureId: row.captureId });
-      }
-    }
-    return after;
+  }
+  return after;
+}
+
+// ---- Which record (phase D) ----
+
+/**
+ * Phase D: the author says which record an unsure update means (M21 in the chat, or on the review). The item
+ * is read again for that record through the checks as they are now (rule 4, CL5). On the review choosing is
+ * confirming, as D18's Pick an entry; in the chat it only chooses, and the review still asks for the OK.
+ */
+export async function retargetItemIn(tx: Tx, ctx: By, row: ExtractionRow, item: ExtractedItem, capture: CaptureRow, recordId: string, chosen: "chat" | "review"): Promise<ExtractedItem> {
+  if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
+  const checkCtx = await loadCheckContext(tx, { authorId: capture.authorId, text: capture.text, messageAt: capture.messageAt, transcriptConfidence: capture.transcriptConfidence, captureId: capture.id });
+  const read = retarget(item.draft, recordId, checkCtx);
+  if ("refused" in read) throw new CommandRefused(read.refused);
+  const draft: ExtractedItemDraft = { ...read.draft, closeMatches: { ids: item.draft.closeMatches!.ids, chosen } };
+  let next: ExtractedItem = { ...item, draft, saw: draft.target?.oldValue ?? null, value: draft.target?.newValue ?? null, conflict: null };
+  // A decision on the record it was about is not a decision on this one (E23's Undo, then as chosen)
+  if (next.state === "accepted" || next.state === "edited" || next.state === "rejected") next = moveItem(next, { type: "UNDO" }).item;
+  if (chosen === "review") next = moveItem(next, { type: "ACCEPT" }).item;
+  await persistItems(tx, [item], [next], new Map([[row.id, row.version]]), ctx.now);
+  await audit(tx, ctx.now, {
+    actorType: "person",
+    actorId: ctx.actorId,
+    action: "PICK_RECORD",
+    machine: "extracted_item",
+    subjectType: "extraction",
+    subjectId: item.id,
+    fromState: item.state,
+    toState: next.state,
+    captureId: row.captureId,
+    extractionId: item.id,
+    detail: { from: item.draft.target?.id ?? null, to: recordId, chosen },
+  });
+  return next;
+}
+
+/** Phase D on the review: "Did you mean" one of the other records the words could mean. */
+export function pickRecordExtraction(ctx: CommandCtx, extractionId: string, recordId: string): Promise<ExtractedItem> {
+  return runCommand(ctx, async (tx) => {
+    const { row, item, capture } = await reviewing(tx, extractionId, ctx.actorId);
+    return retargetItemIn(tx, ctx, row, item, capture.row, recordId, "review");
   });
 }
 
@@ -1412,7 +1490,10 @@ export function runCaptureTimers(ctx: { db: Db; now: Date }): Promise<{ reminded
       const record = captureRecordOf(row);
       const r = applyCaptureEvent(record, { type: record.reminded ? "EXPIRE" : "REMIND" }, { elapsed: elapsedSince(row.receivedAt, ctx.now) });
       if (!r.outcome.ok) continue; // not due yet
-      if (r.outcome.event === "EXPIRE") await withdrawAll(tx, ctx.now, row.id, "expired", rule);
+      if (r.outcome.event === "EXPIRE") {
+        await withdrawAll(tx, ctx.now, row.id, "expired", rule);
+        await closeWithCapture(tx, ctx.now, row.id, { actorType: "rule", actorId: null }); // CL6
+      }
       await persistCapture(tx, row.id, row.version, r.record, ctx.now);
       await auditCapture(tx, ctx.now, row.id, r.outcome, rule);
       await syncReminder(tx, ctx.now, row.authorId, row.id, r.outcome.event === "REMIND");

@@ -60,6 +60,11 @@ export type RawProposal = {
   options?: readonly string[] | null;
   /** Section 16: an item of an unsaved update earlier in this conversation that this one corrects. */
   replacesItemId?: string | null;
+  /**
+   * Phase D, update only: when the words fit two or three listed records equally ("Worked on the feed"),
+   * every record they could mean, targetId among them. DPM asks the author which (M21).
+   */
+  targetOptions?: readonly string[] | null;
   /** The exact words, found in the capture text by check 2. */
   quote: string;
   confidence: Confidence;

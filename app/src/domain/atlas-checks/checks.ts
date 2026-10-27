@@ -112,6 +112,8 @@ type Work = {
   ask: string | null;
   /** Phase L, CD14: the name or person check 14 confirmed as the reason for the project. */
   routedBy: { basis: "reference" | "tied_person"; word: string; personId: string | null } | null;
+  /** Phase D: every record the words could mean, the target first, when there are two or more. */
+  closeMatches: string[] | null;
 };
 
 type Scope = ReturnType<typeof scopeOf>;
@@ -747,6 +749,7 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     else throw new Error(`check ${t.type === "entry" ? 12 : 3} let through an update to ${describe(t)}`);
   }
   if (w.ask) draft.ask = { ownerId: w.ask };
+  if (w.closeMatches) draft.closeMatches = { ids: w.closeMatches, chosen: null };
   if (w.kind === "new_work") draft.newWork = { title: w.p.workTitle!.trim(), state: w.newValue as NewWorkState };
   if (w.kind !== "update" && w.kind !== "new_work") {
     const title = w.match && w.matchState === "same_as" ? w.match.entry.title : w.p.braidTitle?.trim() || s.quoteText(w);
@@ -792,7 +795,60 @@ function start(p: RawProposal): Work {
     supersedes: null,
     ask: null,
     routedBy: null,
+    closeMatches: null,
   };
+}
+
+/**
+ * Phase D: the other records an update's words could mean (targetOptions), each read through checks 1 to 13
+ * as if Atlas had named it, so every option is one the checks accept for this author (section 6). The
+ * target first; null unless at least two fit. Nothing Atlas names outside the author's records survives.
+ */
+function closeMatchesOf(w: Work, s: Scope): string[] | null {
+  const t = w.target;
+  if (w.kind !== "update" || t?.type !== "record") return null;
+  const quiet = (v: Work, checks: Check[]) => checks.every(([, run]) => run(v, s) === null);
+  const fits = [...new Set(w.p.targetOptions ?? [])].filter((id) => {
+    if (id === t.record.id) return false;
+    const found = s.findTarget(id);
+    if (found?.type !== "record") return false;
+    const v = start({ ...w.p, ...asTarget(found.project, found.record), targetOptions: null });
+    return quiet(v, PER_PROPOSAL) && quiet(v, PER_ITEM);
+  });
+  return fits.length ? [t.record.id, ...fits] : null;
+}
+
+/** A proposal's project and reason when the record itself decides them ("#152"). */
+const asTarget = (project: CandidateProject, record: CandidateRecord): Pick<RawProposal, "targetId" | "projectId" | "routingReason"> => {
+  const name = record.number ?? record.title;
+  return { targetId: record.id, projectId: project.id, routingReason: { basis: "target", evidence: name, label: name } };
+};
+
+/**
+ * Phase D: the author said which record an unsure update means (M21 in the chat, or on the review). The item
+ * is read again as if Atlas had named that record, through every check as things stand now (rule 4, CL5):
+ * the old value, the owner to ask, the project and the mark are the chosen record's. Its words, its place
+ * in the message and the records it could mean stay. A check that drops it says why.
+ */
+export function retarget(draft: ExtractedItemDraft, recordId: string, ctx: CheckContext): { draft: ExtractedItemDraft } | { refused: string } {
+  const t = draft.target;
+  if (draft.kind !== "update" || !t || !draft.closeMatches?.ids.includes(recordId)) return { refused: "that is not one of the records it could mean" };
+  const found = scopeOf(ctx, {}).findTarget(recordId);
+  if (found?.type !== "record") return { refused: "that record is no longer one of yours" };
+  const span = draft.spans[0];
+  const p: RawProposal = {
+    kind: "update",
+    ...asTarget(found.project, found.record),
+    field: t.field,
+    newValue: t.newValue,
+    note: t.note ?? null,
+    quote: ctx.text.slice(span.start, span.end),
+    confidence: draft.confidence,
+    rationale: draft.rationale,
+  };
+  const { items, dropped } = runChecks([p], ctx);
+  if (!items.length) return { refused: dropped[0]?.reason ?? "that record cannot take this change" };
+  return { draft: { ...items[0], ordinal: draft.ordinal, spans: draft.spans, closeMatches: draft.closeMatches } };
 }
 
 const PER_PROPOSAL: Check[] = [knownKind, targetInScope, quoteIsReal, fieldAllowed, confidenceFloor, datesResolve];
@@ -828,6 +884,11 @@ export function runChecks(proposals: readonly RawProposal[], ctx: CheckContext, 
   const read = proposals.map(start).filter((w) => pass(w, PER_PROPOSAL));
   const kept = mergeSameField(read).filter((w) => pass(w, PER_ITEM));
   checkRoutingReasons(kept, s);
+  for (const w of kept) {
+    w.closeMatches = closeMatchesOf(w, s);
+    // Phase D: Atlas only guessed which record, so the author says which, or accepts the guess, before it saves
+    if (w.closeMatches) w.mark = "needs_ok";
+  }
 
   // S8, E7: past the cap, Atlas says "I found more; review these first"
   const limit = config.maxProposalsPerCapture;

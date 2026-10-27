@@ -21,7 +21,8 @@ import {
 } from "drizzle-orm/pg-core";
 import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome, ResolveOutcome } from "../domain/machines/braid-entry";
 import type { CaptureState } from "../domain/machines/capture";
-import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy } from "../domain/machines/chat-command";
+import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy, WordAct } from "../domain/machines/chat-command";
+import type { ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
@@ -515,6 +516,40 @@ export const chatCommands = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("chat_commands_answer").on(t.answerCaptureId), index("chat_commands_capture").on(t.captureId), index("chat_commands_open").on(t.state)],
+);
+
+/**
+ * M21. A question Atlas asks in the author's own chat when it is unsure which project, record or line a
+ * message means (conversational plan, phase D). At most one per capture; its options are as the author
+ * could read them when it was asked, and each is checked again when chosen (CL5).
+ */
+export const clarifications = pgTable(
+  "clarifications",
+  {
+    id: text("id").primaryKey(),
+    /** The message it asks about; unique, so a read delivered twice asks once (rule 6). */
+    captureId: text("capture_id").notNull().unique().references(() => captures.id),
+    authorId: text("author_id").notNull().references(() => people.id),
+    /** Where a typed answer may come from: the newest open question in this conversation (CL4). */
+    conversationId: text("conversation_id").references(() => conversations.id),
+    about: text("about").$type<ClarifyAbout>().notNull(),
+    extractionId: text("extraction_id").references(() => extractions.id),
+    answerCaptureId: text("answer_capture_id").references(() => captures.id),
+    act: text("act").$type<WordAct>(),
+    reason: text("reason"),
+    quote: text("quote").notNull(),
+    options: jsonb("options").$type<ClarifyOption[]>().notNull(),
+    state: text("state").$type<ClarificationState>().notNull(),
+    chosen: text("chosen"),
+    /** A typed answer's message (CL2). */
+    answeredBy: text("answered_by").references(() => captures.id),
+    endedBy: text("ended_by").$type<EndedBy>(),
+    decidedAt: instant("decided_at"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("clarifications_open").on(t.state, t.conversationId), index("clarifications_answered_by").on(t.answeredBy)],
 );
 
 /** M36. A candidate for the eval set; the text only while logged and while the person allows it (LF1, LF2). */

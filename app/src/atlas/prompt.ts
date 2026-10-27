@@ -23,8 +23,9 @@ import { CONFIDENCES } from "../domain/shared";
 // commands, and a record change said about a line is an item. Each command says who decides it (rule 10):
 // a report of someone else's decision is never the author's. Phase C, the why topic and its subjectId (WY1
 // to WY8). Phase L, "Undo that", "Why did you file that?" and corrections that teach Atlas a name (M30, M31).
-// read-15 (W2-D2): with no answer open, nothing is a command.
-export const PROMPT_VERSION = "read-15";
+// read-15 (W2-D2): with no answer open, nothing is a command. read-wave3-d, phase D: an update whose words
+// fit two or three listed records equally names them all in targetOptions, and DPM asks the author which (M21).
+export const PROMPT_VERSION = "read-wave3-d";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -48,6 +49,7 @@ What you may propose (kind)
   - The author's leave: projectId null, routing basis "personal", targetId the leave target id, field "dates", newValue "YYYY-MM-DD/YYYY-MM-DD" (start/end; use ".." for an unknown end).
   - When work is blocked, propose state "blocked" and put what it waits on in "note" (for example "waiting on Kyle (Sprouts IT)").
   - When the author says their own work is not finished ("haven't finished the trend model"), and a listed work item they own is that work, propose its state (in_progress, or blocked with a note). DPM marks it "no change" if it already is.
+  - When the words fit two or three listed records about equally and nothing in the message settles it ("Worked on the store feed" when #151 Store sales feed access and #152 Store feed connector both fit), propose the change once: targetId the likelier record, and targetOptions every record the words could mean, targetId among them. DPM asks the author which. Otherwise targetOptions is null; never when the words name the record or only one fits.
 - "new_work": work the author is doing, or has started, that no listed work item is ("Started on a harvest docs cleanup for Forager"). workTitle: a short title for it. newValue: "in_progress" if started, "to_do" if not yet. DPM asks the PM to add it to the plan.
   - Only when no listed work item fits. If one does, even in other words ("the trend scoring piece" is #147 Trend scoring model), propose an update to it instead.
   - Never for work someone outside the team will do (that is a dependency), and never for a promise the author makes.
@@ -210,6 +212,8 @@ export const proposalSchema = z.object({
   note: nullableString,
   options: z.array(z.string()).nullable().optional(),
   replacesItemId: nullableString,
+  // Phase D: the records a vague update could mean; the checks keep only those they accept (M21)
+  targetOptions: z.array(z.string()).nullable().optional(),
   quote: z.string(),
   confidence: z.enum(CONFIDENCES),
   rationale: z.string(),

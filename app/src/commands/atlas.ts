@@ -10,7 +10,7 @@ import * as t from "../db/schema";
 import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Confidence } from "../domain/shared";
-import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, ReadSuperseded, type Proposed } from "./capture";
+import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, readAsAnswer, ReadSuperseded, type Proposed } from "./capture";
 import { audit, runCommand, type CommandCtx } from "./core";
 
 type Failure = { step: "transcribe" | "read"; why: string; message: string };
@@ -65,6 +65,8 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
 
       // A voice note that was just transcribed is on its first read
       const readAttempt = started.voice ? 1 : attempt;
+      // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them
+      if (await readAsAnswer(at(), captureId, readAttempt)) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
       let extraction: Extraction;
       try {
         extraction = await extractor.extract(context, { attempt: readAttempt });

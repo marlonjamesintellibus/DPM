@@ -301,3 +301,33 @@ test("Phase B. Kemar marks his own work done from an answer line, in one tap", a
   await expect(page.getByRole("button", { name: "Copy" })).toHaveCount(2);
   await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveCount(1);
 });
+
+test("Phase D. Kemar's vague update gets one question; he taps #152 and the review shows his choice", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Worked on the store feed today.");
+  await box.press("Enter");
+  // The recorded read fits #151 and #152, so Atlas asks which, with both as buttons (M21)
+  await expect(page.getByText('For "Worked on the store feed today", do you mean #151 Store sales feed access or #152 Store feed connector?')).toBeVisible();
+  const options = page.getByRole("group", { name: "Choose one" });
+  await expect(options.getByRole("button")).toHaveCount(2);
+  await options.getByRole("button", { name: "#152 Store feed connector" }).click();
+  await expect(page.getByText("Got it: #152 Store feed connector. It's in your review, waiting for your OK.").first()).toBeVisible();
+  // Answering only chose: the update still waits for his OK in the review, which shows where he chose it
+  await page.getByRole("button", { name: /^Review/ }).click();
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(card("Issue #152 Store feed connector")).toContainText("You chose this one in the chat");
+  await expect(card("Issue #152 Store feed connector").getByRole("button", { name: "Save" })).toBeVisible();
+});
+
+test("Phase D. A typed answer is read against the options only (CL2)", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Worked on the store feed today.");
+  await box.press("Enter");
+  await expect(page.getByRole("group", { name: "Choose one" })).toBeVisible();
+  await box.fill("the sales feed access one");
+  await box.press("Enter");
+  await expect(page.getByText("Got it: #151 Store sales feed access. It's in your review, waiting for your OK.").first()).toBeVisible();
+  await expect(page.getByRole("group", { name: "Choose one" })).toHaveCount(0);
+});

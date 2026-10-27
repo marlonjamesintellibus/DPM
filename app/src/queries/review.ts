@@ -62,6 +62,11 @@ export type ReviewItem = {
   edit: { input: "choice" | "date" | "text"; value: string; options: { value: string; label: string }[] } | null;
   /** D18: for a BRAID report, the project's other open entries of the same kind ("Pick an entry"). */
   matchOptions: { id: string; title: string; stateLabel: string }[];
+  /**
+   * Phase D: the update's words fit more than one record. others: the ones it is not about now, as "Did you
+   * mean"; chosen: where the author said which (the chat, CL3, or here). Only records they may still read.
+   */
+  closeMatches: { others: { id: string; label: string }[]; chosen: "chat" | "review" | null } | null;
 };
 
 export type ReviewGroup =
@@ -250,6 +255,22 @@ export async function loadTargetRecords(conn: Conn, drafts: readonly ExtractedIt
   return { workItems, milestones, steps, leave };
 }
 
+/** Phase D: "#152 Store feed connector" for each record an unsure update could mean, on projects the reader may read (P10). */
+async function recordLabels(conn: Conn, ids: string[], reader: { mayRead: (projectId: string) => boolean }): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const [work, milestones, steps] = await Promise.all([
+    conn.select({ id: t.workItems.id, number: t.workItems.number, title: t.workItems.title, projectId: t.workItems.projectId }).from(t.workItems).where(inArray(t.workItems.id, ids)),
+    conn.select({ id: t.milestones.id, title: t.milestones.name, projectId: t.milestones.projectId }).from(t.milestones).where(inArray(t.milestones.id, ids)),
+    conn
+      .select({ id: t.handoverSteps.id, title: t.handoverSteps.title, projectId: t.handovers.projectId })
+      .from(t.handoverSteps)
+      .innerJoin(t.handovers, eq(t.handovers.id, t.handoverSteps.handoverId))
+      .where(inArray(t.handoverSteps.id, ids)),
+  ]);
+  const labels = [...work.map((w) => ({ ...w, title: w.number ? `${w.number} ${w.title}` : w.title })), ...milestones, ...steps];
+  return new Map(labels.filter((r) => reader.mayRead(r.projectId)).map((r) => [r.id, r.title]));
+}
+
 /** "Issue #145 Google Trends connector", "Milestone Trend model", "Handover Runbook", "Leave Kemar Brown". */
 export function targetTitle(target: NonNullable<ExtractedItemDraft["target"]>, records: TargetRecords, authorName: string): string {
   switch (target.type) {
@@ -343,6 +364,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const authorRole = (projectId: string | null): ProjectRole =>
     memberships.find((m) => m.projectId === projectId && m.personId === capture.authorId && m.state === "member")?.role ?? "member";
   const authorFirst = firstName(author?.name ?? capture.authorId);
+  const closeLabels = await recordLabels(conn, [...new Set(drafts.flatMap((d) => d.closeMatches?.ids ?? []))], reader);
 
   const titleOf = (item: ExtractedItem): string => {
     const d = item.draft;
@@ -450,6 +472,9 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
               .filter((e) => e.projectId === d.projectId && e.kind === d.braid!.kind && e.id !== d.braid!.matchEntryId)
               .map((e) => ({ id: e.id, title: e.title, stateLabel: e.state.replace("_", " ") }))
           : [],
+      closeMatches: d.closeMatches
+        ? { others: d.closeMatches.ids.filter((id) => id !== d.target?.id).flatMap((id) => (closeLabels.has(id) ? [{ id, label: closeLabels.get(id)! }] : [])), chosen: d.closeMatches.chosen }
+        : null,
       // A same-as report or a resolution belongs to its entry's log, like an update to its record
       canMove: d.scope === "project" && (d.kind === "braid_new" || d.kind === "new_work" || (d.kind === "update" && !d.target)),
     };

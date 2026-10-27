@@ -8,8 +8,9 @@ import * as t from "../db/schema";
 import type { Answer } from "../domain/question";
 import type { CaptureState } from "../domain/machines/capture";
 import { commandButton, commandOutcomeText, commandQuestion, type ChatCommandState, type CommandAct } from "../domain/machines/chat-command";
+import { clarifyOutcomeText, clarifyQuestion, type ClarificationState } from "../domain/machines/clarification";
 import { weekday } from "../domain/dates";
-import { clockTime, daysAgo, NOT_YOURS, shortDate, todayIn, type NotYours } from "./project";
+import { clockTime, daysAgo, NOT_YOURS, projectReader, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 import { undoReply } from "./answers/undo";
 import { undoViewOf, type UndoView } from "./undo";
@@ -55,6 +56,22 @@ export type ChatCapture = {
   taps: TapView[];
   /** Phase L, M30: on a saved update, whether Undo may still work, or when it was undone. */
   undo: UndoView | null;
+  /** Phase D, M21: the question Atlas asked about this message, as it stands. */
+  clarification: ClarifyView | null;
+  /** Phase D, CL2: this message answered a question by its words; what came of it. */
+  answered: string | null;
+};
+
+/**
+ * A question in the chat: the buttons while it is asked, each one the viewer may still read (P10), and what
+ * happened once it is not.
+ */
+export type ClarifyView = {
+  id: string;
+  state: ClarificationState;
+  question: string;
+  options: { id: string; label: string }[];
+  outcome: string | null;
 };
 
 /** A command's card in the chat: its question and button while it waits, what happened once it ended. */
@@ -320,6 +337,33 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     feedback,
     ...(await commandsOf(conn, capture)),
     undo: capture.state === "saved" ? await undoOf(conn, capture, now) : null,
+    ...(await clarificationsOf(conn, capture)),
+  };
+}
+
+/**
+ * Phase D: the question asked about this message, and what came of one this message answered by its words
+ * (CL2); only the author's own. An option, or a chosen one, on a project they can no longer read is not named.
+ */
+async function clarificationsOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<Pick<ChatCapture, "clarification" | "answered">> {
+  const rows = await conn
+    .select()
+    .from(t.clarifications)
+    .where(and(eq(t.clarifications.authorId, capture.authorId), or(eq(t.clarifications.captureId, capture.id), eq(t.clarifications.answeredBy, capture.id))));
+  if (!rows.length) return { clarification: null, answered: null };
+  const reader = await projectReader(conn, capture.authorId);
+  const view = (r: (typeof rows)[number]) => {
+    const options = r.options.filter((o) => reader.mayRead(o.projectId));
+    const chosen = options.find((o) => o.id === r.chosen)?.label ?? null;
+    return { options, outcome: clarifyOutcomeText(r, chosen) };
+  };
+  const asked = rows.find((r) => r.captureId === capture.id);
+  const answering = rows.find((r) => r.answeredBy === capture.id);
+  return {
+    clarification: asked
+      ? { id: asked.id, state: asked.state, question: clarifyQuestion({ ...asked, options: view(asked).options }), options: view(asked).options.map((o) => ({ id: o.id, label: o.label })), outcome: view(asked).outcome }
+      : null,
+    answered: answering ? view(answering).outcome : null,
   };
 }
 
