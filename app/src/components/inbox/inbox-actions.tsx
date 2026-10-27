@@ -12,10 +12,12 @@ import {
   declineEntry,
   decideLeave,
   dropDraft,
+  endDependency,
   giveReason,
   keepEntryOpen,
   keepStatus,
   linkWorkChange,
+  newExpectedDate,
   resolveEntry,
   showCalculatedStatus,
   type ActionResult,
@@ -92,6 +94,35 @@ export function ClearControls({ entryId, canKeepOpen }: { entryId: string; canKe
             Still blocked
           </Button>
         )}
+      </div>
+      <ActionNote result={result} />
+    </div>
+  );
+}
+
+/** Section 20, U2: a due dependency is met, late, or expected on a new date. Nothing ends it but these. */
+export function DependencyDueControls({ entryId }: { entryId: string }) {
+  const { pending, result, run } = useRun();
+  const [date, setDate] = useState("");
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button disabled={pending} onClick={() => run(() => endDependency(entryId, "met"))}>
+          Met
+        </Button>
+        <Button variant="secondary" disabled={pending} onClick={() => run(() => endDependency(entryId, "late"))}>
+          Late
+        </Button>
+        <input
+          aria-label="New expected date"
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="rounded-control border border-line-strong bg-panel px-2 py-1 type-body"
+        />
+        <Button variant="secondary" disabled={pending || !date} onClick={() => run(() => newExpectedDate(entryId, date))}>
+          New date
+        </Button>
       </div>
       <ActionNote result={result} />
     </div>

@@ -1,6 +1,6 @@
 {
-  "id": "fa99dd78-8cb6-4708-83ac-1cbacb5a85d3",
-  "prevId": "99068d7a-d528-4a10-98bf-124820c6ba16",
+  "id": "ad922f42-7bdb-48cf-abfe-e3999696dc55",
+  "prevId": "b6e2b688-a836-4af8-99f2-b4496431825b",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -492,6 +492,12 @@
         "state_before_switch": {
           "name": "state_before_switch",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_on": {
+          "name": "expected_on",
+          "type": "date",
           "primaryKey": false,
           "notNull": false
         },

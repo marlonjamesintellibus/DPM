@@ -3,15 +3,17 @@
 // through its machine, audits every entry it changed and runs evaluate, which keeps the approval,
 // more info, new blocker and "it's cleared" items in step. Nothing here decides a proposal by itself.
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import { kindRequestOf, loadBraidLog, membersOf, persistBraidLog, persistKindRequest, type Versions } from "../db/records";
 import * as t from "../db/schema";
+import { daysBetween } from "../domain/dates";
 import type { Moved } from "../domain/machine";
 import {
   applyToLog,
   braidReminderDue,
+  dependencyDueFrom,
   draftEntry,
   decidersFor,
   isOnLog,
@@ -30,7 +32,7 @@ import { liveEntryOf, switchKind } from "../domain/machines/kind-switch";
 import { linkConflict, mergeEntries, unmergeEntry, type LogResult, type MergeChoice } from "../domain/machines/match";
 import { mayResolve, type BraidKind } from "../domain/rights";
 import { audit, CommandRefused, moved, nextVersion, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
-import { evaluateProject, policyOf, type Evaluation } from "./evaluate";
+import { evaluateProject, liveItems, policyOf, type Evaluation } from "./evaluate";
 import { notice, noticeReporters, withArticle } from "./notices";
 
 export type BraidCommandResult = { outcome: Moved<BraidEntryState>; entry: BraidEntryRecord; evaluation: Evaluation };
@@ -233,6 +235,11 @@ export function progressEntry(ctx: CommandCtx, entryId: string, opts: BraidComma
   return act(ctx, entryId, { type: "PROGRESS" }, opts);
 }
 
+/** Section 20, U2: a PM or Lead gives a dependency a new expected date; its due item closes until then. */
+export function setExpectedDate(ctx: CommandCtx, entryId: string, date: string, opts: BraidCommandOpts = {}): Promise<BraidCommandResult> {
+  return act(ctx, entryId, { type: "SET_EXPECTED", date }, opts, { expectedOn: date });
+}
+
 function logCommand(ctx: CommandCtx, entryId: string, run: (loaded: Loaded, c: BraidCtx) => LogResult, detail: (loaded: Loaded) => Record<string, unknown>) {
   return runCommand(ctx, async (tx) => {
     const loaded = await loadEntry(tx, ctx, entryId);
@@ -398,6 +405,27 @@ export function runBraidReminders(ctx: { db: Db; now: Date }): Promise<Reminder[
       await evaluateProject(tx, projectId, ctx.now);
     }
     return reminders;
+  });
+}
+
+/**
+ * Section 20, U2: when a day passes, a dependency whose promised date has gone gets its due item.
+ * Nothing about the entry changes: the rule only asks (DependencyDue, NeverEndsByItself). Projects
+ * whose due items are already open are left alone, so the minute timer writes nothing most of the time.
+ */
+export function runDependencyDue(ctx: { db: Db; now: Date }): Promise<string[]> {
+  const today = todayOf(ctx.now);
+  return ctx.db.transaction(async (tx) => {
+    const waiting = await tx
+      .select({ id: t.braidEntries.id, projectId: t.braidEntries.projectId, state: t.braidEntries.state, kind: t.braidEntries.kind, expectedOn: t.braidEntries.expectedOn })
+      .from(t.braidEntries)
+      .where(and(eq(t.braidEntries.kind, "dependency"), inArray(t.braidEntries.state, ["open", "waiting"]), isNotNull(t.braidEntries.expectedOn)));
+    const due = waiting.filter((e) => daysBetween(dependencyDueFrom(e.expectedOn!), today) >= 0);
+    if (!due.length) return [];
+    const live = new Set((await liveItems(tx, due.map((e) => `dependency_due:${e.id}`))).map((i) => i.causeKey));
+    const projects = [...new Set(due.filter((e) => !live.has(`dependency_due:${e.id}`)).map((e) => e.projectId))].sort();
+    for (const projectId of projects) await evaluateProject(tx, projectId, ctx.now);
+    return projects;
   });
 }
 

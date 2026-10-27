@@ -19,6 +19,7 @@ import {
   keepOpen,
   reportBraidEntry,
   resolveBraidEntry,
+  setExpectedDate,
   switchEntryKind,
   withdrawKindChange,
   type KindAnswer,
@@ -196,6 +197,18 @@ export async function saveUpdate(captureId: string): Promise<ActionResult> {
   return r.ok ? result : r;
 }
 
+/**
+ * Section 19: an update with one item is decided and saved in one step. The decision and the save are
+ * the same commands as two clicks; a refused decision saves nothing, a failed save leaves it decided (RS1 to RS3).
+ */
+export async function decideAndSave(captureId: string, itemId: string, decision: ExtractionDecision | null): Promise<ActionResult> {
+  if (decision) {
+    const decided = await decideItem(itemId, decision);
+    if (!decided.ok) return decided;
+  }
+  return saveUpdate(captureId);
+}
+
 export async function discardUpdate(captureId: string): Promise<ActionResult> {
   return run((ctx) => discardCapture(ctx, captureId), "Discarded. Nothing was changed.");
 }
@@ -236,6 +249,16 @@ export async function withdrawKindAction(requestId: string): Promise<ActionResul
 
 export async function resolveEntry(entryId: string): Promise<ActionResult> {
   return run((ctx) => resolveBraidEntry(ctx, entryId), "Resolved.");
+}
+
+/** Section 20, U2: a PM or Lead ends a due dependency, met or late. Late drafts its follow up (D10). */
+export async function endDependency(entryId: string, outcome: "met" | "late"): Promise<ActionResult> {
+  return run((ctx) => resolveBraidEntry(ctx, entryId, outcome), outcome === "met" ? "Marked met." : "Marked late.");
+}
+
+/** Section 20, U2: a PM or Lead gives a dependency a new expected date. */
+export async function newExpectedDate(entryId: string, date: string): Promise<ActionResult> {
+  return run((ctx) => setExpectedDate(ctx, entryId, date), "New date saved.");
 }
 
 export async function keepEntryOpen(entryId: string): Promise<ActionResult> {

@@ -161,6 +161,8 @@ export type MatchReport = {
   title: string;
   ownerId: string | null;
   source: BraidSource;
+  /** Section 20, U2: a new dependency's promised date. A report joining an entry never moves its date (DP3). */
+  expectedOn?: string | null;
 };
 
 export type SaveMatchResult =
@@ -198,7 +200,7 @@ export function saveMatch(match: MatchRecord, log: BraidLog, report: MatchReport
 
   if (log[report.newEntryId]) return refuse(`entry ${report.newEntryId} already exists`);
   const draft = draftEntry({ id: report.newEntryId, projectId: match.projectId, kind: match.kind, title: report.title, ownerId: report.ownerId });
-  const r = applyBraidEvent(draft, { type: "REPORT", source: report.source }, ctx);
+  const r = applyBraidEvent(draft, { type: "REPORT", source: report.source, expectedOn: report.expectedOn ?? null }, ctx);
   if (!r.outcome.ok) return refuse(r.outcome.reason);
   let next: BraidLog = { ...log, [draft.id]: r.record };
   if (match.state === "related_to" && entry) next = linkBoth(next, draft.id, entry.id, "related");

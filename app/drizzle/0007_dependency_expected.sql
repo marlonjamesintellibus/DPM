@@ -1,0 +1,1 @@
+ALTER TABLE "braid_entries" ADD COLUMN "expected_on" date;

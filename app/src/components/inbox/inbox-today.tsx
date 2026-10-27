@@ -15,7 +15,7 @@ import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
-import { AcknowledgeControl, ClearControls, DecideControls, FollowUpControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
+import { AcknowledgeControl, ClearControls, DecideControls, DependencyDueControls, FollowUpControls, LeaveControls, LinkChangeForm, ReasonEditor } from "./inbox-actions";
 
 const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   status_set_with_no_reason: "Delivery check",
@@ -32,6 +32,7 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   done_no_change: "Delivery check",
   kind_change: "Kind change",
   blocked_without_blocker: "Delivery check",
+  dependency_due: "Dependency due",
 };
 
 // The small mark before an item's source line: a rule's check, someone's words, work, people
@@ -363,7 +364,9 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
         </Box>
       </Pair>
       <Explain>
-        {item.cause === "blocker_new"
+        {item.cause === "dependency_due"
+          ? "Only a PM or Lead ends a dependency. DPM never marks it late by itself."
+          : item.cause === "blocker_new"
           ? "A blocker went on the log; it stops work until it is cleared."
           : item.cause === "more_info"
             ? "Answer the question in your chat; the entry goes back to the PM or Lead."
@@ -373,6 +376,8 @@ async function EntryDetail({ item, label, entryId, projectId, viewerId, at }: { 
         <ClearControls entryId={entryId} canKeepOpen={item.cause === "clear"} />
       ) : item.cause === "blocker_new" ? (
         <AcknowledgeControl entryId={entryId} />
+      ) : item.cause === "dependency_due" ? (
+        <DependencyDueControls entryId={entryId} />
       ) : null}
     </DetailCard>
   );

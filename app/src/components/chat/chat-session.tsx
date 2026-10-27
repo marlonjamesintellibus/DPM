@@ -3,7 +3,7 @@
 // shows the moment it is sent, with "Thinking…" under it, before the server has it; the box sends one
 // message at a time (MF2), and a refused one comes back to the box with the reason (MF1). Suggested
 // follow-ups under a reply send through the same path (MF9).
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { sendUpdate } from "@/app/actions";
 import { ASK_ATLAS_INPUT } from "@/components/shell/ask-atlas";
@@ -27,10 +27,19 @@ export function ChatSession({ conversationId, focus, children }: { conversationI
   const [error, setError] = useState<string | null>(null);
   const busy = pending.length > 0;
   const end = useRef<HTMLDivElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
   }, [pending.length, children]);
+
+  // The box grows with what is typed, up to its max height, then scrolls; it shrinks back when sent.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
 
   const send = (text: string) => {
     const words = text.trim();
@@ -80,9 +89,10 @@ export function ChatSession({ conversationId, focus, children }: { conversationI
             send(draft);
           }}
         >
-          <div className="flex items-center gap-2.5 rounded-panel border border-line-strong bg-panel px-3.5 py-3">
+          <div className="flex items-end gap-2.5 rounded-panel border border-line-strong bg-panel px-3.5 py-3">
             <textarea
               id={ASK_ATLAS_INPUT}
+              ref={box}
               rows={1}
               autoFocus={focus}
               value={draft}
@@ -95,7 +105,7 @@ export function ChatSession({ conversationId, focus, children }: { conversationI
                   send(draft);
                 }
               }}
-              className="min-w-0 flex-1 resize-none bg-transparent type-body text-fg-1 outline-none placeholder:text-fg-3"
+              className="max-h-60 min-w-0 flex-1 resize-none overflow-y-auto bg-transparent type-body text-fg-1 outline-none placeholder:text-fg-3"
             />
             <button type="submit" disabled={busy || !draft.trim()} aria-label="Send" className="rounded-sm border border-line-strong bg-panel px-1.5 py-px type-micro text-fg-2 disabled:opacity-50">
               ↵

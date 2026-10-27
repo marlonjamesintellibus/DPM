@@ -14,7 +14,7 @@ import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
 import { getLeaveImpact } from "./leave";
-import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, STATUS_LABEL, statusLabel, todayIn } from "./project";
+import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, shortDate, STATUS_LABEL, statusLabel, todayIn } from "./project";
 
 export type InboxCause =
   | "status_set_with_no_reason"
@@ -37,7 +37,9 @@ export type InboxCause =
   /** M17: a member asked to change an entry's kind; a PM or Lead switches or keeps it. */
   | "kind_change"
   /** D32: work still Blocked whose blocker changed kind; its owner unblocks it or links another blocker. */
-  | "blocked_without_blocker";
+  | "blocked_without_blocker"
+  /** Section 20, U2: a dependency's promised date has passed; a PM or Lead marks it met or late, or gives a new date. */
+  | "dependency_due";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -397,6 +399,17 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
         });
         break;
       }
+      case "dependency_due":
+        make({
+          title: `Was this delivered? ${entry.title}`,
+          why: `it was expected ${entry.expectedOn ? shortDate(entry.expectedOn) : "by now"}; mark it met or late, or give a new date`,
+          source: "Delivery check",
+          fromWords: false,
+          action: "Update",
+          group: "today",
+          subject,
+        });
+        break;
       case "clear": {
         const by = nameOf(entry.resolveProposedBy);
         make({

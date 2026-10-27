@@ -1,14 +1,16 @@
 // Review my update (L16b): one capture and every item Atlas found in it, grouped by project.
 // The whole capture belongs to its author (M1), so only the author reads this; anyone else gets
 // the same answer as for a capture that does not exist.
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
+import { weekday } from "../domain/dates";
 import * as t from "../db/schema";
 import { saveBlockers } from "../domain/machines/capture";
 import { displayMark, type ExtractedItem, type ItemState, type WithdrawReason } from "../domain/machines/extracted-item";
 import { landsAs, type BraidKind, type ProjectRole } from "../domain/rights";
 import { mayReadCapture } from "../domain/routing";
+import { setAside, type SetAside, type StoredDrop } from "../domain/set-aside";
 import type { Confidence, ExtractedItemDraft, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
@@ -101,6 +103,8 @@ export type Review = {
   footer: string;
   /** "Got it. 9 updates for 2 projects; 4 need your OK." */
   chatLine: string;
+  /** Section 20, U1: what the checks refused and what fed nothing. The author only, like the capture. */
+  setAside: SetAside;
   canSave: boolean;
 };
 
@@ -134,10 +138,41 @@ export function countItems(items: readonly ExtractedItem[]): ReviewCounts & { pe
   };
 }
 
+/** "1 update for 1 project; 1 part not used." */
+export function withSetAside(line: string, s: SetAside): string {
+  const tail = setAsideLine(s);
+  return tail ? `${line.replace(/\.$/, "")}; ${tail}.` : line;
+}
+
 export function countsLine(c: ReviewCounts, separator: "; " | ". "): string {
   const head = `${plural(c.changes, "update", "updates")} for ${plural(c.projects, "project", "projects")}`;
   const waits = [c.needsOk ? `${plural(c.needsOk, "needs", "need")} your OK` : null, c.needsProject ? `${plural(c.needsProject, "needs", "need")} a project` : null].filter(Boolean);
   return waits.length ? `${head}${separator}${waits.join("; ")}.` : `${head}.`;
+}
+
+/**
+ * Section 20, U1: what Atlas set aside, from the item spans and the refusals the read kept in its
+ * PROPOSALS_READY audit entry (UD6). A capture read before the audit kept them has none.
+ */
+export async function readSetAside(
+  conn: Conn,
+  capture: { id: string; text: string; question: { asked: string } | null },
+  items: readonly ExtractedItem[],
+): Promise<SetAside> {
+  const [read] = await conn
+    .select({ detail: t.auditEntries.detail })
+    .from(t.auditEntries)
+    .where(and(eq(t.auditEntries.captureId, capture.id), eq(t.auditEntries.action, "PROPOSALS_READY")))
+    .orderBy(desc(t.auditEntries.id))
+    .limit(1);
+  const dropped = (read?.detail?.dropped ?? []) as StoredDrop[];
+  return setAside({ text: capture.text, used: items.flatMap((i) => i.draft.spans), dropped, asked: capture.question?.asked ?? null });
+}
+
+/** "1 part not used", for the chat's summary line; empty when nothing was set aside. */
+export function setAsideLine(s: SetAside): string {
+  const n = s.refused.length + s.unused.length;
+  return n ? `${plural(n, "part", "parts")} not used` : "";
 }
 
 const WITHDRAWN_NOTE: Record<WithdrawReason, string | null> = {
@@ -311,8 +346,13 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
           : `Add as evidence (${plural(n, "source", "sources")})`;
       }
       const lands = landsAs(d.braid.kind, authorRole(d.projectId));
-      if (lands !== "proposed") return "Add to the log";
-      return d.braid.kind === "decision" ? "Propose to the decider" : "Propose to the PM";
+      // Section 20, U2: a dependency says when it was promised
+      const by = d.braid.expectedOn ? `, expected ${weekday(d.braid.expectedOn).slice(0, 3)} ${shortDate(d.braid.expectedOn)}` : "";
+      if (lands !== "proposed") return `Add to the log${by}`;
+      if (d.braid.kind === "decision") return "Propose to the decider";
+      // Section 19: say who decides, not only their role
+      const pm = memberships.find((m) => m.projectId === d.projectId && m.role === "pm" && m.state === "member" && m.personId !== capture.authorId);
+      return `${pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM"}${by}`;
     }
     return targetChange(item, records);
   };
@@ -403,6 +443,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   }
 
   const { perProject: _perProject, personal: _personal, notFiled: _notFiled, ...counts } = countItems(items);
+  const aside = await readSetAside(conn, capture, items);
   return {
     found: true,
     capture: {
@@ -422,7 +463,8 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     highlights: [...highlightMap.values()].sort((a, b) => a.start - b.start || a.end - b.end),
     counts,
     footer: countsLine(counts, ". "),
-    chatLine: `Got it. ${countsLine(counts, "; ")}`,
+    chatLine: `Got it. ${withSetAside(countsLine(counts, "; "), aside)}`,
+    setAside: aside,
     canSave: (capture.state === "proposed" || capture.state === "reviewing") && counts.needsOk === 0 && counts.needsProject === 0,
   };
 }

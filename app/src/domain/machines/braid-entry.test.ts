@@ -90,6 +90,8 @@ describe("BRAID entry arrows (every drawn arrow)", () => {
     { kind: "blocker", from: "resolved", event: { type: "REOPEN" }, actor: andre, to: "reported" },
     { kind: "risk", from: "open", event: { type: "PROGRESS" }, actor: alicia, to: "mitigating" },
     { kind: "dependency", from: "open", event: { type: "PROGRESS" }, actor: andre, to: "waiting" },
+    { kind: "dependency", from: "open", event: { type: "SET_EXPECTED", date: "2026-10-23" }, actor: alicia, to: "open" },
+    { kind: "dependency", from: "waiting", event: { type: "SET_EXPECTED", date: "2026-10-23" }, actor: andre, to: "waiting" },
     { kind: "blocker", from: "reported", event: { type: "PROPOSE_RESOLVE" }, actor: kemar, to: "reported" },
     { kind: "blocker", from: "reported", event: { type: "KEEP_OPEN" }, actor: alicia, to: "reported", patch: { resolveProposedBy: "kemar" } },
     { kind: "blocker", from: "reported", event: { type: "ACKNOWLEDGE" }, actor: alicia, to: "reported", patch: { newAlert: true } },
@@ -616,6 +618,7 @@ describe("BRAID entries keep the model-checked properties", () => {
       { type: "WITHDRAW" },
       { type: "RESOLVE" },
     ),
+    fc.constantFrom("2026-10-19", "2026-10-30", "2027-01-04").map((date): BraidEvent => ({ type: "SET_EXPECTED", date })),
     fc.constantFrom<"closed" | "realised" | "confirmed" | "broken" | "met" | "late">("closed", "realised", "confirmed", "broken", "met", "late").map((outcome): BraidEvent => ({ type: "RESOLVE", outcome })),
     fc.constant("source" as const),
   );
@@ -641,7 +644,9 @@ describe("BRAID entries keep the model-checked properties", () => {
             }
             expect(KIND_STATES[kind]).toContain(r.record.state);
             if (["APPROVE", "DECLINE", "REQUEST_INFO"].includes(event.type)) expect(mayDecide(actor.role!, kind)).toBe(true);
-            if (["RESOLVE", "REOPEN", "PROGRESS"].includes(event.type)) {
+            // Section 20, U2 (DependencyDue): only those who end a dependency move its date, and only a dependency has one
+            if (event.type !== "SET_EXPECTED") expect(r.record.expectedOn).toBe(rec.expectedOn);
+            if (["RESOLVE", "REOPEN", "PROGRESS", "SET_EXPECTED"].includes(event.type)) {
               const isOwner = kind === "blocker" ? !!actor.ownsBlockedWork : kind === "issue" && actor.id === "kemar";
               expect(mayResolve({ role: actor.role!, isOwner }, kind)).toBe(true);
             }
@@ -653,5 +658,65 @@ describe("BRAID entries keep the model-checked properties", () => {
       ),
       { numRuns: 2000 },
     );
+  });
+});
+
+// Section 20, U2: someone else's promise as a dependency with an expected date (DP1 to DP8)
+describe("a dependency's expected date (section 20, U2)", () => {
+  const promised = (by: BraidActor = kemar, expectedOn: string | null = "2026-10-21") =>
+    apply(draftEntry({ id: "d1", projectId: P, kind: "dependency", title: "Kyle to update the harvest docs by 21 Oct" }), { type: "REPORT", source: src("d1-s1", by.id), expectedOn }, by).record;
+  const members: ProjectMember[] = [{ id: "kemar", role: "member" }, { id: "alicia", role: "pm" }];
+
+  it("a report keeps the promised date; only a dependency has one", () => {
+    expect(promised().expectedOn).toBe("2026-10-21");
+    const risk = apply(draftEntry({ id: "r1", projectId: P, kind: "risk", title: "r" }), { type: "REPORT", source: src("r1-s1"), expectedOn: "2026-10-21" }, kemar).record;
+    expect(risk.expectedOn).toBeNull();
+  });
+
+  it("DP1: no date, no due item, ever", () => {
+    const d = { ...promised(kemar, null), state: "open" as const };
+    expect(braidEntryCauses(d, members, {}, "2027-01-04")).toEqual([]);
+  });
+
+  it("the due item opens on the first working day after the date (DP2: Saturday's opens Monday)", () => {
+    const d = { ...promised(), state: "open" as const };
+    expect(braidEntryCauses(d, members, {}, "2026-10-21")).toEqual([]);
+    expect(braidEntryCauses(d, members, {}, "2026-10-22")).toEqual(["dependency_due:d1"]);
+    const saturday = { ...d, expectedOn: "2026-10-24" };
+    expect(braidEntryCauses(saturday, members, {}, "2026-10-25")).toEqual([]);
+    expect(braidEntryCauses(saturday, members, {}, "2026-10-26")).toEqual(["dependency_due:d1"]);
+    // Without a date to check against, only the causes that hold by state
+    expect(braidEntryCauses(d, members)).toEqual([]);
+  });
+
+  it("DP7, DP8: never while proposed or after it is declined, met or late", () => {
+    const proposed = promised();
+    expect(proposed.state).toBe("proposed");
+    expect(braidEntryCauses(proposed, members, {}, "2026-10-26")).toEqual(["approve:d1"]);
+    for (const state of ["declined", "met", "late", "withdrawn"] as const) expect(braidEntryCauses({ ...proposed, state }, members, {}, "2026-10-26")).toEqual([]);
+  });
+
+  it("DP3: a later report joins as a source and never moves the date", () => {
+    const d = { ...promised(), state: "open" as const };
+    const r = apply(d, { type: "ADD_SOURCE", projectId: P, kind: "dependency", source: src("d1-s2", "jodian") }, jodian);
+    expect(r.outcome.ok).toBe(true);
+    expect(r.record.expectedOn).toBe("2026-10-21");
+  });
+
+  it("a PM or Lead gives a new date, never in the past and never the same one; a member may not", () => {
+    const d = { ...promised(), state: "open" as const };
+    const moved = apply(d, { type: "SET_EXPECTED", date: "2026-10-28" }, alicia, { today: "2026-10-22" });
+    expect(moved.outcome.ok).toBe(true);
+    expect(moved.record.expectedOn).toBe("2026-10-28");
+    expect(braidEntryCauses(moved.record, members, {}, "2026-10-22")).toEqual([]);
+    const refusedFor = (e: BraidEvent, actor: BraidActor) => {
+      const r = apply(d, e, actor, { today: "2026-10-22" });
+      return r.outcome.ok ? null : r.outcome.reason;
+    };
+    expect(refusedFor({ type: "SET_EXPECTED", date: "2026-10-28" }, kemar)).toMatch(/may not resolve/);
+    expect(refusedFor({ type: "SET_EXPECTED", date: "2026-10-21" }, alicia)).toBe("a new expected date cannot be in the past");
+    expect(apply({ ...d, expectedOn: "2026-10-28" }, { type: "SET_EXPECTED", date: "2026-10-28" }, alicia).outcome.ok).toBe(false);
+    // Only on the log: a proposed one waits for its decider first
+    expect(apply(promised(), { type: "SET_EXPECTED", date: "2026-10-28" }, alicia).outcome.ok).toBe(false);
   });
 });

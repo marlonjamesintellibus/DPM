@@ -1,114 +1,9 @@
 {
-  "id": "99068d7a-d528-4a10-98bf-124820c6ba16",
+  "id": "b6e2b688-a836-4af8-99f2-b4496431825b",
   "prevId": "117044ca-53bb-49e6-94cb-302bebc63007",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.answer_feedback": {
-      "name": "answer_feedback",
-      "schema": "",
-      "columns": {
-        "capture_id": {
-          "name": "capture_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "person_id": {
-          "name": "person_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "rating": {
-          "name": "rating",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "wrong": {
-          "name": "wrong",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "topic": {
-          "name": "topic",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "answer_as_of": {
-          "name": "answer_as_of",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "answer_feedback_capture_id_captures_id_fk": {
-          "name": "answer_feedback_capture_id_captures_id_fk",
-          "tableFrom": "answer_feedback",
-          "tableTo": "captures",
-          "columnsFrom": [
-            "capture_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "answer_feedback_person_id_people_id_fk": {
-          "name": "answer_feedback_person_id_people_id_fk",
-          "tableFrom": "answer_feedback",
-          "tableTo": "people",
-          "columnsFrom": [
-            "person_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "answer_feedback_capture_id_person_id_pk": {
-          "name": "answer_feedback_capture_id_person_id_pk",
-          "columns": [
-            "capture_id",
-            "person_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.app_meta": {
       "name": "app_meta",
       "schema": "",
@@ -492,6 +387,12 @@
         "state_before_switch": {
           "name": "state_before_switch",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expected_on": {
+          "name": "expected_on",
+          "type": "date",
           "primaryKey": false,
           "notNull": false
         },
@@ -1344,187 +1245,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.eval_candidates": {
-      "name": "eval_candidates",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "person_id": {
-          "name": "person_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "cause": {
-          "name": "cause",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "capture_id": {
-          "name": "capture_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "extraction_id": {
-          "name": "extraction_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "dedup_key": {
-          "name": "dedup_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "text": {
-          "name": "text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "detail": {
-          "name": "detail",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "logged_at": {
-          "name": "logged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "decided_by": {
-          "name": "decided_by",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "decided_at": {
-          "name": "decided_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "case_text": {
-          "name": "case_text",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expected": {
-          "name": "expected",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "eval_candidates_person": {
-          "name": "eval_candidates_person",
-          "columns": [
-            {
-              "expression": "person_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "eval_candidates_person_id_people_id_fk": {
-          "name": "eval_candidates_person_id_people_id_fk",
-          "tableFrom": "eval_candidates",
-          "tableTo": "people",
-          "columnsFrom": [
-            "person_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "eval_candidates_capture_id_captures_id_fk": {
-          "name": "eval_candidates_capture_id_captures_id_fk",
-          "tableFrom": "eval_candidates",
-          "tableTo": "captures",
-          "columnsFrom": [
-            "capture_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "eval_candidates_dedup_key_unique": {
-          "name": "eval_candidates_dedup_key_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "dedup_key"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -2600,13 +2320,6 @@
           "type": "text",
           "primaryKey": false,
           "notNull": false
-        },
-        "help_improve_atlas": {
-          "name": "help_improve_atlas",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "created_at": {
           "name": "created_at",

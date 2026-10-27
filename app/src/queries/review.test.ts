@@ -2,7 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import * as t from "../db/schema";
-import { seededDb } from "../test/seeded-db";
+import type { Extractor } from "../atlas/extractor";
+import { readCapture } from "../commands/atlas";
+import { createCapture } from "../commands/capture";
+import type { RawProposal } from "../domain/atlas-checks/types";
+import { AT_910, seededDb } from "../test/seeded-db";
+import { getChatSummary } from "./chat";
 import { NOT_YOURS } from "./project";
 import { getReview, type Review } from "./review";
 
@@ -51,7 +56,7 @@ describe("getReview: Kemar's note at 9:10am (L16b)", () => {
       [5, "Update", "Leave Kemar Brown", "26 to 30 Oct", "high", "Matches approved leave", "Personal"],
       [6, "Update", "Handover Runbook", "Not done to Handed to Jodian", "low", "Needs your OK", "His handover"],
       [7, "BRAID · Blocker", "Store sales feed access", "Add Kemar as a source (2 reports)", "high", "Ready", "Same subject as #151"],
-      [8, "BRAID · Risk", "Trend model may slip to 24 Oct", "Propose to the PM", "medium", "Needs your OK", "Same quote as #4"],
+      [8, "BRAID · Risk", "Trend model may slip to 24 Oct", "Propose to Alicia, the PM", "medium", "Needs your OK", "Same quote as #4"],
       [9, "BRAID · Risk", "Only Kemar can run the pipeline", "Add as evidence (2 sources)", "medium", "Needs your OK", "Same subject as #5 and #6"],
       [10, "Update", "Issue #208 Weekly sales export", "In progress to Done", "high", "Ready", "\"On Store Insights\""],
       [11, "BRAID · Decision", "Move the daily refresh to 6am", "Propose to the decider", "high", "Ready", "\"On Store Insights\""],
@@ -108,5 +113,46 @@ describe("getReview privacy (M1)", () => {
     expect(await getReview(db, "andre", CAPTURE)).toEqual(NOT_YOURS);
     expect(await getReview(db, "kemar", "cap-nope")).toEqual(NOT_YOURS);
     expect(JSON.stringify(await getReview(db, "alicia", CAPTURE))).not.toContain("TikTok");
+  });
+});
+
+// Section 20, U1: what the checks refused and what fed nothing reach the author, and only the author
+describe("Set aside (section 20, U1)", () => {
+  const TEXT = "#145 is done. Jodian finished the feature store backfill. I've spoken with Kyle to update the harvest docs, he'll do it tomorrow.";
+  const proposals: RawProposal[] = [
+    { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#145", label: "#145" }, targetId: "wi-145", field: "state", newValue: "done", quote: "#145 is done", confidence: "high", rationale: "You finished #145." },
+    { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#160", label: "#160" }, targetId: "wi-160", field: "state", newValue: "done", quote: "Jodian finished the feature store backfill", confidence: "high", rationale: "Jodian finished #160." },
+  ];
+  const extractor: Extractor = { name: "fake", extract: async () => ({ proposals, malformed: [], model: "fake-model", usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 } }) };
+
+  async function readNote(): Promise<string> {
+    const ctx = { db, now: AT_910, actorId: "kemar" };
+    const { captureId } = await createCapture(ctx, { channel: "app", kind: "text", text: TEXT, messageAt: AT_910, receivedAt: AT_910, messageId: "set-aside-1" });
+    await readCapture(ctx, captureId, extractor);
+    return captureId;
+  }
+
+  it("lists the refusal with its reason and the clause that fed nothing", async () => {
+    const r = await getReview(db, "kemar", await readNote());
+    if (!r.found) throw new Error("Kemar should see his own review");
+    expect(r.items.map((i) => i.title)).toEqual(["Issue #145 Google Trends connector"]);
+    expect(r.setAside.refused).toEqual([{ reason: "#160 Feature store backfill belongs to Jodian Taylor; ask them to change its state.", quote: "Jodian finished the feature store backfill" }]);
+    expect(r.setAside.unused.map((u) => u.text)).toEqual(["I've spoken with Kyle to update the harvest docs, he'll do it tomorrow"]);
+    expect(r.chatLine).toBe("Got it. 1 update for 1 project; 2 parts not used.");
+  });
+
+  it("the chat counts what was set aside", async () => {
+    await readNote();
+    const summary = await getChatSummary(db, "kemar");
+    expect(summary.latest?.line).toBe("Got it. 1 update for 1 project; 2 parts not used.");
+  });
+
+  it("SA9: nobody but the author reads it", async () => {
+    const captureId = await readNote();
+    expect(await getReview(db, "alicia", captureId)).toEqual(NOT_YOURS);
+  });
+
+  it("SA1: Kemar's story note sets nothing aside", async () => {
+    expect((await kemarsReview()).setAside).toEqual({ refused: [], unused: [] });
   });
 });

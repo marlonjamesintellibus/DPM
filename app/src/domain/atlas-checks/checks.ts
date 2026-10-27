@@ -9,7 +9,8 @@ import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport,
 import { CONFIDENCES, lowerTo, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type RoutingState, type SourceSpan } from "../shared";
 
 export { lowerTo };
-import { readDateValue, readLeaveRange, type LeaveRange, type ResolvedDate } from "./resolve-dates";
+import { daysBetween } from "../dates";
+import { messageDay, readDateValue, readLeaveRange, resolveDate, type LeaveRange, type ResolvedDate } from "./resolve-dates";
 import type {
   CandidateProject,
   CandidateRecord,
@@ -44,6 +45,11 @@ const JUDGEMENTS = [
   "doesn't care", "does not care", "can't be trusted", "cannot be trusted", "not pulling his weight",
   "not pulling her weight", "not pulling their weight", "slacking", "bad at", "terrible at", "difficult to work with",
 ];
+
+/** E17: health words, for text DPM shows back even to the author (section 20, SA6). */
+export function saysHealth(text: string): boolean {
+  return HEALTH.some((h) => mentions(text, h));
+}
 
 /** Check 13's word lists, for any text Atlas writes that people will read (a reason draft). */
 export function saysHealthOrJudgement(text: string): boolean {
@@ -663,6 +669,12 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     const title = w.match && w.matchState === "same_as" ? w.match.entry.title : w.p.braidTitle?.trim() || s.quoteText(w);
     draft.braid = { kind: w.braidKind as BraidKind, title, match: w.matchState, matchEntryId: w.match?.entry.id ?? null };
     if (w.match) draft.braid.seenState = w.match.entry.state; // compared again at save (E83)
+    // Section 20, U2: a new dependency keeps the date its promise names, read by the server, never the model.
+    // A date already past is what happened, not a promise (DP1: none at all is fine).
+    if (w.kind === "braid_new" && w.braidKind === "dependency") {
+      const said = resolveDate(s.quoteText(w), s.ctx.messageAt);
+      draft.braid.expectedOn = said && daysBetween(messageDay(s.ctx.messageAt), said.date) >= 0 ? said.date : null;
+    }
   }
   return draft;
 }

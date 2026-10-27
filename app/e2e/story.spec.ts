@@ -33,7 +33,7 @@ test("1, 2. Kemar's voice note: Atlas proposes 9 updates for 2 projects, 4 need 
   await expect(page.getByText("9 updates for 2 projects").first()).toBeVisible();
   // Each card says why it went to that project; "the store feed" goes to Forager because Kyle is #151's contact
   await expect(card("Issue #151 Store sales feed access")).toContainText("Kyle is the contact on #151");
-  await expect(card("Move the daily refresh to 6am")).toContainText('Store Insights · "On Store Insights"');
+  await expect(card("Move the daily refresh to 6am")).toContainText('"On Store Insights"');
   await expect(card("Leave Kemar Brown")).toContainText("Matches approved leave");
   // Nothing is saved until he confirms: Save waits for the 4 that need his OK
   await expect(page.getByText("4 need your OK before this is saved")).toBeVisible();

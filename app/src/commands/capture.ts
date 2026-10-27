@@ -1073,7 +1073,7 @@ async function applyBraid(s: SaveScope, projectId: string, intents: readonly Bra
     }
     // The author confirmed this match when they accepted the item (or left it ready and saved)
     const match: MatchRecord = { itemId: item.id, projectId, kind, speakerId: s.authorId, state, entryId, confirmed: true, seen, conflictsWith: [], savedTo: null };
-    const r = saveMatch(match, log, { newEntryId: `br-${item.id}`, title: b.title, ownerId: null, source }, { actor, today });
+    const r = saveMatch(match, log, { newEntryId: `br-${item.id}`, title: b.title, ownerId: null, source, expectedOn: b.expectedOn ?? null }, { actor, today });
     if (!r.ok) throw new CommandRefused(r.outcome === "conflict" ? `"${braid.title}" changed since you saw it (now ${r.now})` : `"${braid.title}": ${r.reason}`);
     const from = r.outcome === "created" ? "none" : log[r.entryId].state;
     log = r.log;

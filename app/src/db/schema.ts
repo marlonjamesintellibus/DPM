@@ -268,6 +268,8 @@ export const braidEntries = pgTable(
     switchedOn: day("switched_on"),
     switchReason: text("switch_reason"),
     stateBeforeSwitch: text("state_before_switch").$type<BraidEntryState>(),
+    /** Section 20, U2: the day someone promised what a dependency waits on. */
+    expectedOn: day("expected_on"),
     version: version(),
     createdAt: created(),
     updatedAt: updated(),

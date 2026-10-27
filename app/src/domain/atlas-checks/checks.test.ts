@@ -589,3 +589,25 @@ describe("runChecks holds its guarantees for any proposals", () => {
     );
   });
 });
+
+// Section 20, U2: a new dependency keeps the date its promise names, read by the server from the quote
+describe("a promised date on a new dependency (section 20, U2)", () => {
+  const promise = (text: string, quote = text, braidKind: BraidKind = "dependency") =>
+    one(braid({ braidKind, braidTitle: "Kyle to update the harvest docs", quote, routingReason: { basis: "tied_person", evidence: "Kyle", label: "Kyle is the contact on #151" } }), ctxWith(text)).item;
+
+  it("reads it from the quote: 'tomorrow', said on Tuesday 20 Oct, is Wednesday 21 Oct", () => {
+    expect(promise("I've spoken with Kyle to update the harvest docs, he'll do it tomorrow")?.braid?.expectedOn).toBe("2026-10-21");
+  });
+
+  it("DP1: no date in the words, none on the entry", () => {
+    expect(promise("Kyle will update the harvest docs")?.braid?.expectedOn).toBeNull();
+  });
+
+  it("a date already past is what happened, not a promise", () => {
+    expect(promise("Kyle said he would update the harvest docs yesterday")?.braid?.expectedOn).toBeNull();
+  });
+
+  it("only a new dependency carries one", () => {
+    expect(promise("Kyle may not update the harvest docs by tomorrow", undefined, "risk")?.braid?.expectedOn).toBeUndefined();
+  });
+});
