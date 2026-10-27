@@ -68,12 +68,12 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-5's words and order; a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-5");
+  it("the topics come from domain/topics in read-6's words and order; a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-6");
     expect(SYSTEM_PROMPT).toContain(
-      "topic: needs_me (what they need to do, review or approve), blocked (what is blocked or stuck), project_status (how a project stands), or other.\n",
+      "topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n",
     );
-    expect(questionSchema.shape.topic.options).toEqual(["needs_me", "blocked", "project_status", "other", "unclear"]);
+    expect(questionSchema.shape.topic.options).toEqual(["needs_me", "my_work", "due", "blocked", "project_status", "updates", "mentions", "small_talk", "other", "unclear"]);
   });
 
   it("puts the key only in the Authorization header", async () => {
@@ -192,7 +192,9 @@ describe("which Atlas runs", () => {
     const atlas = atlasFromEnv({ OPENROUTER_API_KEY: "  " } as unknown as NodeJS.ProcessEnv);
     expect(atlas).toMatchObject({ connected: false, drafter: null, extractor: { name: "fixture" } });
     expect((await atlas.extractor.extract(KEMAR_CONTEXT)).proposals).toEqual(KEMAR_PROPOSALS);
-    expect((await failure(createFixtureExtractor().extract({ ...KEMAR_CONTEXT, text: "hello" }))).why).toBe("model_error");
+    expect((await failure(createFixtureExtractor().extract({ ...KEMAR_CONTEXT, text: "Finished #145 and the export is fixed." }))).why).toBe("model_error");
+    // CQ12: small talk is answered by the rule, so it needs no recording
+    expect((await createFixtureExtractor().extract({ ...KEMAR_CONTEXT, text: "hello" })).question).toEqual({ asked: "hello", topic: "small_talk", projectId: null });
   });
 
   it("D21 OpenRouter with a key: Sol reads, Haiku takes the last try and words reasons; each can be named", () => {

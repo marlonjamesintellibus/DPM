@@ -5,9 +5,10 @@ import type { CandidateProject } from "./atlas-checks/types";
 import { applyCaptureEvent, type CaptureRecord } from "./machines/capture";
 import { checkQuestion, ruleQuestion, topicOf } from "./question";
 import { suggestionsAfter } from "./topics";
+import { namesPerson } from "./topics/mentions";
 
 const project = (id: string, name: string, aliases: string[] = []): CandidateProject => ({ id, name, aliases, role: "member", records: [], people: [], braid: [] });
-const PROJECTS = [project("forager", "Forager 2.0", ["Forager"]), project("gq", "GQ & Academy")];
+const PROJECTS = [project("forager", "Forager 2.0", ["Forager"]), project("gq", "GQ & Academy", ["GQ", "Academy"])];
 const ctx = (text: string) => ({ text, projects: PROJECTS });
 
 describe("the rule, without a model (QA8)", () => {
@@ -60,11 +61,114 @@ describe("follow-ups by the rule (CV8, CV9)", () => {
   });
 });
 
+describe("section 18: the new topics by the rule", () => {
+  it.each([
+    ["What am I working on?", "my_work", null],
+    ["What's on my plate?", "my_work", null],
+    ["My tasks on Forager?", "my_work", "forager"],
+    ["What's due this week?", "due", null],
+    ["Anything due tomorrow?", "due", null],
+    ["What's due today?", "due", null],
+    ["When's the next milestone on Forager?", "due", "forager"],
+    ["Any updates?", "updates", null],
+    ["Any updates today?", "updates", null],
+    ["What’s new?", "updates", null],
+    ["What changed on GQ?", "updates", "gq"],
+    ["Who has mentioned me?", "mentions", null],
+    ["Did anyone mention me on Forager?", "mentions", "forager"],
+    ["Tell me about Forager", "project_status", "forager"],
+  ] as const)("%s is a question about %s", (text, topic, projectId) => {
+    expect(ruleQuestion(ctx(text))).toEqual({ asked: text, topic, projectId });
+  });
+
+  it("CQ2 a project the asker is not in is never named: their own work, on all their projects", () => {
+    expect(ruleQuestion(ctx("My tasks on Store Insights?"))).toEqual({ asked: "My tasks on Store Insights?", topic: "my_work", projectId: null });
+  });
+
+  it("CQ16 what is new with a person is updates on all their projects (no filter by person yet)", () => {
+    expect(ruleQuestion(ctx("What's new with Kyle?"))).toEqual({ asked: "What's new with Kyle?", topic: "updates", projectId: null });
+  });
+
+  it.each(["Hi", "hello", "Thanks!", "ok", "Okay, thanks", "Good morning, Atlas!", "Thank you so much", "Morning", "wha gwaan"])("CQ12 %s is small talk, answered without a model", (text) => {
+    expect(ruleQuestion(ctx(text))).toEqual({ asked: text, topic: "small_talk", projectId: null });
+  });
+
+  it.each([
+    ["CQ13 a greeting with an update", "Morning! Finished #145."],
+    ["thanks with an update", "Thanks, #145 is done."],
+    ["a statement about their work", "I'm working on #145"],
+  ])("not small talk, not a question: %s", (_, text) => {
+    expect(ruleQuestion(ctx(text))).toBeNull();
+  });
+
+  it("a greeting before a question is the question", () => {
+    expect(ruleQuestion(ctx("Hi Atlas, what needs me?"))).toEqual({ asked: "Hi Atlas, what needs me?", topic: "needs_me", projectId: null });
+  });
+
+  it("the new topics go before needs me, whose 'today' would take them; mentions before blocked", () => {
+    expect(topicOf("what's due today")).toBe("due");
+    expect(topicOf("anything new today")).toBe("updates");
+    expect(topicOf("what am i working on today")).toBe("my_work");
+    expect(topicOf("did anyone mention me as blocked")).toBe("mentions");
+    expect(topicOf("is my work blocked")).toBe("blocked");
+  });
+});
+
+describe("section 18: the new topics take part in follow-ups (section 16)", () => {
+  const turn = (text: string, asked: { topic: string; projectId: string | null } | null, minutesAgo = 5) => ({
+    captureId: `c-${text}`,
+    at: new Date(Date.now() - minutesAgo * 60_000),
+    text,
+    asked,
+    openItems: [],
+  });
+  it("'and on GQ?' after 'What am I working on?' is my work on GQ", () => {
+    expect(ruleQuestion({ ...ctx("and on GQ?"), earlier: [turn("What am I working on?", { topic: "my_work", projectId: null })] })).toEqual({ asked: "and on GQ?", topic: "my_work", projectId: "gq" });
+  });
+  it("small talk in between changes nothing: 'Thanks!' does not take the follow-up", () => {
+    const earlier = [turn("What's due this week?", { topic: "due", projectId: null }), turn("Thanks!", { topic: "small_talk", projectId: null })];
+    expect(ruleQuestion({ ...ctx("what about Forager?"), earlier })).toEqual({ asked: "what about Forager?", topic: "due", projectId: "forager" });
+  });
+  it("CQ14 'And GQ?' ten minutes after 'What's blocked?' is blocked on GQ", () => {
+    expect(ruleQuestion({ ...ctx("And GQ?"), earlier: [turn("What's blocked?", { topic: "blocked", projectId: null }, 10)] })).toEqual({ asked: "And GQ?", topic: "blocked", projectId: "gq" });
+  });
+  it("CQ15 as section 16 built it: the conversation is the context, not the clock or an update in between", () => {
+    const later = [turn("What's blocked?", { topic: "blocked", projectId: null }, 60)];
+    expect(ruleQuestion({ ...ctx("And GQ?"), earlier: later })?.topic).toBe("blocked");
+    const afterUpdate = [turn("What's blocked?", { topic: "blocked", projectId: null }, 20), turn("#145 is done.", null, 10)];
+    expect(ruleQuestion({ ...ctx("And GQ?"), earlier: afterUpdate })?.topic).toBe("blocked");
+    // In a conversation with no question before it, it is unclear (CV9), never a guess
+    expect(ruleQuestion(ctx("And GQ?"))?.topic).toBe("unclear");
+  });
+});
+
+describe("CQ9, CQ10: whose name the words say (decision CD29)", () => {
+  it("a full name always counts, in any case; a first name only where nobody else on the project has it", () => {
+    expect(namesPerson("waiting on Kemar for the store feed", "Kemar Brown", false)).toBe(true);
+    expect(namesPerson("waiting on Kemar for the store feed", "Kemar Brown", true)).toBe(false);
+    expect(namesPerson("waiting on kemar brown for the feed", "Kemar Brown", true)).toBe(true);
+    expect(namesPerson("Kemar's runbook is done", "Kemar Brown", false)).toBe(true);
+  });
+  it("a first name inside another word, or not written as a name, does not count", () => {
+    expect(namesPerson("Kemarbrook is the vendor", "Kemar Brown", false)).toBe(false);
+    expect(namesPerson("the andre feed", "Andre Mitchell", false)).toBe(false);
+  });
+});
+
 describe("suggested follow-ups by topic (section 17)", () => {
   it("each topic suggests its own; one DPM no longer knows gets other's", () => {
     expect(suggestionsAfter("needs_me")).toEqual(["What's blocked?", "How are my projects doing?"]);
     expect(suggestionsAfter("blocked")).toEqual(["What needs me today?"]);
-    expect(suggestionsAfter("retired_topic")).toEqual(["What needs me today?", "What's blocked?"]);
+    expect(suggestionsAfter("retired_topic")).toEqual(["What am I working on?", "What needs me today?"]);
+  });
+
+  it("section 18: the new topics suggest the asks people try next", () => {
+    expect(suggestionsAfter("my_work")).toEqual(["What's due this week?", "What needs me today?"]);
+    expect(suggestionsAfter("due")).toEqual(["What am I working on?", "What's blocked?"]);
+    expect(suggestionsAfter("updates")).toEqual(["Who has mentioned me?", "What needs me today?"]);
+    expect(suggestionsAfter("mentions")).toEqual(["Any updates?", "What needs me today?"]);
+    expect(suggestionsAfter("small_talk")).toEqual(["What am I working on?", "What needs me today?"]);
+    expect(suggestionsAfter("project_status")).toEqual(["What's blocked?", "What's due this week?"]);
   });
 });
 

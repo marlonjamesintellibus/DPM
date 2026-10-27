@@ -1,7 +1,7 @@
 // The recorded Atlas, for tests and for running without an OpenRouter key: it answers the messages
 // it has a recording for and refuses the rest, so nothing pretends a real read happened. A one-sentence
 // question is the exception (section 15, QA8): the rule in domain/question.ts spots it, and DPM answers
-// it from data, so no read is pretended.
+// it from data, so no read is pretended. So is small talk, a whole message of "Hi" or "Thanks!" (CQ12).
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
 import { ruleQuestion } from "../domain/question";

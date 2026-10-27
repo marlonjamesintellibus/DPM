@@ -10,7 +10,7 @@ import { TOPICS } from "../domain/topics";
 import { BRAID_KINDS } from "../domain/rights";
 import { CONFIDENCES } from "../domain/shared";
 
-export const PROMPT_VERSION = "read-5";
+export const PROMPT_VERSION = "read-6";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -41,13 +41,15 @@ What you may propose (kind)
 - Propose every change the update states, even when the record already shows that value or the leave is already approved. DPM marks those as "no change" or "matches your leave" for the author.
 
 Questions
-- If the message asks you for information ("What needs me today?", "What's blocked on Forager?", "Is Store Insights on track?"), fill question. Otherwise question is null.
+- If the message asks you for information ("What needs me today?", "What am I working on?", "What's due this week?", "Any updates?", "Who has mentioned me?", "Tell me about Forager"), fill question. Otherwise question is null.
 - asked: the question's exact words from the update. topic: ${TOPIC_LIST}.
 - projectId: the listed project the question names, or null. Never a project that is not listed.
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
+- A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
+- What is new with a person ("What's new with Kyle?") is updates, with projectId null.
 - Do not answer the question yourself. DPM answers it from the asker's own data.
 - A message can be only a question: then items is an empty list.
-- A follow-up ("and on Store Insights?", "what about GQ?") takes its topic from the question before it in this conversation, and projectId from its own words.
+- A follow-up ("and on Store Insights?", "what about GQ?") takes its topic from the question before it in this conversation, never from small talk, and projectId from its own words.
 - If a question only makes sense with something earlier that this conversation does not have, use topic unclear.
 
 Earlier messages in this conversation

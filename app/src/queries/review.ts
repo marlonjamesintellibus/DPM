@@ -9,7 +9,7 @@ import { saveBlockers } from "../domain/machines/capture";
 import { displayMark, type ExtractedItem, type ItemState, type WithdrawReason } from "../domain/machines/extracted-item";
 import { landsAs, type BraidKind, type ProjectRole } from "../domain/rights";
 import { mayReadCapture } from "../domain/routing";
-import type { Confidence, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
+import type { Confidence, ExtractedItemDraft, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
 
@@ -174,6 +174,76 @@ function leaveRange(value: string): string {
   return s.split(" ")[1] === e.split(" ")[1] ? `${s.split(" ")[0]} to ${e}` : `${s} to ${e}`;
 }
 
+/** The records update items name, loaded once for their titles and changes. */
+export type TargetRecords = {
+  workItems: { id: string; number: string | null; title: string }[];
+  milestones: { id: string; name: string }[];
+  steps: { id: string; title: string; toName: string }[];
+};
+
+/** The records these items update, for targetTitle and targetChange (the review, and the updates answer of section 18). */
+export async function loadTargetRecords(conn: Conn, drafts: readonly ExtractedItemDraft[]): Promise<TargetRecords> {
+  const ids = (type: string) => [...new Set(drafts.flatMap((d) => (d.target?.type === type ? [d.target.id] : [])))];
+  const [workIds, milestoneIds, stepIds] = [ids("work_item"), ids("milestone"), ids("handover")];
+  const [workItems, milestones, steps] = await Promise.all([
+    workIds.length ? conn.select({ id: t.workItems.id, number: t.workItems.number, title: t.workItems.title }).from(t.workItems).where(inArray(t.workItems.id, workIds)) : [],
+    milestoneIds.length ? conn.select({ id: t.milestones.id, name: t.milestones.name }).from(t.milestones).where(inArray(t.milestones.id, milestoneIds)) : [],
+    stepIds.length
+      ? conn
+          .select({ id: t.handoverSteps.id, title: t.handoverSteps.title, toName: t.people.name })
+          .from(t.handoverSteps)
+          .innerJoin(t.handovers, eq(t.handovers.id, t.handoverSteps.handoverId))
+          .innerJoin(t.people, eq(t.people.id, t.handovers.toPersonId))
+          .where(inArray(t.handoverSteps.id, stepIds))
+      : [],
+  ]);
+  return { workItems, milestones, steps };
+}
+
+/** "Issue #145 Google Trends connector", "Milestone Trend model", "Handover Runbook", "Leave Kemar Brown". */
+export function targetTitle(target: NonNullable<ExtractedItemDraft["target"]>, records: TargetRecords, authorName: string): string {
+  switch (target.type) {
+    case "work_item": {
+      const w = records.workItems.find((x) => x.id === target.id);
+      return w ? `Issue ${w.number ?? ""} ${w.title}`.replace("  ", " ") : target.id;
+    }
+    case "milestone":
+      return `Milestone ${records.milestones.find((x) => x.id === target.id)?.name ?? target.id}`;
+    case "handover":
+      return `Handover ${records.steps.find((x) => x.id === target.id)?.title ?? target.id}`;
+    case "leave":
+      return `Leave ${authorName}`;
+  }
+}
+
+/** What an update item changes: "In progress to Done", "Forecast 23 Oct to 24 Oct", "Not done to Handed to Jodian". */
+export function targetChange(item: ExtractedItem, records: TargetRecords): string {
+  const target = item.draft.target!;
+  const value = item.value ?? target.newValue;
+  const nothing = item.state === "no_change";
+  switch (target.type) {
+    case "work_item": {
+      if (target.field === "blocked_note") return `Note: ${value}`;
+      const label = (s: string | null) => (s ? (WORK_STATE_LABEL[s as WorkItemState] ?? s) : "None");
+      if (nothing) return `Already ${label(value)}`;
+      return `${label(target.oldValue)} to ${label(value)}${target.note ? `: ${target.note}` : ""}`;
+    }
+    case "milestone": {
+      const date = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? shortDate(s) : (s ?? "none"));
+      return nothing ? `Forecast already ${date(value)}` : `Forecast ${date(target.oldValue)} to ${date(value)}`;
+    }
+    case "handover": {
+      const to = records.steps.find((x) => x.id === target.id)?.toName;
+      const label = (s: string | null) => (s === "handed_over" && to ? `Handed to ${firstName(to)}` : s ? (HANDOVER_STEP_LABEL[s] ?? s) : "Not done");
+      return nothing ? `Already ${label(value).toLowerCase()}` : `${label(target.oldValue)} to ${label(value)}`;
+    }
+    case "leave":
+      // D6: a change to live leave shows both, so the author sees what moves
+      if (item.draft.leave?.fit === "change" && target.oldValue) return `Change ${leaveRange(target.oldValue)} to ${leaveRange(value)}`;
+      return leaveRange(value);
+  }
+}
+
 export async function getReview(conn: Conn, viewerId: string, captureId: string): Promise<Review | NotYours> {
   const [capture] = await conn.select().from(t.captures).where(eq(t.captures.id, captureId));
   if (!capture || !mayReadCapture({ personId: viewerId }, capture)) return NOT_YOURS;
@@ -183,26 +253,14 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const drafts = items.map((i) => i.draft);
   const ids = (pick: (d: (typeof drafts)[number]) => string | null | undefined) => [...new Set(drafts.map(pick).filter((x): x is string => !!x))];
 
-  const workIds = ids((d) => (d.target?.type === "work_item" ? d.target.id : null));
-  const milestoneIds = ids((d) => (d.target?.type === "milestone" ? d.target.id : null));
-  const stepIds = ids((d) => (d.target?.type === "handover" ? d.target.id : null));
   const entryIds = ids((d) => d.braid?.matchEntryId);
   const projectIds = [...new Set([...ids((d) => d.projectId), ...drafts.flatMap((d) => d.options ?? [])])];
 
   const [author] = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(eq(t.people.id, capture.authorId));
   // D7: whether the author may resolve a blocker they say is cleared (S13), for the card's wording
   const authorsHeld = await conn.select({ blockedLinks: t.workItems.blockedLinks }).from(t.workItems).where(eq(t.workItems.ownerId, capture.authorId));
-  const [workItems, milestones, steps, entries, sources, projects, memberships] = await Promise.all([
-    workIds.length ? conn.select().from(t.workItems).where(inArray(t.workItems.id, workIds)) : [],
-    milestoneIds.length ? conn.select().from(t.milestones).where(inArray(t.milestones.id, milestoneIds)) : [],
-    stepIds.length
-      ? conn
-          .select({ id: t.handoverSteps.id, title: t.handoverSteps.title, toName: t.people.name })
-          .from(t.handoverSteps)
-          .innerJoin(t.handovers, eq(t.handovers.id, t.handoverSteps.handoverId))
-          .innerJoin(t.people, eq(t.people.id, t.handovers.toPersonId))
-          .where(inArray(t.handoverSteps.id, stepIds))
-      : [],
+  const [records, entries, sources, projects, memberships] = await Promise.all([
+    loadTargetRecords(conn, drafts),
     entryIds.length ? conn.select().from(t.braidEntries).where(inArray(t.braidEntries.id, entryIds)) : [],
     entryIds.length ? conn.select({ entryId: t.braidSources.entryId, extractionId: t.braidSources.extractionId }).from(t.braidSources).where(inArray(t.braidSources.entryId, entryIds)) : [],
     projectIds.length ? conn.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).where(inArray(t.projects.id, projectIds)) : [],
@@ -233,19 +291,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       if (d.kind === "braid_same" || d.kind === "braid_resolve" || d.braid.match === "same_as") return entries.find((e) => e.id === d.braid!.matchEntryId)?.title ?? d.braid.title;
       return item.value ?? d.braid.title;
     }
-    const target = d.target!;
-    switch (target.type) {
-      case "work_item": {
-        const w = workItems.find((x) => x.id === target.id);
-        return w ? `Issue ${w.number ?? ""} ${w.title}`.replace("  ", " ") : target.id;
-      }
-      case "milestone":
-        return `Milestone ${milestones.find((x) => x.id === target.id)?.name ?? target.id}`;
-      case "handover":
-        return `Handover ${steps.find((x) => x.id === target.id)?.title ?? target.id}`;
-      case "leave":
-        return `Leave ${author?.name ?? capture.authorId}`;
-    }
+    return targetTitle(d.target!, records, author?.name ?? capture.authorId);
   };
 
   const changeOf = (item: ExtractedItem): string => {
@@ -268,30 +314,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       if (lands !== "proposed") return "Add to the log";
       return d.braid.kind === "decision" ? "Propose to the decider" : "Propose to the PM";
     }
-    const target = d.target!;
-    const value = item.value ?? target.newValue;
-    const nothing = item.state === "no_change";
-    switch (target.type) {
-      case "work_item": {
-        if (target.field === "blocked_note") return `Note: ${value}`;
-        const label = (s: string | null) => (s ? (WORK_STATE_LABEL[s as WorkItemState] ?? s) : "None");
-        if (nothing) return `Already ${label(value)}`;
-        return `${label(target.oldValue)} to ${label(value)}${target.note ? `: ${target.note}` : ""}`;
-      }
-      case "milestone": {
-        const date = (s: string | null) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? shortDate(s) : (s ?? "none"));
-        return nothing ? `Forecast already ${date(value)}` : `Forecast ${date(target.oldValue)} to ${date(value)}`;
-      }
-      case "handover": {
-        const to = steps.find((x) => x.id === target.id)?.toName;
-        const label = (s: string | null) => (s === "handed_over" && to ? `Handed to ${firstName(to)}` : s ? (HANDOVER_STEP_LABEL[s] ?? s) : "Not done");
-        return nothing ? `Already ${label(value).toLowerCase()}` : `${label(target.oldValue)} to ${label(value)}`;
-      }
-      case "leave":
-        // D6: a change to live leave shows both, so the author sees what moves
-        if (item.draft.leave?.fit === "change" && target.oldValue) return `Change ${leaveRange(target.oldValue)} to ${leaveRange(value)}`;
-        return leaveRange(value);
-    }
+    return targetChange(item, records);
   };
 
   const reviewItems: ReviewItem[] = items.map((item) => {

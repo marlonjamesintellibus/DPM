@@ -1,0 +1,52 @@
+// What the asker is working on (section 18, CQ1 to CQ3): the work items they own that are not Done,
+// Blocked first, then In progress, then To do, each by due date; the milestones they own that are not
+// done; and the live BRAID entries they own. Read through getProject per project they can read, so
+// work on a project they have left is never listed (CQ3), and each card opens its project.
+import type { AnswerCard } from "../../domain/question";
+import { needsYou } from "./needs-me";
+import { capped, dayDate, forecastText, listed, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder } from "./shared";
+
+const ORDER = ["blocked", "in_progress", "to_do"] as const;
+
+export const myWork: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
+  const views = await projectsAsked(conn, viewerId, projectId, now);
+  const work = views.flatMap((v) =>
+    workOf(v)
+      .filter((w) => w.owner?.id === viewerId && w.state !== "done" && w.state !== "cancelled")
+      .map((w) => ({ v, w })),
+  );
+  work.sort(
+    (a, b) =>
+      ORDER.indexOf(a.w.state as (typeof ORDER)[number]) - ORDER.indexOf(b.w.state as (typeof ORDER)[number]) ||
+      (a.w.dueDate ?? "9999").localeCompare(b.w.dueDate ?? "9999") ||
+      workTitle(a.w).localeCompare(workTitle(b.w)),
+  );
+  const milestones = views.flatMap((v) => milestonesOf(v).filter((m) => m.owner?.id === viewerId && m.state !== "done").map((m) => ({ v, m })));
+  milestones.sort((a, b) => a.m.forecastDate.localeCompare(b.m.forecastDate));
+  const entries = views.flatMap((v) => v.braid.entries.filter((e) => e.owner?.id === viewerId && e.onLog).map((e) => ({ v, e })));
+
+  const cards: AnswerCard[] = [
+    ...work.map(({ v, w }) => ({
+      title: workTitle(w),
+      detail: `${v.project.name}: ${w.dueDate ? `due ${dayDate(w.dueDate)}` : "no due date"}${w.blockedNote ? `, ${w.blockedNote}` : ""}`,
+      tag: w.stateLabel,
+      href: `/projects/${v.project.id}`,
+    })),
+    ...milestones.map(({ v, m }) => ({ title: m.name, detail: `${v.project.name}: ${forecastText(m)}`, tag: `Milestone · ${m.statusLabel}`, href: `/projects/${v.project.id}` })),
+    ...entries.map(({ v, e }) => ({ title: e.title, detail: `${v.project.name}: ${e.stateLabel}`, tag: e.kindLabel, href: `/projects/${v.project.id}?view=table&log=${e.kind}` })),
+  ];
+  const on = views.length === 1 && projectId ? ` on ${views[0].project.name}` : "";
+  if (!cards.length) {
+    // CQ1: nothing is theirs, so say what needs them instead, if anything does
+    const needs = await needsYou(conn, viewerId, now);
+    const lead = `Nothing is assigned to you${on} right now.`;
+    if (!needs.cards.length) return { text: lead, cards: [], more: null };
+    return { text: `${lead} Here is what needs you.`, ...capped(needs.cards, { label: "in your inbox", href: "/?view=inbox" }) };
+  }
+  const open = listed([
+    [work.length, "open work item", "open work items"],
+    [milestones.length, "milestone", "milestones"],
+    [entries.length, "entry on the BRAID log", "entries on the BRAID log"],
+  ]);
+  return { text: `You have ${open}${on}.`, ...capped(cards, { label: "on your projects", href: "/projects" }) };
+};

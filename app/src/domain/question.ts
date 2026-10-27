@@ -5,6 +5,7 @@
 // read from the asker's own data (queries/answer.ts).
 import type { CheckContext } from "./atlas-checks/types";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
+import { smallTalk } from "./topics/small-talk";
 
 // Each topic is defined in domain/topics, its answer in queries/answers
 export { QUESTION_TOPICS, type QuestionTopic };
@@ -25,13 +26,15 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
 }
 
 const FOLLOW_UP = /^(and|what about|how about)\b/i;
-const ASKING = /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can)\b/i;
+// Section 18: "Tell me about Forager" asks too
+const ASKING = /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me)\b/i;
 // QA4: "Can you mark #145 done?" asks for a change, so it is an update, not a question
 const ASKS_FOR_A_CHANGE = /\b(mark|set|move|change|update|add|log|close|resolve|approve|assign)\b.*\b(#\d+|done|blocked|to\b)/i;
 
 /** The topic a question is about, from its words: what the rule can tell without a model. */
 export function topicOf(text: string): QuestionTopic {
-  const t = text.toLowerCase();
+  // A curly apostrophe, as phones type it, reads as a straight one: "what’s new" is "what's new"
+  const t = text.toLowerCase().replace(/[‘’]/g, "'");
   return BY_RULE.find((topic) => topic.rule.test(t))?.id ?? "other";
 }
 
@@ -42,9 +45,12 @@ export function topicOf(text: string): QuestionTopic {
  */
 export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earlier">): AskedQuestion | null {
   const text = ctx.text.trim();
+  // CQ12, CQ13: small talk is the whole message or nothing ("Morning! Finished #145." is an update)
+  if (smallTalk.rule.test(text.toLowerCase())) return { asked: text, topic: "small_talk", projectId: null };
   // CV8, CV9: "and on Store Insights?" takes its topic from the question before it in this conversation
   if (FOLLOW_UP.test(text) && !ASKS_FOR_A_CHANGE.test(text) && (text.endsWith("?") || text.split(/\s+/).length <= 6) && !/[.!]\s/.test(text)) {
-    const before = [...(ctx.earlier ?? [])].reverse().find((t) => t.asked)?.asked;
+    // Section 18: small talk is no question to follow, so "Thanks!" in between changes nothing
+    const before = [...(ctx.earlier ?? [])].reverse().find((t) => t.asked && t.asked.topic !== "small_talk")?.asked;
     const lower_ = text.toLowerCase();
     const named = ctx.projects.find((p) => [p.name, ...p.aliases].some((n) => n && lower_.includes(n.toLowerCase())));
     if (!before) return { asked: text, topic: "unclear", projectId: null };

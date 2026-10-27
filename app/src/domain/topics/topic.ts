@@ -12,4 +12,6 @@ export type Topic = {
   prompt: string | null;
   /** Section 17: one or two follow-ups suggested under its answer. */
   suggest: readonly string[];
+  /** Section 18: false when DPM's words are the whole reply and Atlas has no facts to word (small talk). */
+  worded?: false;
 };

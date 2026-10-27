@@ -33,6 +33,12 @@ export const config = {
 
   // S18: remind deciders about an unanswered proposal; never decide it
   braidReminderWorkingDays: 2,
+
+  // Section 18, CQ4 and CQ5 (conversational plan, section 23): "Any updates?" covers what happened since
+  // the asker last asked, and never more than this many days back
+  updatesMaxDays: 7,
+  // Section 18, CQ8 to CQ11 (conversational plan, section 23): "Who has mentioned me?" looks this far back
+  mentionsDays: 14,
 } as const;
 
 export type Config = typeof config;

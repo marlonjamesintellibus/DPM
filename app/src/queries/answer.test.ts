@@ -107,7 +107,10 @@ describe("questions in the chat", () => {
 
   it("other questions: said plainly, with what needs them today", async () => {
     const { row } = await ask("kemar", "What did Andre say about pricing?");
-    expect(row.answer?.text).toBe("I can't answer that yet. I can tell you what needs you, what is blocked, and how a project stands. Here is what needs you today.");
+    // Section 18: it lists everything Atlas can answer now
+    expect(row.answer?.text).toBe(
+      "I can't answer that yet. I can tell you what you're working on, what's due, what needs you, what is blocked, how a project stands, any updates, and who mentioned you. Here is what needs you today.",
+    );
     expect(row.answer?.cards).toHaveLength(4);
   });
 

@@ -6,5 +6,6 @@ export const other = {
   id: "other",
   rule: null,
   prompt: null,
-  suggest: ["What needs me today?", "What's blocked?"],
+  // Section 18: the asks people try first
+  suggest: ["What am I working on?", "What needs me today?"],
 } as const satisfies Topic;

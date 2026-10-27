@@ -89,6 +89,20 @@ test("Section 16. Conversations: a follow-up continues one, New starts another, 
   await expect(list.getByText("Archived (1)")).toBeVisible();
 });
 
+test("Section 18. Kemar asks what he is working on: his open work, each linked to its project", async () => {
+  await page.getByRole("link", { name: "New", exact: true }).click();
+  await expect(page.getByText("what you’re working on, what’s due, any updates, who mentioned you")).toBeVisible();
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What am I working on?");
+  await box.press("Enter");
+  await expect(page.getByText("You have 5 open work items, 1 milestone and 1 entry on the BRAID log.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /#145 Google Trends connector/ })).toHaveAttribute("href", "/projects/forager");
+  await expect(page.getByRole("link", { name: /#208 Weekly sales export/ })).toHaveAttribute("href", "/projects/insights");
+  await expect(page.getByRole("link", { name: /^Store sales feed access/ })).toHaveAttribute("href", "/projects/forager?view=table&log=blocker");
+  // Its suggested follow-ups lead on to what is due
+  await expect(page.getByRole("button", { name: "What's due this week?" })).toBeVisible();
+});
+
 test("3. Alicia set Forager 2.0 Off track at 9:02 with no reason", async () => {
   await viewAs("alicia");
   await expect(page.getByRole("link", { name: /Forager 2.0 is set Off track, but the plan says/ }).first()).toBeVisible();

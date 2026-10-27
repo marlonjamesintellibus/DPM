@@ -48,6 +48,7 @@ import { applyWorkItem, workItemEventTo, type WorkItemEvent, type WorkItemRecord
 import { mayReport, mayResolve } from "../domain/rights";
 import { applyRouting, planRoutingAtSave, type Author, type Route, type RoutingEvent } from "../domain/routing";
 import { checkQuestion, type Answer, type RawQuestion } from "../domain/question";
+import { topicById } from "../domain/topics";
 import type { Confidence, ExtractedItemDraft, MatchState } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { answerFor } from "../queries/answer";
@@ -461,7 +462,8 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     }
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
     const found = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
-    const answer = found && meta?.wordWithAtlas ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
+    // Section 18: small talk has no facts to word, so DPM's reply stands at once
+    const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
     if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)
