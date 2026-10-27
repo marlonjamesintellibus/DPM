@@ -62,5 +62,32 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   return { asked: text, topic: topicOf(text), projectId: project?.id ?? null };
 }
 
-/** What DPM answered, kept with the message and shown "as of" the time it was given (P11, QA10). */
-export type Answer = { text: string; lines: { label: string; href: string }[]; asOf: string };
+/**
+ * One thing an answer is about, drawn from the asker's data, never from the model (section 17). An item
+ * that needs their OK can be accepted from the card; every card opens what it is about.
+ */
+export type AnswerCard = {
+  title: string;
+  detail: string | null;
+  /** A short label: "Needs your OK · Medium confidence", "Blocker", "At risk" */
+  tag: string | null;
+  href: string;
+  accept?: { captureId: string; itemId: string };
+};
+
+/**
+ * What DPM answered, kept with the message and shown "as of" the time it was given (P11, QA10).
+ * text is DPM's own sentence (rules) or Atlas's wording of the same facts (atlas); pending while
+ * Atlas writes it (section 17).
+ */
+export type Answer = {
+  topic: QuestionTopic;
+  text: string;
+  wording: "pending" | "atlas" | "rules";
+  cards: AnswerCard[];
+  /** MF11: what did not fit, and where it is. */
+  more: { label: string; href: string } | null;
+  asOf: string;
+  /** DPM's own sentence, kept when Atlas words it, so the facts it was checked against are on record. */
+  rulesText?: string;
+};

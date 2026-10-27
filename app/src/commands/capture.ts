@@ -363,6 +363,8 @@ export type ReadMeta = {
   attempt?: number;
   /** Section 15: what Atlas says the message asks; checked here like the proposals. */
   question?: RawQuestion | null;
+  /** Section 17: Atlas will word the answer next; until then it is pending. */
+  wordWithAtlas?: boolean;
 };
 
 /** The model failed, timed out or sent something unreadable: wait, then try again (E18, E19). */
@@ -458,7 +460,8 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       });
     }
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
-    const answer = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
+    const found = asked ? await answerFor(tx, row.authorId, asked, ctx.now) : null;
+    const answer = found && meta?.wordWithAtlas ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
     if (asked) await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
     for (const m of moves) {
       // Dropped proposals are kept with their reason so the model can be measured (phase 4)

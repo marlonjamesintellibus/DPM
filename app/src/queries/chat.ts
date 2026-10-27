@@ -26,6 +26,8 @@ export type ChatCapture = {
   kind: "text" | "voice";
   durationSeconds: number | null;
   messageAt: Date;
+  /** When DPM got it: "Still working on it…" after a few seconds of thinking (section 17). */
+  receivedAt: Date;
   /** "8:58am" */
   time: string;
   state: CaptureState;
@@ -199,6 +201,21 @@ export async function getChatSummary(conn: Conn, viewerId: string, captureId?: s
   return { viewerId, notices, latest: await chatCaptureOf(conn, capture) };
 }
 
+/** An answer kept before section 17 had lines, not cards; it reads as cards, in DPM's own words. */
+function answerOf(stored: unknown): Answer | null {
+  if (!stored || typeof stored !== "object") return null;
+  const a = stored as Partial<Answer> & { lines?: { label: string; href: string }[] };
+  if (Array.isArray(a.cards)) return a as Answer;
+  return {
+    topic: "other",
+    text: a.text ?? "",
+    wording: "rules",
+    cards: (a.lines ?? []).map((l) => ({ title: l.label, detail: null, tag: null, href: l.href })),
+    more: null,
+    asOf: a.asOf ?? new Date(0).toISOString(),
+  };
+}
+
 /** One message and what Atlas made of it, counted per project as the review counts them. */
 async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<ChatCapture> {
   const items = (await conn.select().from(t.extractions).where(eq(t.extractions.captureId, capture.id)).orderBy(t.extractions.ordinal)).map(itemOf);
@@ -222,6 +239,7 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     kind: capture.kind,
     durationSeconds: capture.durationSeconds,
     messageAt: capture.messageAt,
+    receivedAt: capture.receivedAt,
     time: clockTime(capture.messageAt),
     state: capture.state,
     rows,
@@ -232,6 +250,6 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     needsOk: counts.needsOk,
     needsProject: counts.needsProject,
     line: chatLine(capture.state, capture.failedStep, countsLine(counts, "; ")),
-    answer: capture.answer ?? null,
+    answer: answerOf(capture.answer),
   };
 }

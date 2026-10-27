@@ -2,15 +2,16 @@
 // note, ask the model with no transaction open, then store what passes the checks or record the
 // failure and try again. After config.captureMaxTries the capture fails and the author is asked to
 // send a new voice note (D1) or to try again or type it (E18).
-import { inArray } from "drizzle-orm";
-import { AtlasReadFailed, type Extraction, type Extractor, type ReadFailure } from "../atlas/extractor";
+import { eq, inArray } from "drizzle-orm";
+import { wordAnswer } from "../atlas/answer";
+import { AtlasReadFailed, type Drafter, type Extraction, type Extractor, type ReadFailure } from "../atlas/extractor";
 import { atlasTranscript, TranscribeFailed, type Transcriber } from "../atlas/transcriber";
 import * as t from "../db/schema";
 import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Confidence } from "../domain/shared";
 import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, ReadSuperseded, type Proposed } from "./capture";
-import type { CommandCtx } from "./core";
+import { audit, runCommand, type CommandCtx } from "./core";
 
 type Failure = { step: "transcribe" | "read"; why: string; message: string };
 
@@ -27,12 +28,14 @@ export type ReadOptions = {
   /** Commands take the time as input; a read that retries asks again for each step. */
   clock?: () => Date;
   transcriber?: Transcriber;
+  /** Section 17: words the answer to a question; without it DPM's own sentence stands. */
+  drafter?: Drafter | null;
 };
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function readCapture(ctx: CommandCtx, captureId: string, extractor: Extractor, options: ReadOptions = {}): Promise<ReadResult> {
-  const { retryDelayMs = (n) => 2000 * 2 ** (n - 1), sleep = wait, clock, transcriber = atlasTranscript } = options;
+  const { retryDelayMs = (n) => 2000 * 2 ** (n - 1), sleep = wait, clock, transcriber = atlasTranscript, drafter = null } = options;
   const at = (): CommandCtx => (clock ? { ...ctx, now: clock() } : ctx);
   const failures: Failure[] = [];
   // The last try needs no wait: the next beginRead fails the capture
@@ -79,7 +82,9 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
         malformed: extraction.malformed,
         attempt: readAttempt,
         question: extraction.question ?? null,
+        wordWithAtlas: !!drafter,
       });
+      if (drafter && proposed.answer?.wording === "pending") await wordCaptureAnswer(at(), captureId, drafter);
       return { outcome: "proposed", ...proposed, model: extraction.model };
     }
   } catch (e) {
@@ -96,4 +101,31 @@ export async function capturesToRead(db: CommandCtx["db"]): Promise<string[]> {
     .where(inArray(t.captures.state, ["received", "transcribe_wait", "retry_wait"]))
     .orderBy(t.captures.receivedAt);
   return rows.map((r) => r.id);
+}
+
+/**
+ * Section 17: Atlas words a pending answer from DPM's facts; anything it adds is thrown away and DPM's
+ * sentence stands (MF3, MF4). The model call runs outside any transaction; the write only lands if the
+ * answer is still pending, so a later read never overwrites it.
+ */
+export async function wordCaptureAnswer(ctx: CommandCtx, captureId: string, drafter: Drafter): Promise<"atlas" | "rules" | "not_pending"> {
+  const [row] = await ctx.db.select().from(t.captures).where(eq(t.captures.id, captureId));
+  const answer = row?.answer;
+  if (!row || !answer || answer.wording !== "pending") return "not_pending";
+  const worded = await wordAnswer(drafter, row.question?.asked ?? row.text, answer);
+  return runCommand(ctx, async (tx) => {
+    const [now_] = await tx.select({ answer: t.captures.answer }).from(t.captures).where(eq(t.captures.id, captureId));
+    if (now_?.answer?.wording !== "pending") return "not_pending";
+    await tx.update(t.captures).set({ answer: { ...answer, text: worded.text, wording: worded.by } }).where(eq(t.captures.id, captureId));
+    await audit(tx, ctx.now, {
+      actorType: "atlas",
+      action: "WORDED",
+      machine: "capture",
+      subjectType: "capture",
+      subjectId: captureId,
+      captureId,
+      detail: worded.by === "atlas" ? { by: "atlas", model: worded.model, usage: worded.usage } : { by: "rules", fallback: worded.fallback },
+    });
+    return worded.by;
+  });
 }

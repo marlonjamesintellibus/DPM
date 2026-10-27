@@ -96,10 +96,27 @@ export async function sendUpdate(_: SendResult | null, form: FormData): Promise<
   const { captureId } = created;
   // The model call can take seconds: the chat shows "Reading your update…" and refreshes until it lands
   after(async () => {
-    await readCapture({ ...ctx, now: now() }, captureId, atlasFromEnv().extractor, { clock: now });
+    const atlas = atlasFromEnv();
+    await readCapture({ ...ctx, now: now() }, captureId, atlas.extractor, { clock: now, drafter: atlas.drafter });
   });
   refresh();
   return { ok: true, conversationId: created.conversationId ?? undefined };
+}
+
+/**
+ * Section 17: Accept on a chat card. The review opens if it is not open yet, then the item is accepted
+ * as on the review screen; the item's machine decides, so a card read later is checked again (MF6, MF7).
+ */
+export async function acceptFromChat(captureId: string, itemId: string): Promise<ActionResult> {
+  return run(async (ctx) => {
+    try {
+      await openReview(ctx, captureId);
+    } catch (e) {
+      // Already open is fine; saved, discarded or expired is told by the accept below
+      if (!(e instanceof CommandRefused)) throw e;
+    }
+    await decideExtraction(ctx, itemId, { type: "accept" });
+  }, "Accepted.");
 }
 
 // ---- Conversations (M18, section 16) ----

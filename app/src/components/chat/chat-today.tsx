@@ -8,14 +8,33 @@ import { notFound } from "next/navigation";
 import { Icon } from "@/components/shell/icon";
 import { startReview } from "@/app/actions";
 import { getDb } from "@/db/client";
-import type { Answer } from "@/domain/question";
+import type { Answer, QuestionTopic } from "@/domain/question";
 import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
 import { clockTime } from "@/queries/project";
-import { Composer } from "./composer";
+import { ChatSession } from "./chat-session";
+import { AcceptItem, CopyReply, Suggestions } from "./reply-tools";
+import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
 
 const READING = new Set(["received", "transcribing", "transcribe_wait", "reading", "retry_wait"]);
+/** Section 17: "Still working on it…" after this long; a reply still being worded after WORDING_MS shows DPM's own words (MF4). */
+const STILL_WORKING_MS = 8_000;
+const WORDING_MS = 30_000;
+
+/** Atlas is still writing this answer, and not for too long (MF4). */
+function wording(answer: Answer | null, at: Date): boolean {
+  return !!answer && answer.wording === "pending" && at.getTime() - new Date(answer.asOf).getTime() < WORDING_MS;
+}
+
+/** Section 17: one or two follow-ups that fit what was just answered. */
+const SUGGEST: Record<QuestionTopic, string[]> = {
+  needs_me: ["What's blocked?", "How are my projects doing?"],
+  blocked: ["What needs me today?"],
+  project_status: ["What's blocked?"],
+  other: ["What needs me today?", "What's blocked?"],
+  unclear: ["What needs me today?", "What's blocked?"],
+};
 
 export async function ChatToday({ viewerId, firstName, conversationId, ask = false, at }: { viewerId: string; firstName: string; conversationId?: string; ask?: boolean; at: Date }) {
   const db = await getDb();
@@ -25,7 +44,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
   const thread = openId ? await getThread(db, viewerId, openId, at) : null;
   if (thread && !thread.found) notFound();
   const open = thread?.found ? thread : null;
-  const reading = !!open?.turns.some((c) => READING.has(c.state));
+  const reading = !!open?.turns.some((c) => READING.has(c.state) || wording(c.answer, at));
   return (
     <div className="flex min-h-0 flex-1">
       <RefreshWhile active={reading} />
@@ -52,11 +71,11 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-1 flex-col gap-[18px] overflow-auto px-20 pt-6 pb-4">
+        <ChatSession key={open?.conversation.id ?? "new"} focus={ask} conversationId={open?.conversation.id ?? null}>
           {open ? (
             <>
               {open.conversation.state === "archived" && <p className="type-caption text-fg-3">This conversation is archived. Sending a message brings it back.</p>}
-              <Messages thread={open} />
+              <Messages thread={open} at={at} />
             </>
           ) : (
             <AtlasLine>
@@ -64,10 +83,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
               you, what is blocked, or how a project stands.
             </AtlasLine>
           )}
-        </div>
-        <div className="flex flex-col gap-2 px-20 pt-2 pb-5">
-          <Composer key={open?.conversation.id ?? "new"} focus={ask} conversationId={open?.conversation.id ?? null} />
-        </div>
+        </ChatSession>
       </div>
     </div>
   );
@@ -91,9 +107,10 @@ function ConversationLink({ c, open }: { c: ConversationRow; open: boolean }) {
 }
 
 /** Every message and Atlas's reply to each, with the notices that belong here, in time order. */
-function Messages({ thread }: { thread: Thread }) {
+function Messages({ thread, at }: { thread: Thread; at: Date }) {
+  const last = thread.turns.at(-1)?.id;
   const items = [
-    ...thread.turns.map((c) => ({ at: c.messageAt.getTime(), key: c.id, node: <Turn key={c.id} capture={c} /> })),
+    ...thread.turns.map((c) => ({ at: c.messageAt.getTime(), key: c.id, node: <Turn key={c.id} capture={c} at={at} last={c.id === last} /> })),
     ...thread.notices.map((n) => ({
       at: n.at.getTime(),
       key: n.id,
@@ -146,30 +163,55 @@ function YourMessage({ capture }: { capture: ChatCapture }) {
   );
 }
 
-/** Section 15: DPM's answer from the asker's own data, with the time it was given (QA10). */
-function AnswerLine({ answer }: { answer: Answer }) {
+/**
+ * Sections 15 and 17: the reply to a question. Atlas's words (or DPM's own) over cards drawn from the
+ * asker's data, then the time it was given, Copy, and on the latest reply one or two follow-ups.
+ */
+function AnswerBlock({ answer, last }: { answer: Answer; last: boolean }) {
+  const copy = [answer.text, ...answer.cards.map((c) => `- ${c.title}${c.detail ? `: ${c.detail}` : ""}`), ...(answer.more ? [answer.more.label] : [])].join("\n");
   return (
     <AtlasLine>
-      <span>
-        {answer.text} <span className="type-micro text-fg-3">· as of {clockTime(new Date(answer.asOf))}</span>
-      </span>
-      {answer.lines.length > 0 && (
-        <ul className="overflow-hidden rounded-panel border border-line">
-          {answer.lines.map((l) => (
-            <li key={`${l.href}|${l.label}`} className="border-b border-line last:border-b-0">
-              <Link href={l.href} className="flex items-center gap-2 px-3 py-2.5 hover:bg-hover">
-                <span className="min-w-0 flex-1 type-body text-fg-2">{l.label}</span>
-                <Icon name="chevron-right-12" />
+      <span>{answer.text}</span>
+      {answer.cards.length > 0 && (
+        <ul className="flex flex-col overflow-hidden rounded-panel border border-line">
+          {answer.cards.map((c) => (
+            <li key={`${c.href}|${c.title}|${c.accept?.itemId ?? ""}`} className="flex items-center gap-3 border-b border-line px-3 py-2.5 last:border-b-0">
+              <Link href={c.href} className="flex min-w-0 flex-1 flex-col gap-0.5 hover:underline">
+                <span className="type-body-medium text-fg-1">{c.title}</span>
+                {c.detail && <span className="type-caption text-fg-2">{c.detail}</span>}
+                {c.tag && <span className={`type-micro ${c.accept ? "text-warn" : "text-fg-3"}`}>{c.tag}</span>}
               </Link>
+              {c.accept ? (
+                <span className="flex shrink-0 items-start gap-2">
+                  <Link href={c.href} className="rounded-control border border-line-strong bg-panel px-2.5 py-1 type-label text-fg-1 hover:bg-hover">
+                    Open
+                  </Link>
+                  <AcceptItem captureId={c.accept.captureId} itemId={c.accept.itemId} />
+                </span>
+              ) : (
+                <Icon name="chevron-right-12" />
+              )}
             </li>
           ))}
+          {answer.more && (
+            <li className="px-3 py-2">
+              <Link href={answer.more.href} className="type-caption text-accent hover:underline">
+                {answer.more.label}
+              </Link>
+            </li>
+          )}
         </ul>
       )}
+      <span className="flex items-center gap-2 type-micro text-fg-3">
+        <span>As of {clockTime(new Date(answer.asOf))}</span>
+        <CopyReply text={copy} />
+      </span>
+      {last && <Suggestions asks={SUGGEST[answer.topic] ?? SUGGEST.other} />}
     </AtlasLine>
   );
 }
 
-function Turn({ capture }: { capture: ChatCapture }) {
+function Turn({ capture, at, last }: { capture: ChatCapture; at: Date; last: boolean }) {
   const waiting = capture.state === "proposed" || capture.state === "reviewing";
   const reading = READING.has(capture.state);
   const rows = [
@@ -178,11 +220,22 @@ function Turn({ capture }: { capture: ChatCapture }) {
     ...(capture.notFiled ? [`${capture.notFiled} not filed in any project`] : []),
   ];
   const line = waiting && capture.needsOk ? capture.line.replace(/;/, ", and") : capture.line;
+  const thinking = reading || wording(capture.answer, at);
+  const since = at.getTime() - capture.receivedAt.getTime();
+  if (thinking) {
+    // Section 17: never "Reading your update": a message may be a question
+    return (
+      <>
+        <YourMessage capture={capture} />
+        <ThinkingLine label={since > STILL_WORKING_MS ? "Still working on it" : "Thinking"} />
+      </>
+    );
+  }
   if (capture.state === "answered" && capture.answer) {
     return (
       <>
         <YourMessage capture={capture} />
-        <AnswerLine answer={capture.answer} />
+        <AnswerBlock answer={capture.answer} last={last} />
       </>
     );
   }
@@ -190,8 +243,8 @@ function Turn({ capture }: { capture: ChatCapture }) {
     <>
       <YourMessage capture={capture} />
       <AtlasLine>
-        <span>{reading ? "Reading your update…" : line}</span>
-        {rows.length > 0 && !reading && (
+        <span>{line}</span>
+        {rows.length > 0 && (
           <ul className="overflow-hidden rounded-panel border border-line">
             {rows.map((r) => (
               <li key={r} className="flex items-center gap-2 border-b border-line px-3 py-2.5 last:border-b-0">
@@ -226,7 +279,7 @@ function Turn({ capture }: { capture: ChatCapture }) {
           </Link>
         )}
       </AtlasLine>
-      {capture.answer && !reading && <AnswerLine answer={capture.answer} />}
+      {capture.answer && <AnswerBlock answer={capture.answer} last={last} />}
     </>
   );
 }

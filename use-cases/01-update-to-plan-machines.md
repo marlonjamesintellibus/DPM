@@ -1134,3 +1134,67 @@ archived --MESSAGE--> active               sending to it, or an Atlas app messag
 |---|---|---|
 | G49 | The build warned that reading the data folder from `DPM_DATA_DIR` made Turbopack trace the whole project | The path is marked `turbopackIgnore`: the data folder is not part of the build |
 | G50 | Where a notice belongs, in a list of conversations | In the conversation where the viewer reported the entry it is about; anything without that link shows in the newest conversation (CV14) |
+
+## 17. The message flow (27 Oct 2026)
+
+Found in use: a question showed "Reading your update…", the message only appeared once the server had saved it, and "Can you list the items?" got the same one line again. Decided with the user, from how ChatGPT and Claude work and from Mobbin (ClickUp Brain, Voicenotes, Perplexity, Claude, Zapier, Copilot): the message shows at once with "Thinking…" under it; Atlas writes the reply in plain words from facts DPM looked up; an answer lists the details as cards with actions; and a reply has quiet tools under it.
+
+### What a message goes through on screen
+
+```
+composing --SEND--> sending            the message shows at once, with "Thinking…" under it (no server yet)
+sending --STORED--> thinking           the server has it (M2 received, transcribing or reading)
+sending --REFUSED--> composing         the words go back in the box, with the reason (MF1)
+thinking --(8 s)--> still working      "Still working on it…" (Perplexity shows the step)
+thinking --> update summary            M2 proposed: what Atlas made of it, per project, and Review
+thinking --> wording                   M2 answered, and Atlas is putting the answer in words
+wording --WORDED--> answered           Atlas's words over DPM's cards
+wording --FELL_BACK--> answered        DPM's own words: no model, a failed call, words that add a fact, or 30 s passed
+thinking --> nothing | failed          as M2 says (E4, D1)
+```
+
+Thinking never says "update": the screen cannot know what a message is until Atlas has read it.
+
+### Atlas words the reply; DPM holds every fact
+
+- DPM gathers the answer from the asker's own data as before (section 15), now with the details: for an update waiting for review, each item that needs their OK (what, the change, the confidence); for an inbox item, its reason; for a blocker, its reports and since when; for a project, its status and reason.
+- The details are cards, drawn from the data, never from the model. Atlas writes 1 to 3 sentences that lead into them.
+- What Atlas writes is checked as a status reason is (M11): no number or #reference that is not in the facts, no judgement or health, at most 3 sentences, under 400 characters. Failing that, DPM's own sentence is used.
+- The answer's wording is `pending` while Atlas writes, `atlas` when it did, and `rules` when DPM's sentence is used.
+
+### Cards and actions
+
+- An item that needs the asker's OK has Accept and Open in review. Accept opens the review if it is not open yet, then accepts the item, as the review screen does; the item's machine (M3) decides, so a card read later is checked again (MF6, MF7).
+- Every other card opens what it is about: the inbox item, the BRAID log filtered to blockers, the project.
+- At most 8 cards; the rest are counted, with a link to where they are.
+
+### Under a reply
+
+- "as of 9:15am" and Copy (the words and the cards' titles).
+- One or two suggested follow-ups, by topic: after what needs me, "What's blocked?"; after what's blocked, "What needs me today?"; after how a project stands, "What's blocked?". A suggestion is sent as a message in the same conversation.
+
+### Edge cases (MF1 to MF12)
+
+| # | Case | Expected |
+|---|---|---|
+| MF1 | Sending is refused (a conversation that is not theirs) | The message leaves the thread, the words go back in the box, and the reason shows |
+| MF2 | Enter pressed twice quickly | One message: the box does not send while one is on its way |
+| MF3 | Atlas's words add a number or a #reference | DPM's own sentence is used (`rules`) |
+| MF4 | The model call fails or takes too long | DPM's own sentence; "Thinking…" never stays for good (30 s at most) |
+| MF5 | No model connected | DPM's sentence at once; no wording step |
+| MF6 | Accept on a card after the update was saved, discarded or expired | Refused with the reason; nothing changes |
+| MF7 | Accept on an item already decided | Refused with the reason, or no change |
+| MF8 | An answer read later | Cards are as of the time given; acting on one is checked again now |
+| MF9 | A suggestion clicked while another reply is thinking | Sent as a new message; both replies come |
+| MF10 | Copy | The reply's words and its cards' titles go to the clipboard |
+| MF11 | More than 8 things need them | 7 cards and "N more in your inbox" |
+| MF12 | Privacy | The facts, the cards and what Atlas is shown are the asker's own only (P10) |
+
+### Built (27 Oct 2026)
+
+- Screen: `ChatSession` shows a sent message at once with "Thinking…" (three pulsing dots) and sends one at a time; the server's turn keeps "Thinking…" while M2 reads and while the answer is being worded, then "Still working on it…" after 8 seconds. A refused send puts the words back in the box with the reason.
+- Answers: `queries/answer.ts` gives cards for every topic: each item that needs the asker's OK (what, the change, the confidence) with Open and Accept; inbox items with their reason; blockers with their reports and since when; projects with their status and reason. At most 8.
+- Wording: `atlas/answer.ts`; the answer is `pending` while Atlas writes and becomes `atlas`, or `rules` when the words fail the M11 checks, the call fails, or 30 seconds pass. Accept from the chat (`acceptFromChat`) opens the review when needed and accepts through M3.
+- Under a reply: the time it was given, Copy, and on the latest reply one or two follow-ups that send into the same conversation.
+- Answers kept before this read as cards in DPM's own words, so older conversations still show.
+- Tests: MF1 to MF12 where the server decides them (wording kept, wording thrown away for an added number, a failed call, no model, Accept, a second Accept); the browser story checks the message shows at once, never "Reading your update", lists 4 items with Accept, and sends a suggested follow-up. Played live: "Can you list the items?" got Atlas's words over the 4 items.

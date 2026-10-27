@@ -42,7 +42,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
     const c = rows.find((r) => r.id === id);
     if (!c || (c.state === "received" && now().getTime() - c.receivedAt.getTime() < UNSTARTED_AFTER_MS)) continue;
     try {
-      await readCapture({ db, now: now(), actorId: c.authorId }, id, extractor, { clock: now });
+      await readCapture({ db, now: now(), actorId: c.authorId }, id, extractor, { clock: now, drafter: opts.extractor ? null : atlasFromEnv().drafter });
       run.read.push(id);
     } catch (error) {
       run.failed.push(`read ${id}`);

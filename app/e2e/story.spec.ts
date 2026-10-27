@@ -47,9 +47,17 @@ test("Section 15. Kemar asks Atlas what needs him: the answer links his waiting 
   await expect(box).toBeFocused();
   await box.fill("What needs me to review it today?");
   await box.press("Enter");
-  await expect(page.getByText("1 thing needs you:")).toBeVisible();
+  // Section 17: the message shows at once, and never as "Reading your update"
+  await expect(page.getByText("What needs me to review it today?", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Reading your update")).toHaveCount(0);
+  await expect(page.getByText("Your update from 8:58am has 4 items waiting for your OK before it can be saved.")).toBeVisible();
   await expect(page.getByText("Got it. Nothing in this one changes a project.")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Your update from 8:58am is waiting for review: 4 need your OK" })).toHaveAttribute("href", "/review/cap-kemar-0858");
+  // The answer lists each item, with Open and Accept
+  await expect(page.getByRole("link", { name: /Milestone Trend model/ })).toHaveAttribute("href", "/review/cap-kemar-0858");
+  await expect(page.getByRole("button", { name: "Accept" })).toHaveCount(4);
+  // A suggested follow-up is sent into the same conversation
+  await page.getByRole("button", { name: "What's blocked?" }).click();
+  await expect(page.getByText("1 thing is blocked on your projects.")).toBeVisible();
   // Ask Atlas started a new conversation, titled from the question (section 16)
   await expect(page).toHaveURL(/c=conv-/);
   await expect(page.getByRole("navigation", { name: "Conversations" }).getByRole("link", { name: /What needs me to review it today\?/ })).toBeVisible();
@@ -59,7 +67,7 @@ test("Section 16. Conversations: a follow-up continues one, New starts another, 
   const box = page.getByRole("textbox", { name: "Message to Atlas" });
   await box.fill("What's blocked on Forager?");
   await box.press("Enter");
-  await expect(page.getByText("1 thing is blocked on Forager 2.0:")).toBeVisible();
+  await expect(page.getByText("1 thing is blocked on Forager 2.0.")).toBeVisible();
   // A follow-up is read with the question before it
   await box.fill("and on Store Insights?");
   await box.press("Enter");
