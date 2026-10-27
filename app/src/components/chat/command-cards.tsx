@@ -7,6 +7,7 @@
 import { useState, useTransition } from "react";
 import { actOnLine, atlasReason, cancelChatCommand, confirmChatCommand, type ActionResult } from "@/app/actions";
 import { ActionNote, Button } from "@/components/ui/controls";
+import { noLinkText } from "@/domain/acting";
 import { commandButton, type LineAction } from "@/domain/machines/chat-command";
 import type { ChatCommandView, TapView } from "@/queries/chat";
 import { useChatSend } from "./chat-session";
@@ -73,6 +74,8 @@ export function LineActions({ captureId, line, projectId, actions, tapped }: { c
     );
   }
   if (mode === "reason" && reason) {
+    // M9, D17: a reason links an entry on the log, and only the inbox's editor can add one
+    const linked = draft?.entryIds.length ?? 0;
     return (
       <form
         className="flex w-[340px] flex-col items-end gap-1.5"
@@ -82,8 +85,9 @@ export function LineActions({ captureId, line, projectId, actions, tapped }: { c
         }}
       >
         <textarea value={words} rows={3} onChange={(e) => setWords(e.target.value)} aria-label="Reason" className={`${box} w-full resize-none`} />
+        {!linked && <span className="type-caption text-fg-3">{noLinkText()}</span>}
         <span className="flex gap-1.5">
-          <Button type="submit" disabled={pending || !words.trim()}>
+          <Button type="submit" disabled={pending || !words.trim() || !linked}>
             Save reason
           </Button>
           <Button variant="secondary" disabled={pending} onClick={() => setMode("buttons")}>

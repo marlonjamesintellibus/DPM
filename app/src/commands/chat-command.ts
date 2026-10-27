@@ -9,7 +9,7 @@ import { and, eq, lte } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import * as t from "../db/schema";
-import { commandNoteText, OUT_OF_DATE_TEXT, type CheckedCommands } from "../domain/acting";
+import { commandNoteText, noLinkText, OUT_OF_DATE_TEXT, type CheckedCommands } from "../domain/acting";
 import type { OpenAnswer } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Outcome } from "../domain/machine";
@@ -121,13 +121,19 @@ function auditMove(tx: Tx, now: Date, r: ChatCommandRecord, outcome: Extract<Out
   });
 }
 
-/** The command's own words for a refusal, read now: AC1 names nothing; AC2 and AC3 say who changed it and when. */
+/**
+ * The command's own words for a refusal, read now: AC1 names nothing; AC2 and AC3 say who changed it and
+ * when, from what happened to it after the answer was given.
+ */
 async function refusalOf(tx: Tx, r: ChatCommandRecord, standing: Standing, now: Date): Promise<string> {
   switch (r.refusedWhy) {
     case "right_lost":
       return rightLostText(r.act);
-    case "changed":
-      return `${await whatChanged(tx, r.askerId, r.subject, now)} Ask again for a fresh answer.`;
+    case "changed": {
+      const [answer] = await tx.select({ answer: t.captures.answer }).from(t.captures).where(eq(t.captures.id, r.answerCaptureId));
+      const since = answer?.answer ? new Date(answer.answer.asOf) : r.createdAt;
+      return `${await whatChanged(tx, r.askerId, r.subject, since, now)} Ask again for a fresh answer.`;
+    }
     default: {
       const why = standing.refusedBy ?? "it could not be done";
       return `${why.charAt(0).toUpperCase()}${why.slice(1)}${/[.!?]$/.test(why) ? "" : "."}`;
@@ -162,7 +168,7 @@ async function runAct(tx: Tx, ctx: CommandCtx, r: ChatCommandRecord): Promise<vo
         ctx,
         id,
         { text: r.input?.reason ?? "", entryIds: r.input?.entryIds ?? [], draftedByAtlas: r.input?.draftedByAtlas ?? false, edited: r.input?.edited ?? true },
-        { captureId: r.captureId },
+        opts,
       );
       return;
   }
@@ -299,9 +305,14 @@ export async function commandsFromWords(
     const action = card?.actions?.find((a) => a.act === said.act);
     if (!card?.subject || !action) continue;
     const about = await aboutOf(tx, card.subject);
+    const readable = reader.mayRead(card.subject.projectId) && about !== null;
     // A status reason links what DPM's draft links, so the card can say what it will link (M9, M11)
     const input: CommandInput | null =
-      said.act === "give_reason" ? { reason: said.reason ?? "", entryIds: (await draftReason(tx, card.subject.projectId, now)).entryIds, draftedByAtlas: false, edited: true } : said.reason ? { reason: said.reason } : null;
+      said.act === "give_reason" && readable
+        ? { reason: said.reason ?? "", entryIds: (await draftReason(tx, card.subject.projectId, now)).entryIds, draftedByAtlas: false, edited: true }
+        : said.reason
+          ? { reason: said.reason }
+          : null;
     const draft = draftCommand({
       id: `cmd-${randomUUID()}`,
       askerId: reply.authorId,
@@ -318,9 +329,15 @@ export async function commandsFromWords(
       input,
       createdAt: now,
     });
-    const r = applyChatCommandEvent(draft, { type: "PROPOSE" }, { actorId: reply.authorId, now, readable: reader.mayRead(card.subject.projectId) && about !== null, standing: { right: false, version: null } });
+    const r = applyChatCommandEvent(draft, { type: "PROPOSE" }, { actorId: reply.authorId, now, readable, standing: { right: false, version: null } });
     if (!r.outcome.ok) {
       notes.push(OUT_OF_DATE_TEXT);
+      continue;
+    }
+    // M9, D17: a reason links an entry on the log, and the card cannot add one; with nothing to link, a
+    // card could never be confirmed, so the chat says where to add one instead
+    if (said.act === "give_reason" && !input?.entryIds?.length) {
+      notes.push(noLinkText(about!.project));
       continue;
     }
     // Once only: the same reply read again makes no second card

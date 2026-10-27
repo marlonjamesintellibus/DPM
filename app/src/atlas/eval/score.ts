@@ -41,7 +41,7 @@ export type CaseScore = {
 /** Phase B: a note's key, "note:which@1,2". */
 function noteKey(note: CommandNote): string {
   if (note.kind === "which") return `note:which${note.lines.length ? `@${[...note.lines].sort((a, b) => a - b).join(",")}` : ""}`;
-  return note.kind === "not_offered" ? `note:not_offered@${note.line}` : "note:no_answer";
+  return note.kind === "not_offered" ? `note:not_offered@${note.line}` : `note:${note.kind}`;
 }
 
 export function scoreCase(c: EvalCase, proposals: readonly RawProposal[], ctx: CheckContext, question: RawQuestion | null = null, said: readonly RawCommand[] = []): CaseScore {

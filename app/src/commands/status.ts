@@ -15,8 +15,9 @@ import { calculatePlan, milestoneStatus, workItemStatus } from "../domain/status
 import { RANK, type Status } from "../domain/status/status";
 import type { Drafter } from "../atlas/extractor";
 import { wordReason } from "../atlas/reason";
+import { standingOf } from "../queries/acting";
 import { STATUS_LABEL } from "../queries/project";
-import { audit, CommandRefused, moved, runCommand, todayOf, type CommandCtx } from "./core";
+import { audit, CommandRefused, moved, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProject, type Evaluation } from "./evaluate";
 
 export type StatusCommandResult = { outcome: Moved<OverrideState>; record: SetStatusRecord; evaluation: Evaluation };
@@ -105,11 +106,21 @@ export function saveReason(ctx: CommandCtx, projectId: string, input: ReasonInpu
   return runCommand(ctx, (tx) => saveReasonIn(tx, ctx, projectId, input));
 }
 
-/** saveReason inside a transaction already open: the chat's Give a reason runs it in its own (phase B, M20). */
-export async function saveReasonIn(tx: Tx, ctx: CommandCtx, projectId: string, input: ReasonInput, opts: { captureId?: string } = {}): Promise<StatusCommandResult & { reasonId: string }> {
+/**
+ * saveReason inside a transaction already open: the chat's Give a reason runs it in its own (phase B, M20),
+ * against the project's version the answer showed, as every other act from the chat does (AC3).
+ */
+export async function saveReasonIn(
+  tx: Tx,
+  ctx: CommandCtx,
+  projectId: string,
+  input: ReasonInput,
+  opts: { captureId?: string; seenVersion?: number } = {},
+): Promise<StatusCommandResult & { reasonId: string }> {
   const text = input.text.trim();
   if (!text) throw new CommandRefused("write the reason first");
   const { project, calculated } = await loadAt(tx, ctx, projectId);
+  if (opts.seenVersion !== undefined && project.version !== opts.seenVersion) throw new StaleVersion(`project ${projectId}`);
   const { log } = await loadBraidLog(tx, projectId);
   const entryIds = [...new Set(input.entryIds)];
   for (const id of entryIds) {
@@ -229,6 +240,17 @@ export async function draftReasonWithAtlas(conn: Conn, projectId: string, now: D
   if (!project?.setStatus) return draft;
   const worded = await wordReason(drafter, { projectName: project.name, status: STATUS_LABEL[project.setStatus], facts: draft.text });
   return worded.by === "atlas" ? { ...draft, text: worded.text, by: "atlas" } : { ...draft, fallback: worded.fallback };
+}
+
+/**
+ * draftReasonWithAtlas for a viewer: only someone who may give the project's reason now gets a draft (M9,
+ * rule 4). Anyone else gets an empty one, so a project they cannot read is never named (P10), whichever
+ * screen asks with a project id: the inbox's editor or the chat's Give a reason (phase B).
+ */
+export async function draftReasonFor(conn: Conn, viewerId: string, projectId: string, now: Date, drafter: Drafter | null): Promise<ReasonDraft & { fallback?: string }> {
+  const { right } = await standingOf(conn, viewerId, { act: "give_reason", subject: { type: "project", id: projectId, projectId }, proposal: null });
+  if (!right) return { text: "", entryIds: [], by: "rules" };
+  return draftReasonWithAtlas(conn, projectId, now, drafter);
 }
 
 /** M5, A10.1 (D18): the owner links the PR or document that finished their work; the error item closes. */

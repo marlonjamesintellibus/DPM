@@ -19,6 +19,7 @@ import { CONFIDENCES } from "../domain/shared";
 // that is also a word ("di academy") is not the project (JA7). read-11: all of them together. The
 // conversational plan's phase B: a reply may decide lines of the open answer ("Approve the Kyle risk"),
 // shown between <answer> tags; it says so in commands, and a record change said about a line is an item.
+// Each command says who decides it (rule 10): a report of someone else's decision is never the author's.
 export const PROMPT_VERSION = "read-wave2-b";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
@@ -91,7 +92,7 @@ Acting on the last answer
 - "Approve all of them": one command for each line that lists approve.
 - reason: for decline, the reason they gave in their own words; for give_reason, the reason's words; otherwise null.
 - A change to a record in a line ("Mark the second one done", "Push the trend model to Friday") is an update in items, on that line's record, never a command. "Keep it open" or "Still blocked" about a line that lists decline is decline.
-- Something said about another person's decision ("Alicia approved the Kyle risk") is not a command.
+- by: "author" when the author decides it. Words that only report another person's decision ("Alicia approved the Kyle risk") are "other": DPM never makes them the author's decision. Put any change they report in items as usual.
 - Otherwise commands is an empty list.
 
 Which project
@@ -202,6 +203,8 @@ export const commandSchema = z.object({
   act: z.enum(WORD_ACTS),
   lines: z.array(z.number().int()),
   reason: z.string().nullable(),
+  // Rule 10, E96: who decides it; checkCommands drops "other", so a report of someone else's decision is never the asker's card
+  by: z.enum(["author", "other"]),
 });
 
 export const TOOL_NAME = "propose_items";

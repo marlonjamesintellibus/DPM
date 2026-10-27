@@ -10,7 +10,7 @@ import type { Db } from "../db/client";
 import * as t from "../db/schema";
 import { at, seededDb } from "../test/seeded-db";
 import { lineActions, standingOf, whatChanged } from "./acting";
-import { loadOpenAnswer } from "./check-context";
+import { lineProjectOf, loadOpenAnswer } from "./check-context";
 
 let db: Db;
 let n = 0;
@@ -78,15 +78,33 @@ describe("lineActions: what a line offers now", () => {
 });
 
 describe("whatChanged (AC2, AC3)", () => {
+  const answeredAt = at(1);
+
   it("says who did what and when, or that a rule changed it", async () => {
     const subject = work("wi-152");
-    expect(await whatChanged(db, "kemar", subject, at(10))).toBe("This changed since your answer.");
+    expect(await whatChanged(db, "kemar", subject, answeredAt, at(10))).toBe("This changed since your answer.");
     await db.insert(t.auditEntries).values({ at: at(5), actorType: "rule", action: "CALCULATED_CHANGED", subjectType: "work_item", subjectId: "wi-152" });
-    expect(await whatChanged(db, "kemar", subject, at(10))).toBe("This changed at 9:15am, after your answer.");
+    expect(await whatChanged(db, "kemar", subject, answeredAt, at(10))).toBe("This changed at 9:15am, after your answer.");
     await db.insert(t.auditEntries).values({ at: at(6), actorType: "person", actorId: "alicia", action: "FINISH", subjectType: "work_item", subjectId: "wi-152" });
-    expect(await whatChanged(db, "kemar", subject, at(10))).toBe("Alicia marked this done at 9:16am.");
-    expect(await whatChanged(db, "alicia", subject, at(10))).toBe("You marked this done at 9:16am.");
-    expect(await whatChanged(db, "alicia", subject, at(2 * 24 * 60))).toBe("You marked this done at 9:16am on 20 Oct.");
+    expect(await whatChanged(db, "kemar", subject, answeredAt, at(10))).toBe("Alicia marked this done at 9:16am.");
+    expect(await whatChanged(db, "alicia", subject, answeredAt, at(10))).toBe("You marked this done at 9:16am.");
+    expect(await whatChanged(db, "alicia", subject, answeredAt, at(2 * 24 * 60))).toBe("You marked this done at 9:16am on 20 Oct.");
+  });
+
+  it("only what happened after the answer: a person's older change is never named when a rule made the new one", async () => {
+    const subject = work("wi-152");
+    await db.insert(t.auditEntries).values({ at: at(0), actorType: "person", actorId: "alicia", action: "FINISH", subjectType: "work_item", subjectId: "wi-152" });
+    expect(await whatChanged(db, "kemar", subject, answeredAt, at(10))).toBe("This changed since your answer.");
+    await db.insert(t.auditEntries).values({ at: at(5), actorType: "rule", action: "CALCULATED_CHANGED", subjectType: "work_item", subjectId: "wi-152" });
+    expect(await whatChanged(db, "kemar", subject, answeredAt, at(10))).toBe("This changed at 9:15am, after your answer.");
+  });
+
+  it("a duplicate report reads as one, and an act it has no words for as a change", async () => {
+    const subject = { type: "braid_entry" as const, id: "br-feed-blocker", projectId: "forager" };
+    await db.insert(t.auditEntries).values({ at: at(5), actorType: "person", actorId: "jodian", action: "REPORT", subjectType: "braid_entry", subjectId: "br-feed-blocker" });
+    expect(await whatChanged(db, "alicia", subject, answeredAt, at(10))).toBe("Jodian reported this too at 9:15am.");
+    await db.insert(t.auditEntries).values({ at: at(6), actorType: "person", actorId: "jodian", action: "SOMETHING_NEW", subjectType: "braid_entry", subjectId: "br-feed-blocker" });
+    expect(await whatChanged(db, "alicia", subject, answeredAt, at(10))).toBe("Jodian changed this at 9:16am.");
   });
 });
 
@@ -102,5 +120,24 @@ describe("loadOpenAnswer: the answer a reply acts on", () => {
     expect((await loadOpenAnswer(db, reply.captureId))!.captureId).toBe(second.captureId);
     const elsewhere = await say("alicia", "Approve the second one", 4);
     expect(await loadOpenAnswer(db, elsewhere.captureId)).toBeNull();
+  });
+
+  it("P10, lines_now: lines on a project the asker has left are left out before anything reaches Atlas; only their numbers stay", async () => {
+    const first = await say("alicia", "What needs me today?", 0);
+    const shown = (await db.select().from(t.captures).where(eq(t.captures.id, first.captureId)))[0].answer!.cards;
+    expect(shown.some((c) => lineProjectOf(c) === "forager")).toBe(true);
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "alicia")));
+    const reply = await say("alicia", "Thanks", 1, first.conversationId);
+    const open = (await loadOpenAnswer(db, reply.captureId))!;
+    expect(JSON.stringify(open.lines)).not.toMatch(/forager|Forager/);
+    expect(open.gone).toEqual(shown.flatMap((c, i) => (lineProjectOf(c) === "forager" ? [i + 1] : [])));
+  });
+
+  it("a line's project is its record's, or the project its link opens; the asker's own inbox and reviews have none", () => {
+    expect(lineProjectOf({ subject: work("wi-152"), href: "/?view=inbox" })).toBe("forager");
+    expect(lineProjectOf({ href: "/projects/insights?view=table&log=risk" })).toBe("insights");
+    expect(lineProjectOf({ href: "/projects/forager" })).toBe("forager");
+    expect(lineProjectOf({ href: "/review/cap-1" })).toBeNull();
+    expect(lineProjectOf({ href: "/?view=inbox&item=x" })).toBeNull();
   });
 });

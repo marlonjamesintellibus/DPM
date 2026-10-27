@@ -60,6 +60,21 @@ describe("checkCommands", () => {
     expect(all.kept.map((k) => k.line)).toEqual([1, 2]);
   });
 
+  it("rule 10, E96: words that report someone else's decision are never the asker's command", () => {
+    expect(checkCommands([{ act: "approve", lines: [1], by: "other" }], OPEN)).toEqual({ kept: [], note: null });
+    expect(checkCommands([{ act: "approve", lines: [1], by: "author" }], OPEN).kept).toEqual([{ act: "approve", line: 1, reason: null }]);
+  });
+
+  it("P10, lines_now: a line left out because the asker can no longer read it is out of date, and nothing is named", () => {
+    const left = { ...OPEN, lines: OPEN.lines.filter((l) => l.line !== 2), gone: [2] };
+    expect(checkCommands([{ act: "approve", lines: [2] }], left)).toEqual({ kept: [], note: { kind: "out_of_date" } });
+    expect(checkCommands([{ act: "approve", lines: [2] }], { ...OPEN, lines: [], gone: [1, 2, 3, 4] })).toEqual({ kept: [], note: { kind: "out_of_date" } });
+    // Words that fit no line still shown may mean one left out, whose words nobody read again
+    expect(checkCommands([{ act: "approve", lines: [] }], left).note).toEqual({ kind: "out_of_date" });
+    // A line still theirs is kept as before
+    expect(checkCommands([{ act: "approve", lines: [1] }], left).kept).toEqual([{ act: "approve", line: 1, reason: null }]);
+  });
+
   it("AC9: a line that does not exist, or a line that offers no such act, is no command", () => {
     expect(checkCommands([{ act: "approve", lines: [9] }], OPEN).kept).toEqual([]);
     expect(checkCommands([{ act: "approve", lines: [4] }], OPEN)).toEqual({ kept: [], note: { kind: "not_offered", act: "approve", line: 4 } });
@@ -77,6 +92,7 @@ describe("what the chat says when a reply made no card", () => {
     [{ kind: "which", lines: [1, 2] }, ["A"], "I'm not sure which one you mean. Say it again with its name."],
     [{ kind: "not_offered", act: "approve", line: 4 }, ["#152 Store feed connector"], 'You can\'t approve "#152 Store feed connector" here.'],
     [{ kind: "not_offered", act: "approve", line: 4 }, [], "That answer is out of date. Ask again."],
+    [{ kind: "out_of_date" }, [], "That answer is out of date. Ask again."],
   ] as const)("%o", (note, names, text) => {
     expect(commandNoteText(note, names)).toBe(text);
   });
@@ -109,6 +125,21 @@ describe("the rule, without a model", () => {
       { act: "approve", lines: [2], reason: null },
     ]);
     expect(read("Resolve all of them")).toEqual([{ act: "resolve", lines: [], reason: null }]);
+    expect(read("Approve both")).toHaveLength(2);
+    expect(read("Approve them all, we agreed this morning")).toEqual([
+      { act: "approve", lines: [1], reason: "we agreed this morning" },
+      { act: "approve", lines: [2], reason: "we agreed this morning" },
+    ]);
+  });
+
+  it("AC8: \"all\" or \"both\" inside a name is one named line, never a card per line", () => {
+    const allHands = { ...OPEN, lines: [...OPEN.lines, { line: 5, title: "Jodian raised a decision: Move the all-hands to Friday", detail: null, subject: { ...OPEN.lines[0].subject!, id: "br-hands" }, acts: ["approve", "decline"] as const }] };
+    expect(read("Approve the all-hands decision", allHands)).toEqual([{ act: "approve", lines: [5], reason: null }]);
+    expect(read("Approve both of the Kemar ones")).toEqual([{ act: "approve", lines: [1, 2], reason: null }]);
+  });
+
+  it("P10: places count the lines no longer readable too, so the last one is still the last one shown", () => {
+    expect(read("Approve the last one", { ...OPEN, lines: OPEN.lines.slice(0, 3), gone: [4] })).toEqual([{ act: "approve", lines: [4], reason: null }]);
   });
 
   it("with no open answer, still a command, so the chat says there is none", () => {

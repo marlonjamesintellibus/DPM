@@ -131,6 +131,15 @@ describe("the guards", () => {
     expect(applyChatCommandEvent(at("proposed", { act: "decline", proposal: "outcome" }), { type: "CONFIRM" }, base).record.state).toBe("done");
     const reason = at("none", { act: "give_reason", subject: { type: "project", id: "forager", projectId: "forager" }, proposal: null });
     expect(applyChatCommandEvent(reason, { type: "TAP", input: { reason: " " } }, base).outcome.ok).toBe(false);
+    // M9, D17: a reason links an entry on the log; without one it is words still missing, never a refusal
+    // that spends the line's button (rule 5)
+    const unlinked = applyChatCommandEvent(reason, { type: "TAP", input: { reason: "Waiting on Kyle", entryIds: [] } }, base);
+    expect(unlinked.outcome.ok || unlinked.outcome.reason).toBe("link at least one BRAID entry on the log, or add one to the log first");
+    expect(unlinked.record.state).toBe("none");
+    expect(applyChatCommandEvent(reason, { type: "TAP", input: { reason: "Waiting on Kyle", entryIds: ["br-feed-blocker"] } }, base).record.state).toBe("done");
+    // A card from words carries what DPM's draft links; confirming adds only the words
+    const card = at("proposed", { act: "give_reason", subject: { type: "project", id: "forager", projectId: "forager" }, proposal: null, input: { entryIds: ["br-feed-blocker"] } });
+    expect(applyChatCommandEvent(card, { type: "CONFIRM", input: { reason: "Waiting on Kyle" } }, base).record).toMatchObject({ state: "done", input: { reason: "Waiting on Kyle", entryIds: ["br-feed-blocker"] } });
     // ...but a refusal is final whatever words came with it
     expect(applyChatCommandEvent(decline, { type: "CONFIRM" }, { ...base, standing: { right: false, version: 3 } }).record.state).toBe("refused");
   });

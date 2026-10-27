@@ -44,7 +44,7 @@ import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
 import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { approveLeave, declineLeave } from "@/commands/leave";
-import { draftReasonWithAtlas, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { draftReasonFor, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
 import { getDb } from "@/db/client";
 import { now } from "./_lib/clock";
 import { currentViewer, VIEWER_COOKIE, viewerInfo } from "./_lib/viewer";
@@ -327,10 +327,13 @@ export async function showCalculatedStatus(projectId: string): Promise<ActionRes
   return run((ctx) => useCalculated(ctx, projectId), "Now showing the calculated status.");
 }
 
-/** Atlas rewords the rules draft (G21); the facts stay the rules' own. Nothing is saved. */
+/**
+ * Atlas rewords the rules draft (G21); the facts stay the rules' own. Nothing is saved. Only the viewer's
+ * own right gets a draft (M9, P10): the inbox and the chat's Give a reason both ask with a project id.
+ */
 export async function atlasReason(projectId: string): Promise<{ text: string; entryIds: string[]; by: "rules" | "atlas" }> {
   const ctx = await as();
-  const d = await draftReasonWithAtlas(ctx.db, projectId, ctx.now, atlasFromEnv().drafter);
+  const d = await draftReasonFor(ctx.db, ctx.actorId, projectId, ctx.now, atlasFromEnv().drafter);
   return { text: d.text, entryIds: d.entryIds, by: d.by };
 }
 

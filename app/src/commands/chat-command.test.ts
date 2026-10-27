@@ -2,22 +2,24 @@
 // line runs the screen's own command in the same tap; a reply in words makes a confirm card (M20). Every
 // edge case AC1 to AC10, and an approve or decline from the chat behaves as the screen's, with section
 // 20's proposed outcomes (U3) and superseding decisions (U4).
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Extractor } from "../atlas/extractor";
 import { createFixtureExtractor } from "../atlas/fixture";
+import { userMessage } from "../atlas/prompt";
 import type { Db } from "../db/client";
 import { loadBraidLog } from "../db/records";
 import * as t from "../db/schema";
 import type { RawCommand } from "../domain/acting";
-import type { RawProposal } from "../domain/atlas-checks/types";
+import type { CheckContext, RawProposal } from "../domain/atlas-checks/types";
 import { getChatSummary } from "../queries/chat";
 import { at, seededDb } from "../test/seeded-db";
 import { readCapture } from "./atlas";
 import { decideBraidEntry, reportBraidEntry } from "./braid";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./capture";
 import { cancelCommand, confirmCommand, runChatCommandTimers, tapLine } from "./chat-command";
-import { CommandRefused } from "./core";
+import { CommandRefused, StaleVersion } from "./core";
+import { draftReasonFor, saveReasonIn } from "./status";
 
 let db: Db;
 let n = 0;
@@ -204,19 +206,61 @@ describe("a button on an answer line (confirmed in the same tap)", () => {
     const line = cards.findIndex((c) => c.subject?.type === "project") + 1;
     expect(cards[line - 1].actions?.map((a) => a.act)).toEqual(["give_reason"]);
     await expect(tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: " " })).rejects.toThrow("write the reason first");
-    // The screen's own rule says no (M9: a reason links an entry on the log): refused, and nothing was written
-    const unlinked = await tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: "Waiting on Kyle", entryIds: [] });
-    expect(unlinked).toMatchObject({ message: "Link at least one BRAID entry on the log, or add one to the log first.", record: { state: "refused", refusedWhy: "refused" } });
+    // Rule 5, M9, D17: a reason with no entry linked is words still missing, as the reason is; the line's
+    // button is not spent, and nothing was written
+    await expect(tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: "Waiting on Kyle", entryIds: [] })).rejects.toThrow("link at least one BRAID entry on the log");
+    expect(await db.select().from(t.chatCommands)).toHaveLength(0);
     expect(await db.select().from(t.statusReasons)).toEqual([]);
     expect((await db.select().from(t.projects).where(eq(t.projects.id, "forager")))[0].setOverride).toBe("reason_required");
+    // The screen's own rule says no (an entry not on the log): refused, final, and nothing was written
+    const offLog = await tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: "Waiting on Kyle", entryIds: ["br-nope"] });
+    expect(offLog).toMatchObject({ message: "Entry br-nope is not on this project's BRAID log.", record: { state: "refused", refusedWhy: "refused" } });
+    expect(await db.select().from(t.statusReasons)).toEqual([]);
     // Once only: that line's Give a reason is spent; a fresh answer offers it again
+    expect((await tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: "Waiting on Kyle", entryIds: ["br-feed-blocker"] })).record.state).toBe("refused");
     const fresh = await say("alicia", "What needs me today?", 1);
     const freshLine = (await capture(fresh.captureId)).answer!.cards.findIndex((c) => c.subject?.type === "project") + 1;
-    expect((await tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: "Waiting on Kyle", entryIds: ["br-feed-blocker"] })).record.state).toBe("refused");
     const ran = await tapLine(as("alicia", 2), fresh.captureId, freshLine, "give_reason", { reason: "Waiting on Kyle for the store feed", entryIds: ["br-feed-blocker"], draftedByAtlas: false, edited: true });
     expect(ran.message).toBe("Reason saved.");
     const [p] = await db.select().from(t.projects).where(eq(t.projects.id, "forager"));
     expect(p.setOverride).toBe("explained");
+  });
+
+  it("a reason in words with nothing on the log to link makes no card that could never be confirmed; the chat says where to add one", async () => {
+    db = await seededDb({ kemarNote: false });
+    await db.update(t.braidEntries).set({ state: "withdrawn" }).where(eq(t.braidEntries.projectId, "forager"));
+    const asked = await say("alicia", "What needs me today?");
+    const line = (await capture(asked.captureId)).answer!.cards.findIndex((c) => c.subject?.type === "project") + 1;
+    expect(line).toBeGreaterThan(0);
+    const reply = await say("alicia", "The reason for Forager is the late store feed", 1, asked.conversationId, decides([{ act: "give_reason", lines: [line], reason: "The store feed is late", by: "author" }]));
+    expect(await commandsOf(reply.captureId)).toEqual([]);
+    expect((await capture(reply.captureId)).commandNote).toBe("Nothing on Forager 2.0's BRAID log explains its status yet. Add an entry to the log from your inbox, then give the reason.");
+  });
+
+  it("P10: the reason draft the chat's form starts from is only for someone who may give the reason", async () => {
+    db = await seededDb({ kemarNote: false });
+    expect((await draftReasonFor(db, "alicia", "forager", at(0), null)).entryIds.length).toBeGreaterThan(0);
+    // Andre cannot read Forager; Kemar can, but holds no right on its status
+    expect(await draftReasonFor(db, "andre", "forager", at(0), null)).toEqual({ text: "", entryIds: [], by: "rules" });
+    expect(await draftReasonFor(db, "kemar", "forager", at(0), null)).toEqual({ text: "", entryIds: [], by: "rules" });
+  });
+
+  it("AC3: Give a reason runs against the project's version the answer showed, as every other act", async () => {
+    db = await seededDb({ kemarNote: false });
+    const asked = await say("alicia", "What needs me today?");
+    const line = (await capture(asked.captureId)).answer!.cards.findIndex((c) => c.subject?.type === "project") + 1;
+    // The project moved after the answer (another PM or Lead set it again): the old picture is never acted on
+    await db.update(t.projects).set({ version: sql`${t.projects.version} + 1` }).where(eq(t.projects.id, "forager"));
+    const ran = await tapLine(as("alicia", 1), asked.captureId, line, "give_reason", { reason: "Waiting on Kyle", entryIds: ["br-feed-blocker"] });
+    expect(ran.record).toMatchObject({ state: "refused", refusedWhy: "changed" });
+    expect(ran.message).toMatch(/Ask again for a fresh answer\.$/);
+    expect(await db.select().from(t.statusReasons)).toEqual([]);
+    // The screen's command checks the version it loads itself, so a change between the guard's read and
+    // the write is refused too (decide turns StaleVersion into "changed")
+    const [{ version }] = await db.select({ version: t.projects.version }).from(t.projects).where(eq(t.projects.id, "forager"));
+    const input = { text: "Waiting on Kyle", entryIds: ["br-feed-blocker"], draftedByAtlas: false, edited: true };
+    await expect(db.transaction((tx) => saveReasonIn(tx, as("alicia", 1), "forager", input, { seenVersion: version - 1 }))).rejects.toBeInstanceOf(StaleVersion);
+    expect(await db.select().from(t.statusReasons)).toEqual([]);
   });
 });
 
@@ -306,6 +350,36 @@ describe("a reply in words (a confirm card)", () => {
     const reply = await say("alicia", "Approve the trend model risk", 2, conversationId);
     expect(await capture(reply.captureId)).toMatchObject({ state: "answered", commandNote: "That answer is out of date. Ask again." });
     expect(await commandsOf(reply.captureId)).toEqual([]);
+  });
+
+  it("P10, lines_now: after she leaves the project, nothing of its lines reaches Atlas, and a reply that means one is out of date", async () => {
+    const risk = await kemarRisk();
+    const { conversationId, line } = await aliciaAsks(risk);
+    await setRole("forager", "alicia", { state: "left" });
+    const seen: CheckContext[] = [];
+    const reading: Extractor = {
+      name: "fake",
+      extract: async (ctx) => {
+        seen.push(ctx);
+        return { proposals: [], question: null, commands: [{ act: "approve", lines: [line], reason: null, by: "author" }], malformed: [], model: "fake", usage: null };
+      },
+    };
+    const reply = await say("alicia", "Approve the second one", 2, conversationId, reading);
+    const prompt = userMessage(seen[0]);
+    for (const word of ["Trend model may slip", risk, "forager", "Forager"]) expect(prompt).not.toContain(word);
+    expect(seen[0].openAnswer!.lines.every((l) => l.subject?.projectId !== "forager")).toBe(true);
+    expect(seen[0].openAnswer!.gone).toContain(line);
+    expect(await capture(reply.captureId)).toMatchObject({ state: "answered", commandNote: "That answer is out of date. Ask again." });
+    expect(await commandsOf(reply.captureId)).toEqual([]);
+  });
+
+  it("rule 10: a reply that reports someone else's decision is never a card, even for someone who holds the right", async () => {
+    const risk = await kemarRisk();
+    const { conversationId, line } = await aliciaAsks(risk);
+    const reply = await say("alicia", "Jodian approved the trend model risk this morning", 2, conversationId, decides([{ act: "approve", lines: [line], reason: null, by: "other" }]));
+    expect(await commandsOf(reply.captureId)).toEqual([]);
+    expect((await capture(reply.captureId)).commandNote).toBeNull();
+    expect((await entry(risk)).state).toBe("proposed");
   });
 
   it("AC9: Atlas naming a line the answer does not have, or a record instead of a line, makes no command", async () => {

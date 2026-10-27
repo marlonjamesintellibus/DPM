@@ -4,7 +4,7 @@
 // screens' own: deciding a proposal (rights.ts), resolving (S13), a work item's owner or a PM or Lead (S2,
 // S5), and a project's owner or a PM or Lead for its status (M9). A project the person cannot read now
 // holds no right on it (P10).
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { membersOf, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
@@ -137,27 +137,45 @@ const DID: Record<string, string> = {
   PROPOSE_RESOLVE: "said this is cleared",
   SWITCH: "changed this one's kind",
   MERGE: "merged this",
+  SWITCH_KIND: "changed this one's kind",
+  UNMERGE: "unmerged this",
+  RESTORE: "restored this",
+  REPORT: "reported this too",
+  ADD_SOURCE: "reported this too",
+  REPLY: "answered the question on this",
+  REOPEN: "reopened this",
+  PROGRESS: "moved this on",
+  SET_EXPECTED: "set when this is expected",
+  ACKNOWLEDGE: "saw this",
   GIVE_REASON: "gave a reason",
   OWNER_SETS: "set the status",
+  KEEP: "kept the status",
+  START: "started this",
+  BLOCK: "marked this blocked",
+  UPDATE_BLOCKED_NOTE: "changed what holds this up",
+  CANCEL: "cancelled this",
   FINISH: "marked this done",
   UNBLOCK: "unblocked this",
 };
 
 /**
- * AC2, AC3: what changed since the answer, as the record's trail says: "Alicia approved this at 9:52am."
- * Only reached when the asker still holds the right, so they may read the record and who acted on it.
+ * AC2, AC3: what changed since the answer (`since`, its "as of"), as the record's trail says: "Alicia
+ * approved this at 9:52am." Only entries after the answer count, so an older change is never named; the
+ * newest a person made among them, or "This changed" when only a rule changed it. Only reached when the
+ * asker still holds the right, so they may read the record and who acted on it.
  */
-export async function whatChanged(conn: Conn, askerId: string, subject: CommandSubject, now: Date): Promise<string> {
+export async function whatChanged(conn: Conn, askerId: string, subject: CommandSubject, since: Date, now: Date): Promise<string> {
   const rows = await conn
     .select()
     .from(t.auditEntries)
-    .where(and(eq(t.auditEntries.subjectType, subject.type), eq(t.auditEntries.subjectId, subject.id)))
+    .where(and(eq(t.auditEntries.subjectType, subject.type), eq(t.auditEntries.subjectId, subject.id), gt(t.auditEntries.at, since)))
     .orderBy(desc(t.auditEntries.id))
     .limit(10);
-  const last = rows.find((r) => r.actorType === "person" && r.actorId) ?? rows[0];
-  if (!last) return "This changed since your answer.";
-  const when = daysAgo(last.at, now) === "today" ? clockTime(last.at) : `${clockTime(last.at)} on ${shortDate(todayIn(last.at))}`;
-  if (last.actorType !== "person" || !last.actorId) return `This changed at ${when}, after your answer.`;
+  if (!rows.length) return "This changed since your answer.";
+  const at = (d: Date) => (daysAgo(d, now) === "today" ? clockTime(d) : `${clockTime(d)} on ${shortDate(todayIn(d))}`);
+  const last = rows.find((r) => r.actorType === "person" && r.actorId);
+  if (!last?.actorId) return `This changed at ${at(rows[0].at)}, after your answer.`;
+  const when = at(last.at);
   const [p] = await conn.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, last.actorId));
   const who = last.actorId === askerId ? "You" : firstName(p?.name ?? "Someone");
   const outcome = last.action === "RESOLVE" && typeof last.detail?.outcome === "string" ? `marked this ${last.detail.outcome}` : null;

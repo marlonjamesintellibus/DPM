@@ -135,6 +135,7 @@ describe("the request", () => {
     expect(section).toContain("never pick one"); // AC7
     expect(section).toContain('"Approve all of them": one command for each line'); // AC8
     expect(section).toContain('"Mark the second one done"'); // a record change stays a proposal
+    expect(section).toContain('Words that only report another person\'s decision ("Alicia approved the Kyle risk") are "other"'); // rule 10
   });
 
   it("describes every proposal field the checks read", () => {
@@ -172,10 +173,15 @@ describe("reading the answer", () => {
   });
 
   it("phase B: reads what a reply decides on the open answer; a command without the right shape is set aside", () => {
-    const said = { act: "approve", lines: [2], reason: null };
+    const said = { act: "approve", lines: [2], reason: null, by: "author" };
     const out = parseItems(JSON.stringify({ items: [], question: null, commands: [said, { act: "delete", lines: ["x"] }] }));
     expect(out.commands).toEqual([said]);
     expect(out.malformed).toEqual([{ index: -3, issues: expect.stringMatching(/^command:/) }]);
+    // Rule 10: who decides it is read too, so DPM can drop a report of someone else's decision
+    const other = { ...said, by: "other" };
+    expect(parseItems(JSON.stringify({ items: [], commands: [other] })).commands).toEqual([other]);
+    const schema = proposeItemsTool.function.parameters as unknown as { properties: { commands: { items: { required: string[] } } } };
+    expect(schema.properties.commands.items.required).toEqual(expect.arrayContaining(["act", "lines", "reason", "by"]));
     // A model that leaves the list out decides nothing
     expect(parseItems('{"items":[]}').commands).toEqual([]);
   });

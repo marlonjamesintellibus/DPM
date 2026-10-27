@@ -8,8 +8,12 @@
 import type { CheckContext, OpenAnswer } from "./atlas-checks/types";
 import { WORD_ACTS, type WordAct } from "./machines/chat-command";
 
-/** What Atlas said a reply decides, before the checks: the act and every line it could mean. */
-export type RawCommand = { act: string; lines: readonly number[]; reason?: string | null };
+/**
+ * What Atlas said a reply decides, before the checks: the act, every line it could mean, and who decides
+ * it: the author, or another person whose decision the reply only reports ("Alicia approved the Kyle
+ * risk"). Left out, it is the author's.
+ */
+export type RawCommand = { act: string; lines: readonly number[]; reason?: string | null; by?: "author" | "other" | null };
 
 /** A command that passed the checks: one act on one line of the open answer. */
 export type SaidCommand = { act: WordAct; line: number; reason: string | null };
@@ -21,7 +25,9 @@ export type CommandNote =
   /** AC6, AC7: no line fits, or more than one could; `lines` are the ones it could mean. */
   | { kind: "which"; lines: readonly number[] }
   /** The line offers no such act to the asker ("Approve #145"). */
-  | { kind: "not_offered"; act: WordAct; line: number };
+  | { kind: "not_offered"; act: WordAct; line: number }
+  /** The model check's fix lines_now: the only lines it could mean are on projects the asker can no longer read. */
+  | { kind: "out_of_date" };
 
 export type CheckedCommands = { kept: SaidCommand[]; note: CommandNote | null };
 
@@ -29,16 +35,23 @@ const isWordAct = (act: string): act is WordAct => (WORD_ACTS as readonly string
 
 /** AC6 to AC9: what of Atlas's reading is a command. The first problem found is the note. */
 export function checkCommands(raw: readonly RawCommand[] | null | undefined, open: OpenAnswer | null | undefined): CheckedCommands {
-  // A record change said in words is an update, never a command (phase B)
-  const said = (raw ?? []).filter((c) => isWordAct(c.act));
+  // A record change said in words is an update, never a command (phase B). Rule 10, E96: words that
+  // report someone else's decision are never the asker's, even when the asker holds the same right
+  const said = (raw ?? []).filter((c) => isWordAct(c.act) && c.by !== "other");
   if (!said.length) return { kept: [], note: null };
-  if (!open?.lines.length) return { kept: [], note: { kind: "no_answer" } };
+  if (!open?.lines.length && !open?.gone?.length) return { kept: [], note: { kind: "no_answer" } };
   const kept: SaidCommand[] = [];
   let note: CommandNote | null = null;
   for (const c of said) {
     const act = c.act as WordAct;
     // AC9: only a line of this answer; Atlas cannot name a record, only a line number
     const named = [...new Set(c.lines)].filter((n) => open.lines.some((l) => l.line === n));
+    // P10: a line no longer theirs to read is out of date, and nothing about it is named. Neither Atlas
+    // nor the rule saw its words, so words that fit no line still shown may mean it: out of date too
+    if (!named.length && open.gone?.length) {
+      note ??= { kind: "out_of_date" };
+      continue;
+    }
     // Words that fit two lines of which only one offers the act ("Resolve the feed blocker" beside the
     // blocked #151) mean that one; two that both offer it are never guessed (AC7)
     const offering = named.filter((n) => open.lines.some((l) => l.line === n && l.acts.includes(act)));
@@ -79,11 +92,18 @@ export function commandNoteText(note: CommandNote, names: readonly string[]): st
       return names.length > 1 ? `Did you mean ${either(names)}? Say it again with its name.` : "I'm not sure which one you mean. Say it again with its name.";
     case "not_offered":
       return names.length ? `You can't ${VERB[note.act]} ${either(names)} here.` : OUT_OF_DATE_TEXT;
+    case "out_of_date":
+      return OUT_OF_DATE_TEXT;
   }
 }
 
 /** The model check's fix: a line no longer theirs to read is not a command, and nothing is named. */
 export const OUT_OF_DATE_TEXT = "That answer is out of date. Ask again.";
+
+/** M9, D17: a status reason links an entry on the log, and the chat cannot add one; the inbox's editor can. */
+export function noLinkText(project?: string): string {
+  return `Nothing on ${project ? `${project}'s` : "the"} BRAID log explains ${project ? "its" : "this"} status yet. Add an entry to the log from your inbox, then give the reason.`;
+}
 
 // ---- The rule, without a model (QA8's counterpart for commands) ----
 
@@ -92,12 +112,14 @@ const COMMAND = /^\s*(?:please\s+)?(approve|decline|reject|resolve|clear)\b\s*(.
 const ACT_OF: Record<string, WordAct> = { approve: "approve", decline: "decline", reject: "decline", resolve: "resolve", clear: "resolve" };
 // The reason follows a comma, a colon, a dash or "because"
 const REASON = /\s*(?:[,;:]|\s-\s|\bbecause\b|\bsince\b)\s*(.*)$/i;
-const ALL = /\b(all|all of them|every one|everything|both)\b/i;
+// AC8: only when "all" or "both" is the whole of what it names ("all of them", "both"), never a word in a
+// name ("the all-hands decision") or a count of named lines ("both of the feed blockers")
+const ALL = /^(?:(?:all|both|each|every one|everything)(?: of)?(?: them| these| those)?|them all|them both)$/i;
 const ORDINALS: Record<string, number> = { first: 1, "1st": 1, second: 2, "2nd": 2, third: 3, "3rd": 3, fourth: 4, "4th": 4, fifth: 5, "5th": 5 };
 const ONE = /^(it|this|that|this one|that one|the one)$/i;
-// Words that say which kind of thing, not which one
+// Words that say which kind of thing, or how many, not which one
 const NOT_A_NAME = new Set(
-  "the a an one ones it this that these those please on for of to in from by and my our your risk risks decision decisions blocker blockers issue issues dependency dependencies assumption assumptions entry entries item items line thing".split(
+  "the a an one ones it this that these those them all both each every please on for of to in from by and my our your risk risks decision decisions blocker blockers issue issues dependency dependencies assumption assumptions entry entries item items line thing".split(
     " ",
   ),
 );
@@ -115,10 +137,12 @@ export function ruleCommands(ctx: Pick<CheckContext, "text" | "openAnswer">): Ra
   const [rest, reason] = splitReason(m[2]);
   const lines = ctx.openAnswer?.lines ?? [];
   const offering = lines.filter((l) => l.acts.includes(act)).map((l) => l.line);
-  if (ALL.test(rest)) return offering.length ? offering.map((line) => ({ act, lines: [line], reason })) : [{ act, lines: [], reason }];
   const said = rest.toLowerCase().trim();
+  if (ALL.test(said)) return offering.length ? offering.map((line) => ({ act, lines: [line], reason })) : [{ act, lines: [], reason }];
   const ordinal = said.match(/\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|last)\b/)?.[1];
-  if (ordinal) return [{ act, lines: [ordinal === "last" ? lines.length : ORDINALS[ordinal]], reason }];
+  // Places count every line the answer showed, the ones no longer readable too (their numbers only)
+  const last = Math.max(0, ...lines.map((l) => l.line), ...(ctx.openAnswer?.gone ?? []));
+  if (ordinal) return [{ act, lines: [ordinal === "last" ? last : ORDINALS[ordinal]], reason }];
   if (ONE.test(said)) return [{ act, lines: offering.length === 1 ? offering : [], reason }];
   const names = said.split(/[^\p{L}\p{N}#]+/u).filter((w) => w.length > 2 && !NOT_A_NAME.has(w));
   const fits = names.length ? lines.filter((l) => names.every((w) => `${l.title} ${l.detail ?? ""}`.toLowerCase().includes(w))).map((l) => l.line) : [];

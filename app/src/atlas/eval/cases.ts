@@ -888,4 +888,14 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["resolve:*", "outcome:*"],
   },
+  {
+    id: "b-someone-else-approved-holder",
+    author: "alicia",
+    about: "rule 10: a report of another person's decision is not the asker's, even when the asker could decide it too",
+    answer: PROPOSALS_WAITING,
+    braid: WAITING_ENTRIES,
+    text: "Jodian approved the trend model risk this morning",
+    expect: [],
+    forbid: ["resolve:*", "outcome:*", "new:*"],
+  },
 ];

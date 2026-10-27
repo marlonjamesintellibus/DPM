@@ -112,10 +112,12 @@ export function commandExpired(r: Pick<ChatCommandRecord, "state" | "createdAt">
 /** Rule 10: a command is the asker's own decision, confirmed only by them. */
 const askerGuard = (c: Ctx) => (c.actorId === c.record.askerId ? null : "only the person who asked can confirm or cancel it");
 
-// A decline says why, and a status reason has words; the card stays open until they are given
+// A decline says why, and a status reason has words and links an entry on the log (M9, D17); the card
+// stays open until they are given, so a missing link is never a refusal that spends the line's button
 function needsWords(c: Ctx, input: CommandInput | null | undefined): string | null {
   const said = (input?.reason ?? c.record.input?.reason ?? "").trim();
   if (c.record.act === "give_reason" && !said) return "write the reason first";
+  if (c.record.act === "give_reason" && !(input?.entryIds ?? c.record.input?.entryIds ?? []).length) return "link at least one BRAID entry on the log, or add one to the log first";
   if (c.record.act === "decline" && c.record.proposal === "entry" && !said) return "say why you decline";
   return null;
 }

@@ -122,8 +122,11 @@ export type CheckContext = {
 /** One line of the open answer as Atlas is shown it: what it is, and what the asker may do on it. */
 export type OpenLine = { line: number; title: string; detail: string | null; subject: CommandSubject | null; acts: readonly CommandAct[] };
 
-/** Phase B: the newest answer in the conversation, as given then (its own "as of"). */
-export type OpenAnswer = { captureId: string; asked: string; asOf: string; lines: readonly OpenLine[] };
+/**
+ * Phase B: the newest answer in the conversation, as given then (its own "as of"), with only the lines on
+ * projects the asker may still read. gone: the numbers of the lines left out, and nothing else about them (P10).
+ */
+export type OpenAnswer = { captureId: string; asked: string; asOf: string; lines: readonly OpenLine[]; gone?: readonly number[] };
 
 /** One earlier message in the conversation: the author's own words, what it asked, and what can still be corrected. */
 export type EarlierTurn = {
