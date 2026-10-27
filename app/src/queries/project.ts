@@ -201,6 +201,8 @@ export type ProjectWorkItem = {
   startDate: IsoDate | null;
   dueDate: IsoDate | null;
   blockedNote: string | null;
+  /** The entries on this project's BRAID log it waits on (U1); what holds it up (phase C) reads them here. */
+  blockedLinks: readonly string[];
   milestoneId: string | null;
 };
 
@@ -422,6 +424,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
       startDate: w.startDate,
       dueDate: w.dueDate,
       blockedNote: w.blockedNote,
+      blockedLinks: w.blockedLinks,
       milestoneId: w.milestoneId,
     };
   };

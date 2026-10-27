@@ -2,7 +2,7 @@
 // with edge cases WY1 to WY8. A question goes through the same read as an update, with the recorded
 // fixture, whose rule spots it and finds its subject in the words.
 import { beforeEach, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { createFixtureExtractor } from "../atlas/fixture";
 import { readCapture } from "../commands/atlas";
 import { decideBraidEntry, reportBraidEntry } from "../commands/braid";
@@ -23,13 +23,13 @@ let n = 0;
 const noWait = { retryDelayMs: () => 0 };
 const as = (actorId: string, minutes = 0) => ({ db, now: at(minutes), actorId });
 
-/** Someone asks in the chat at `minutes` after 9:10am (9:40am by default). */
-async function ask(who: string, text: string, minutes = 30) {
+/** Someone asks in the chat at `minutes` after 9:10am (9:40am by default), in a conversation when given. */
+async function ask(who: string, text: string, minutes = 30, conversationId: string | null = null) {
   const ctx = as(who, minutes);
-  const created = await createCapture(ctx, { channel: "app", messageId: `w-${++n}`, kind: "text", text, messageAt: ctx.now, receivedAt: ctx.now, conversationId: null });
+  const created = await createCapture(ctx, { channel: "app", messageId: `w-${++n}`, kind: "text", text, messageAt: ctx.now, receivedAt: ctx.now, conversationId });
   await readCapture(ctx, created.captureId, createFixtureExtractor(), { ...noWait, drafter: null });
   const [row] = await db.select().from(t.captures).where(eq(t.captures.id, created.captureId));
-  return { row, answer: row.answer! };
+  return { row, answer: row.answer!, conversationId: created.conversationId };
 }
 
 /** Kemar saves his 8:58 note at 9:11am, accepting the four that need his OK (story step 4). */
@@ -124,6 +124,16 @@ describe("why a status", () => {
       "#145 Google Trends connector is Done, not Off track: it is done.",
     );
   });
+
+  it("WY2: Not started with part of the plan done says what is done, never that nothing has started", async () => {
+    await db.update(t.milestones).set({ state: "done" }).where(eq(t.milestones.projectId, "forager"));
+    await db.update(t.workItems).set({ state: "to_do" }).where(and(eq(t.workItems.projectId, "forager"), ne(t.workItems.id, "wi-142")));
+    const { answer } = await ask("kemar", "Why is Forager not started?");
+    expect(answer.text).toBe(
+      "Alicia set it Off track on Tue 20 Oct at 9:02am with no reason yet, so it shows the plan's status. Forager 2.0 is Not started: 6 things on its plan are done, and nothing else with a date has started.",
+    );
+    expect(answer.text).not.toContain("nothing on its plan with a date has started");
+  });
 });
 
 describe("what holds something up", () => {
@@ -149,6 +159,17 @@ describe("what holds something up", () => {
     const { answer } = await ask("kemar", "What's holding up #145?");
     expect(answer.text).toBe("Nothing is recorded as holding up #145 Google Trends connector.");
     expect(answer.cards).toEqual([]);
+  });
+
+  it("CV8, CQ14: a follow-up that says none of the four asks what holds the new subject up", async () => {
+    await kemarSaves();
+    const first = await ask("alicia", "What's holding up Forager?");
+    const gq = await ask("alicia", "and on GQ & Academy?", 31, first.conversationId);
+    expect(gq.row.question).toMatchObject({ topic: "why", follows: ["What's holding up Forager?"], subject: { type: "project", id: "gq" } });
+    expect(gq.answer.text).toBe("Nothing is recorded as holding up GQ & Academy.");
+
+    const work = await ask("kemar", "What's holding up #151?", 32);
+    expect((await ask("kemar", "and #152?", 33, work.conversationId)).answer.text).toBe("Nothing is recorded as holding up #152 Store feed connector.");
   });
 });
 
@@ -186,12 +207,43 @@ describe("when something was decided", () => {
     expect(answer.cards[0].href).toBe("/projects/insights?view=table&log=decision");
   });
 
-  it("WY5: no words the viewer may read, no quote: a decision put on the log from the screen has none", async () => {
-    await reportBraidEntry(as("alicia", 5), "forager", { kind: "decision", title: "Drop the TikTok scrape" });
-    const { answer } = await ask("jodian", "When did we decide to drop the TikTok scrape?");
-    expect(answer.cards).toHaveLength(1);
-    expect(answer.cards[0].detail).not.toContain("From:");
-    expect(answer.cards[0].title).toBe("Drop the TikTok scrape");
+  it("WY4: who approved it is a decision too", async () => {
+    await kemarSaves();
+    await andreApproves();
+    expect((await ask("kemar", "Who approved moving the refresh to 6am?")).answer.text).toBe('Andre approved "Move the daily refresh to 6am" on Store Insights on Tue 20 Oct.');
+  });
+
+  it("WY4: a declined decision says who declined it and when", async () => {
+    await kemarSaves();
+    const [entry] = await db.select().from(t.braidEntries).where(and(eq(t.braidEntries.projectId, "insights"), eq(t.braidEntries.kind, "decision")));
+    await decideBraidEntry(as("andre", 5), entry.id, { type: "decline", reason: "The buyers read it at 7am" });
+    const { answer } = await ask("kemar", "When did we decide to move the refresh?");
+    expect(answer.text).toBe('Andre declined "Move the daily refresh to 6am" on Store Insights on Tue 20 Oct.');
+    expect(shown(answer)).toEqual([
+      ["Move the daily refresh to 6am", 'Store Insights: declined by Andre on Tue 20 Oct. From: "Andre and I agreed to move the refresh to 6am"', "Decision · Declined"],
+    ]);
+  });
+
+  it("WY5: a decision whose source is words routed to another project shows no quote, even to someone in both", async () => {
+    await kemarSaves();
+    const { entry } = await reportBraidEntry(as("alicia", 5), "forager", { kind: "decision", title: "Drop the TikTok scrape" });
+    // Kemar's Store Insights sentence (item 11, filed there) behind a Forager decision
+    await db.insert(t.braidSources).values({
+      id: "src-routed-elsewhere",
+      entryId: entry.id,
+      originEntryId: entry.id,
+      personId: "kemar",
+      captureId: "cap-kemar-0858",
+      extractionId: "cap-kemar-0858-11",
+      spanStart: 281,
+      spanEnd: 326,
+      at: at(1),
+    });
+    for (const viewer of ["kemar", "jodian"]) {
+      const { answer } = await ask(viewer, "When did we decide to drop the TikTok scrape?");
+      expect(shown(answer), viewer).toEqual([["Drop the TikTok scrape", "Forager 2.0: proposed by Alicia, not decided yet", "Decision · Waiting for approval"]]);
+      expect(JSON.stringify(answer), viewer).not.toContain("6am");
+    }
   });
 
   it("WY1: Alicia is not on Store Insights, so its decision is never found for her, nor said to exist", async () => {
@@ -207,10 +259,47 @@ describe("why a field changed", () => {
   it("who moved the forecast, when, and the words it came from (rule 9: a Forager member reads them)", async () => {
     await kemarSaves();
     const { answer } = await ask("jodian", "Why was the trend model moved?");
-    expect(answer.text).toBe("Kemar moved the forecast from Fri 23 Oct to Sat 24 Oct on Tue 20 Oct at 9:11am.");
+    expect(answer.text).toBe("Kemar moved the forecast for Trend model from Fri 23 Oct to Sat 24 Oct on Tue 20 Oct at 9:11am.");
     expect(answer.text).not.toContain("Store Insights");
-    expect(answer.cards[0].detail).toMatch(/^Forager 2\.0: Kemar moved the forecast from Fri 23 Oct to Sat 24 Oct, Tue 20 Oct at 9:11am\. From an update: "/);
+    expect(answer.cards[0].detail).toBe('Forager 2.0: Kemar moved the forecast from Fri 23 Oct to Sat 24 Oct, Tue 20 Oct at 9:11am. From an update: "so I think the model slips a day"');
     expect(answer.cards[0].tag).toBe("From an update");
+  });
+
+  it("WY5: a change whose update was routed to another project shows no quote, even to someone in both", async () => {
+    await kemarSaves();
+    // The forecast move pointing at Kemar's Store Insights sentence (item 11), not the words filed into Forager
+    await db.update(t.auditEntries).set({ extractionId: "cap-kemar-0858-11" }).where(and(eq(t.auditEntries.subjectId, "ms-trend"), eq(t.auditEntries.action, "FORECAST_CHANGED")));
+    for (const viewer of ["kemar", "jodian"]) {
+      const { answer } = await ask(viewer, "Why was the trend model moved?");
+      expect(answer.cards[0].detail, viewer).toBe("Forager 2.0: Kemar moved the forecast from Fri 23 Oct to Sat 24 Oct, Tue 20 Oct at 9:11am");
+      expect(JSON.stringify(answer), viewer).not.toContain("6am");
+    }
+  });
+
+  it("WY6: the field asked about: #145's date never moved, though its state did", async () => {
+    await kemarSaves();
+    const date = await ask("kemar", "Why was #145 moved to Friday?");
+    expect(date.answer.text).toBe("No change to the due date of #145 Google Trends connector is recorded; it is due Wed 21 Oct.");
+    expect(date.answer.cards).toEqual([]);
+    expect((await ask("kemar", "Why was #145 marked done?")).answer.text).toBe("Kemar moved #145 Google Trends connector from In progress to Done on Tue 20 Oct at 9:11am.");
+    expect((await ask("kemar", "Why did the trend model slip?")).answer.text).toBe("Kemar moved the forecast for Trend model from Fri 23 Oct to Sat 24 Oct on Tue 20 Oct at 9:11am.");
+  });
+
+  it("an entry's history in plain words", async () => {
+    await reportBraidEntry(as("alicia", 5), "forager", { kind: "risk", title: "Pipeline load risk" });
+    expect((await ask("kemar", "Why is the pipeline load risk open?")).answer.text).toBe("Alicia put Pipeline load risk on the log as Open on Tue 20 Oct at 9:15am.");
+  });
+
+  it("WY1: cancelled work is left out of Atlas's lists (D2) but Kemar can still read it, so it is found", async () => {
+    await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-152"));
+    await db.insert(t.auditEntries).values({ at: at(5), actorType: "person", actorId: "kemar", action: "CANCEL", machine: "work_item", subjectType: "work_item", subjectId: "wi-152", fromState: "to_do", toState: "cancelled" });
+    const cancelled = await ask("kemar", "Why was #152 cancelled?");
+    expect(cancelled.row.question).not.toHaveProperty("subject");
+    expect(cancelled.answer.text).toBe("Kemar moved #152 Store feed connector from To do to Cancelled on Tue 20 Oct at 9:15am.");
+    expect((await ask("kemar", "Why is #152 not started?")).answer.text).toBe("#152 Store feed connector: it is cancelled, so it has no status.");
+    // Still only their own projects: a cancelled item elsewhere is not found
+    await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-208"));
+    expect((await ask("alicia", "Why was #208 cancelled?")).answer.text).toBe(NOT_FOUND);
   });
 
   it("WY6: a rule, not a person: the target passed and the timer marked it missed", async () => {

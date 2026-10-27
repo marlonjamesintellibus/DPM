@@ -7,7 +7,7 @@ import { checkQuestion, ruleQuestion, topicOf } from "./question";
 import { suggestionsAfter } from "./topics";
 import { namesPerson } from "./topics/mentions";
 import { GREETING } from "./topics/small-talk";
-import { whyAsks } from "./topics/why";
+import { whyAsks, whyField, whyWords } from "./topics/why";
 
 const project = (id: string, name: string, aliases: string[] = []): CandidateProject => ({ id, name, aliases, role: "member", records: [], people: [], braid: [] });
 const PROJECTS = [project("forager", "Forager 2.0", ["Forager"]), project("gq", "GQ & Academy", ["GQ", "Academy"])];
@@ -413,6 +413,8 @@ describe("phase C: why, its rule and its subject (WY1, WY8)", () => {
     ["Why was #151 moved to blocked?", { type: "work_item", id: "wi-151", projectId: "forager" }],
     // A work item and its blocker share a title: the record wins
     ["What's holding up store sales feed access?", { type: "work_item", id: "wi-151", projectId: "forager" }],
+    // WY1: unless the words say the entry's kind
+    ["Why is the store sales feed access blocker still open?", { type: "braid_entry", id: "br-feed-blocker", projectId: "forager" }],
     ["When did we decide to drop the TikTok scrape?", { type: "braid_entry", id: "br-tiktok", projectId: "forager" }],
     ["Wha mek Forager off track?", { type: "project", id: "forager", projectId: "forager" }],
   ] as const)("%s is why, about %o", (text, subject) => {
@@ -433,6 +435,13 @@ describe("phase C: why, its rule and its subject (WY1, WY8)", () => {
     expect(topicOf("A wah a hold up di feed?")).toBe("blocked");
     expect(topicOf("What's blocked on Forager?")).toBe("blocked");
     expect(topicOf("Is Forager on track?")).toBe("project_status");
+  });
+
+  it("a why that only ends another question leaves it its own topic", () => {
+    expect(topicOf("Who mentioned me and why?")).toBe("mentions");
+    expect(topicOf("What's due this week, and why?")).toBe("due");
+    expect(topicOf("Why is #151 due this week?")).toBe("why");
+    expect(topicOf("Who approved moving the refresh to 6am?")).toBe("why");
   });
 
   it("WY1: Atlas's subject is kept only when it is in the asker's lists, and only on topic why", () => {
@@ -463,7 +472,30 @@ describe("phase C: which of the four answers the words ask for", () => {
     ["Why did we drop the scrape?", { type: "braid_entry", kind: "decision" }, "decided"],
     ["When did we decide to drop the TikTok scrape?", null, "decided"],
     ["When did we decide on Forager's pilot?", { type: "project" }, "decided"],
+    // WY4: who approved, with no record, is a decision; on a record it is a change
+    ["Who approved moving the refresh to 6am?", null, "decided"],
+    ["Who approved #145 moving to done?", { type: "work_item" }, "changed"],
   ] as const)("%s: %s", (asked, subject, asks) => {
     expect(whyAsks(asked, subject)).toBe(asks);
+  });
+
+  it("CV8, CQ14: a follow-up that says none of the four reads the question it follows", () => {
+    expect(whyWords("and on GQ & Academy?", ["What's holding up Forager?"])).toBe("What's holding up Forager?");
+    expect(whyWords("and #152?", ["What's holding up #151?", "Why is Forager at risk?"])).toBe("What's holding up #151?");
+    expect(whyWords("and why is #152 late?", ["What's holding up #151?"])).toBe("and why is #152 late?");
+    expect(whyWords("and #152?")).toBe("and #152?");
+  });
+
+  it.each([
+    ["Why was #145 moved to Friday?", "date"],
+    ["Why did the trend model slip?", "date"],
+    ["Why was its due date changed?", "date"],
+    ["Why was #145 marked done on Friday?", "state"],
+    ["Why was #151 moved to blocked?", "state"],
+    ["Why was #152 cancelled?", "state"],
+    ["Why did the blocked note on #151 change?", "note"],
+    ["Why was the trend model moved?", null],
+  ] as const)("WY6: %s is about its %s", (asked, field) => {
+    expect(whyField(asked)).toBe(field);
   });
 });
