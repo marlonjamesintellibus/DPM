@@ -391,6 +391,32 @@ export async function answeredByCards(tx: Tx, now: Date, reply: { id: string; au
   }
 }
 
+/** CD54: the words name one of its options, by its whole label or its first word ("Kemar", "Forager"). */
+function namesAnOption(words: string, options: readonly ClarifyOption[]): boolean {
+  const said = ` ${words.toLowerCase().replace(/[^\p{L}\p{N}#.]+/gu, " ")} `;
+  return options.some((o) => [o.label, o.label.split(/\s+/)[0]].some((w) => w.length >= 3 && said.includes(` ${w.toLowerCase()} `)));
+}
+
+/**
+ * CD54 (W4-D11): the asker passed over a question that asks which, and asked again in their own words, on the same
+ * topic and naming one of its options ("What is Kemar Brown working on?"). The new message is answered, or asks
+ * again itself, so the old question closes quietly ("You asked again") rather than wait for its timer.
+ */
+export async function closeAskedAgain(tx: Tx, now: Date, reply: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "text">, asked: AskedQuestion): Promise<void> {
+  if (!reply.conversationId) return;
+  const open = await tx
+    .select()
+    .from(t.clarifications)
+    .where(and(eq(t.clarifications.authorId, reply.authorId), eq(t.clarifications.about, "question"), eq(t.clarifications.state, "asked"), eq(t.clarifications.conversationId, reply.conversationId), ne(t.clarifications.captureId, reply.id)));
+  for (const row of open) {
+    if (row.question?.asked.topic !== asked.topic || !namesAnOption(reply.text, row.options)) continue;
+    const r = applyClarificationEvent(recordOf(row), { type: "CLOSE", because: "asked_again" }, { actorId: reply.authorId, now });
+    if (!r.outcome.ok) continue;
+    await persist(tx, now, row, r.record);
+    await auditMove(tx, now, r.record, r.outcome, { actorType: "person", actorId: reply.authorId }, { by: reply.id });
+  }
+}
+
 /** Timer clarify_expiry (rule 5, CD2): an item's question goes to its review; a line's closes. */
 export function runClarificationTimers(ctx: { db: Db; now: Date }): Promise<{ expired: string[] }> {
   return ctx.db.transaction(async (tx) => {

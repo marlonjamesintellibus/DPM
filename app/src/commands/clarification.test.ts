@@ -657,6 +657,20 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
     expect((await turn("alicia", first.conversationId, first.captureId, 1)).clarification?.outcome).toBe("Got it: Kemar Smith.");
   });
 
+  it("CD54: asked again in her own words, naming one of them, the open question closes quietly and the new message is answered", async () => {
+    const first = await twoKemars();
+    // Another topic, or the same topic about someone else, leaves it asking
+    await say("alicia", "What is Forager?", 1, first.conversationId);
+    await say("alicia", "What is Andre working on?", 2, first.conversationId);
+    expect((await question(first.captureId)).state).toBe("asked");
+    const again = await say("alicia", "What is Kemar Smith working on?", 3, first.conversationId);
+    expect(await question(first.captureId)).toMatchObject({ state: "closed", endedBy: "asked_again", chosen: null });
+    expect((await capture(again.captureId)).answer!.text).toBe("Kemar Smith has nothing open on Forager 2.0.");
+    expect((await turn("alicia", first.conversationId, first.captureId, 4)).clarification?.outcome).toBe("You asked again.");
+    // Its timer has nothing left to close
+    expect((await runClarificationTimers({ db, now: at(3 * 60) })).expired).not.toContain(`clr-${first.captureId}`);
+  });
+
   it("CL2: 'the second one' counts over the options shown; a first name both have is a new message, and the question stays", async () => {
     const first = await twoKemars();
     await say("alicia", "Kemar", 1, first.conversationId, reads([]));
@@ -761,7 +775,8 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
 
   it("CL4: two questions open in a conversation: a typed answer goes to the newest, and the older one's buttons still work", async () => {
     const older = await twoKemars();
-    const newer = await say("alicia", "What is Kemar working on now?", 1, older.conversationId);
+    // A different question (WY8), so asking it does not close the older one (CD54)
+    const newer = await say("alicia", "Why is Kemar behind?", 1, older.conversationId);
     expect((await question(newer.captureId)).state).toBe("asked");
     await say("alicia", "Smith", 2, older.conversationId, noModel);
     expect((await question(newer.captureId)).state).toBe("resolved");

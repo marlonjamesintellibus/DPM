@@ -59,7 +59,7 @@ import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, today
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
-import { answeredByCards, answerInWords, askIfUnsure, askWhich, closeWithCapture, closeWithItem, handToReview } from "./clarification";
+import { answeredByCards, answerInWords, askIfUnsure, askWhich, closeAskedAgain, closeWithCapture, closeWithItem, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
 import { coverOnLeave, offerIn } from "./cover";
 import { syncLeaveImpact } from "./leave";
@@ -551,6 +551,8 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     // unless the message already asks about an item or a line (CD23); the answer comes once they choose
     const which = read?.which && !clarified ? await askWhich(tx, ctx.now, row, question!, read.which) : null;
     const found = which ? null : (read?.answer ?? null);
+    // CD54: asked again in their own words, so a question still asking which about the same thing closes
+    if (question && (found || which)) await closeAskedAgain(tx, ctx.now, row, question);
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
     const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
     if (question) await tx.update(t.captures).set({ question, answer }).where(eq(t.captures.id, captureId));

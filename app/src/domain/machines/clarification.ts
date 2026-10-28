@@ -51,10 +51,10 @@ export type ClarifyOption = { id: string; label: string; projectId: string | nul
 export const MAX_OPTIONS = 3;
 
 /**
- * How it left asked when it was not answered: the review was opened, its timer fired, the capture ended, or a
- * later correction withdrew the item it asks about (CV10).
+ * How it left asked when it was not answered: the review was opened, its timer fired, the capture ended, a
+ * later correction withdrew the item it asks about (CV10), or the asker asked again in their own words (CD54).
  */
-export type EndedBy = "review" | "timer" | "capture" | "corrected";
+export type EndedBy = "review" | "timer" | "capture" | "corrected" | "asked_again";
 
 export type ClarificationRecord = {
   id: string;
@@ -90,8 +90,8 @@ export type ClarificationEvent =
   | { type: "REVIEW_OPENED" }
   /** Timer clarify_expiry: config.clarifyExpiryHours after it was asked (CD2). */
   | { type: "EXPIRE" }
-  /** The capture is discarded or expires (CL6), or a correction withdrew its item (CV10, rule 5). */
-  | { type: "CLOSE"; because?: "capture" | "corrected" };
+  /** The capture is discarded or expires (CL6), a correction withdrew its item (CV10, rule 5), or CD54 the asker asked again. */
+  | { type: "CLOSE"; because?: "capture" | "corrected" | "asked_again" };
 
 type Ctx = {
   record: ClarificationRecord;
@@ -221,6 +221,7 @@ export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about
     case "closed":
       // CD50: a question's timer closes it quietly, with nothing done and nobody told
       if (r.endedBy === "timer") return r.about === "question" ? "Nothing was chosen; ask me again." : "Nothing was done; ask again.";
+      if (r.endedBy === "asked_again") return "You asked again.";
       return r.endedBy === "corrected" ? "You corrected this in a later message." : "Closed with the update.";
     default:
       return null;
