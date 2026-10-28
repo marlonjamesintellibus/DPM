@@ -97,6 +97,14 @@ export const config = {
   // seconds counts as DRAFT_FAILED, so a draft always reaches ready (the plain template at worst)
   draftExpiryHours: 24,
   draftModelSeconds: 30,
+
+  // Phase O, M34 (conversational plan, section 23): what a meeting note says about an attendee waits this many
+  // working days for them to confirm it, counting only days they are in (MT12: the timer pauses during leave),
+  // then expires unfiled. MT7, CD18: a second note of the same meeting is one on the same project whose message
+  // time is within this many minutes of the first's, from someone else; it is offered to merge (section 23
+  // names no window, so two hours, a long meeting's length)
+  attributedExpiryDays: 3,
+  meetingMatchMinutes: 120,
 } as const;
 
 export type Config = typeof config;

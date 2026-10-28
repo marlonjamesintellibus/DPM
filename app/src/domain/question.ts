@@ -53,7 +53,10 @@ export function checkQuestion(
   if (raw.topic === "draft" && !kind) return null;
   if (kind) {
     const asked = ctx.text.trim();
-    const named = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : (namedProject(asked, ctx.projects)?.id ?? null);
+    // Phase O, MT9: a call brief's project comes from the words only; DPM finds it by customer or contact, and asks
+    // which when two fit, so Atlas's guess between two projects never picks one
+    const atlasSaid = kind !== "prep" && raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
+    const named = atlasSaid ?? namedProject(asked, ctx.projects)?.id ?? null;
     return { asked, topic: "draft", projectId: named, draft: kind };
   }
   const said = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";

@@ -12,8 +12,10 @@
 // M28), and a promise is due at the end of its day, checked in on from config.commitmentCheckInTime on a
 // working day its owner is in, and lapses unanswered (phase E, M22), and a draft whose model has not answered
 // after config.draftModelSeconds fails that try and is written again, or nobody used for
-// config.draftExpiryHours expires (phase G, M25). Each timer is one command and safe to run again; a
-// reminder never decides anything.
+// config.draftExpiryHours expires (phase G, M25), and a meeting note whose attendees were never confirmed
+// expires, an Ask about an attendee reaches them back from leave, is withdrawn when they leave its project, or
+// expires after config.attributedExpiryDays working days they were in (phase O, M33 and M34). Each timer is one
+// command and safe to run again; a reminder never decides anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
 import type { Extractor } from "./atlas/extractor";
@@ -25,6 +27,7 @@ import { runChatCommandTimers } from "./commands/chat-command";
 import { runClarificationTimers } from "./commands/clarification";
 import { runCommitmentTimers } from "./commands/commitment";
 import { runDraftTimers, writeDraft } from "./commands/draft";
+import { runMeetingTimers } from "./commands/meeting";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
@@ -45,7 +48,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   const db = opts.db ?? (await getDb());
   const now = opts.now ?? appNow;
   const run: TimerRun = { failed: [], read: [] };
-  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runClarificationTimers, runVocabularyTimers, runSignalTimers, runCommitmentTimers]) {
+  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runClarificationTimers, runVocabularyTimers, runSignalTimers, runCommitmentTimers, runMeetingTimers]) {
     // One failing timer does not stop the others; it runs again next minute
     try {
       await timer({ db, now: now() });

@@ -141,6 +141,13 @@
       "when": 1793191335440,
       "tag": "0019_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793192344743,
+      "tag": "0020_meetings",
+      "breakpoints": true
     }
   ]
 }

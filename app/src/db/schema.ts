@@ -32,6 +32,8 @@ import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { ConversationState } from "../domain/machines/conversation";
 import type { EvalCandidateDetail, EvalCandidateState, EvalCause } from "../domain/machines/eval-candidate";
 import type { KindRequestState } from "../domain/machines/kind-request";
+import type { MeetingMode, MeetingState } from "../domain/machines/meeting";
+import type { AlsoFrom, AttributedKind, AttributedState } from "../domain/machines/attributed-item";
 import type { OwnerAskKind, OwnerAskState } from "../domain/machines/owner-ask";
 import type { EarlierDismissal, SignalMemory, SignalStage, SignalState } from "../domain/machines/signal";
 import type { SignalFacts, SignalRule, SignalSubjectType } from "../domain/signals";
@@ -837,6 +839,65 @@ export const commitments = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("commitments_owner_state").on(t.ownerId, t.state), index("commitments_link").on(t.linkId)],
+);
+
+// ---- Meetings (phase O, M33 and M34) ----
+
+/**
+ * M33. A meeting note: the recorder's capture (private to them, M1), marked as a meeting with a project, and who
+ * was there. It is read only once the recorder confirmed the attendees and that they knew it was recorded, or
+ * said it is their own notes (CD17). One per capture.
+ */
+export const meetings = pgTable(
+  "meetings",
+  {
+    id: text("id").primaryKey(),
+    captureId: text("capture_id").notNull().unique().references(() => captures.id),
+    recorderId: text("recorder_id").notNull().references(() => people.id),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    attendees: text("attendees").array().notNull().default(sql`'{}'::text[]`),
+    mode: text("mode").$type<MeetingMode>(),
+    /** MT7, CD18: the earlier note of the same meeting it merged with. */
+    mergedWith: text("merged_with"),
+    state: text("state").$type<MeetingState>().notNull(),
+    receivedOn: day("received_on").notNull(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("meetings_project").on(t.projectId, t.state)],
+);
+
+/**
+ * M34. What a meeting note says about an attendee (their work, their promise), asked of them; it is saved as
+ * theirs only when they confirm it (rule 10). The person sees only the quote (rule 9). Once only by id: a second
+ * confirm changes nothing (rule 6).
+ */
+export const attributedItems = pgTable(
+  "attributed_items",
+  {
+    id: text("id").primaryKey(),
+    meetingId: text("meeting_id").notNull().references(() => meetings.id),
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    recorderId: text("recorder_id").notNull().references(() => people.id),
+    personId: text("person_id").references(() => people.id),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    kind: text("kind").$type<AttributedKind>().notNull(),
+    draft: jsonb("draft").$type<ExtractedItemDraft>().notNull(),
+    quote: text("quote").notNull(),
+    state: text("state").$type<AttributedState>().notNull(),
+    wording: text("wording"),
+    dueOn: day("due_on"),
+    askedOn: day("asked_on"),
+    decidedOn: day("decided_on"),
+    reason: text("reason"),
+    /** MT7: later notes of the same meeting that said it too. */
+    alsoFrom: jsonb("also_from").$type<AlsoFrom[]>().notNull().default([]),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("attributed_items_person").on(t.personId, t.state), index("attributed_items_meeting").on(t.meetingId)],
 );
 
 // ---- Notices (D15) ----

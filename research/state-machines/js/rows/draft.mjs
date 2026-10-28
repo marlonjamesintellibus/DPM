@@ -38,6 +38,7 @@ export const PLANTS = [
   { spec: 'Draft', setting: 'bug: facts are read for the project, not the asker', model: Draft({ ...FIXED, Bug: 'notPerViewer' }), expectFail: ['OwnerMaySeeEveryFact'] },
   { spec: 'Draft', setting: "bug: quotes from others' updates are given to Atlas", model: Draft({ ...FIXED, Bug: 'quotesGiven' }), expectFail: ['NoQuotes', 'ClientDraftOnlyClientFacts'] },
   { spec: 'Draft', setting: 'bug: a client status is built from the weekly facts', model: Draft({ ...FIXED, Bug: 'clientGetsInternals' }), expectFail: ['ClientDraftOnlyClientFacts'] },
+  { spec: 'Draft', setting: "bug: a call brief's Copy skips the client view check (phase O)", model: Draft({ ...FIXED, Bug: 'prepNotChecked' }), expectFail: ['EveryReaderMaySeeEveryFact'] },
   { spec: 'Draft', setting: 'bug: the reader check uses the view when drafted', model: Draft({ ...FIXED, Bug: 'readerCheckAtDraft' }), expectFail: ['EveryReaderMaySeeEveryFact'] },
   // Atlas posting by itself also skips the reader check
   { spec: 'Draft', setting: 'bug: Atlas posts a ready standup by itself', model: Draft({ ...FIXED, Bug: 'autoPost' }), expectFail: ['OutwardIsConfirmed', 'EveryReaderMaySeeEveryFact'] },

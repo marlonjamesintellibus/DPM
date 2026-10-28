@@ -77,6 +77,12 @@ export type RawProposal = {
   promise?: string | null;
   /** Phase E: the author's live commitment the same promise matches (CM5), or the one it says is done (CM6). */
   commitmentId?: string | null;
+  /**
+   * Phase O, a meeting note's commitment: who made the promise (an attendee's id, or the author's), and false in
+   * speakerSure when the note does not say who (MT2). Read only for a meeting note; ignored otherwise.
+   */
+  speakerId?: string | null;
+  speakerSure?: boolean | null;
   /** The exact words, found in the capture text by check 2. */
   quote: string;
   confidence: Confidence;
@@ -144,7 +150,16 @@ export type CheckContext = {
    * Atlas is told it reads a standup's answers.
    */
   standup?: { quoteIn: readonly SourceSpan[] };
+  /**
+   * Phase O: the message is a meeting note the author recorded (M33), with who was there as they confirmed it.
+   * mode own: the attendees were not told, so it is read as the author's own notes only (CD17). inDpm: false
+   * for an outside contact (Kyle at Sprouts IT), whose promise is a dependency (MT1).
+   */
+  meeting?: MeetingContext;
 };
+
+/** Phase O: a meeting note's project and attendees, as the read is given them. */
+export type MeetingContext = { projectId: string; mode: "meeting" | "own"; attendees: readonly { personId: string; name: string; inDpm: boolean }[] };
 
 /** Phase E: a live commitment as Atlas is shown it: what, when, its state and the record it names. */
 export type LiveCommitment = { id: string; what: string; dueOn: IsoDate; state: string; linkId: string | null };

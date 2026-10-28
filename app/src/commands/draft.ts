@@ -15,11 +15,12 @@ import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import * as t from "../db/schema";
 import { config } from "../domain/config";
-import { clientCopyProblem, plainDraft, type DraftKind } from "../domain/drafts";
+import { CLIENT_SAFE, clientCopyProblem, plainDraft, prepWho, type DraftKind } from "../domain/drafts";
 import type { Moved } from "../domain/machine";
-import { isOwnChat } from "../domain/machines/clarification";
+import { askable, isOwnChat } from "../domain/machines/clarification";
 import { applyDraftEvent, DRAFT_FINAL, draftEndText, newDraft, type DraftEvent, type DraftRecord, type DraftState } from "../domain/machines/draft";
-import { clientStatusFacts, draftClosed, draftFacts, draftOf, knownNames, mayDraft } from "../queries/drafts";
+import { clientSafeNow, draftClosed, draftFacts, draftOf, knownNames, mayDraft, prepProjects } from "../queries/drafts";
+import { askWhichProject } from "./clarification";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, type CommandCtx } from "./core";
 
 type Row = typeof t.drafts.$inferSelect;
@@ -67,9 +68,21 @@ async function persist(tx: Tx, now: Date, row: Row, r: DraftRecord): Promise<voi
  * message's, so a read delivered twice drafts once (rule 6). Returns the draft's id, or null when none was made
  * (the answer says why).
  */
-export async function requestDraft(tx: Tx, now: Date, capture: { id: string; authorId: string; conversationId: string | null; channel: "app" | "atlas" }, kind: DraftKind, projectId: string | null): Promise<string | null> {
+export async function requestDraft(tx: Tx, now: Date, capture: { id: string; authorId: string; conversationId: string | null; channel: "app" | "atlas"; text: string }, kind: DraftKind, named: string | null): Promise<string | null> {
   const [conversation] = capture.conversationId ? await tx.select({ atlasChatId: t.conversations.atlasChatId }).from(t.conversations).where(eq(t.conversations.id, capture.conversationId)) : [];
   if (!isOwnChat(capture.channel, conversation?.atlasChatId)) return null;
+  let projectId = named;
+  // Phase O, MT9: a call brief finds its project from who the call is with; with 2 or 3 of the asker's own that
+  // fit, DPM asks which (M21) and drafts once they say
+  if (kind === "prep" && !projectId) {
+    const who = prepWho(capture.text);
+    const fits = who ? await prepProjects(tx, capture.authorId, who) : [];
+    if (fits.length === 1) projectId = fits[0].id;
+    else {
+      if (askable(fits.length)) await askWhichProject(tx, now, capture, fits);
+      return null;
+    }
+  }
   if (kind !== "standup" && !projectId) return null;
   const right = await mayDraft(tx, capture.authorId, kind, projectId);
   const facts = right ? await draftFacts(tx, capture.authorId, kind, projectId, now) : null;
@@ -178,12 +191,14 @@ export function copyDraft(ctx: CommandCtx, draftId: string, text?: string): Prom
     const row = await edited(tx, ctx.now, await ownDraft(tx, ctx.actorId, draftId), ctx.actorId, text);
     const right = await mayDraft(tx, ctx.actorId, row.kind, row.projectId);
     let readersOk = true;
-    if (row.kind === "client") {
-      const now_ = row.projectId ? await clientStatusFacts(tx, ctx.actorId, row.projectId, ctx.now) : null;
+    // Phase O: a call brief is client-safe as a client status is, and checked against the client view now the same way
+    const clientSafe = CLIENT_SAFE.includes(row.kind);
+    if (clientSafe) {
+      const now_ = row.projectId ? await clientSafeNow(tx, ctx.actorId, row.kind, row.projectId, ctx.now) : null;
       readersOk = !!now_ && clientCopyProblem(row.facts, now_.facts, row.text ?? "", now_.hidden) === null;
     }
     const r = applyDraftEvent(draftOf(row), { type: "COPY" }, { actorId: ctx.actorId, now: ctx.now, right, readersOk });
-    if (!r.outcome.ok) throw new CommandRefused(right && row.kind === "client" && !readersOk ? CLIENT_VIEW_CHANGED : r.outcome.reason);
+    if (!r.outcome.ok) throw new CommandRefused(right && clientSafe && !readersOk ? CLIENT_VIEW_CHANGED : r.outcome.reason);
     await persist(tx, ctx.now, row, r.record);
     await auditMove(tx, ctx.now, r.record, r.outcome, { actorType: "person", actorId: ctx.actorId });
     return { text: r.record.text ?? "" };

@@ -8,8 +8,9 @@ import type { Topic } from "./topic";
 export const draft = {
   id: "draft",
   // A first look only: draftKindOf reads the whole message and says which draft (domain/drafts.ts)
-  rule: /^(?:(?:please|pls|atlas|ok|okay|hi|hey)[\s,]+)?(?:(?:can|could|would) you |pls |please )?(?:draft|write(?: up)?|prep(?:are)?|put together)\b/,
-  prompt: 'only "Draft my standup", "Draft a client status for Forager" or "Draft the weekly summary for Forager": write a draft for them to edit and copy, with nothing else said',
+  rule: /^(?:(?:please|pls|atlas|ok|okay|hi|hey)[\s,]+)?(?:(?:can|could|would) you |pls |please )?(?:draft|write(?: up)?|prep(?:are)?|put together|brief)\b/,
+  // Phase O: "Prep me for the Sprouts call" is a draft too, a call brief (domain/drafts.ts prepWho)
+  prompt: 'only "Draft my standup", "Draft a client status for Forager", "Draft the weekly summary for Forager" or "Prep me for the Sprouts call": write a draft for them to edit and copy, with nothing else said',
   suggest: [],
   worded: false,
 } as const satisfies Topic;

@@ -68,6 +68,7 @@ import { answerCheckInInWords, applyCommitmentsAtSave } from "./commitment";
 import { answerStandupInWords, startStandup } from "./standup";
 import { requestDraft } from "./draft";
 import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
+import { endHeldItems, heldCount, meetingGate, meetingReadFailed, settleMeeting, splitMeetingNote } from "./meeting";
 import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
 
 type CaptureRow = typeof t.captures.$inferSelect;
@@ -335,9 +336,11 @@ export function beginRead(ctx: CommandCtx, captureId: string): Promise<ReadStart
   return runCommand(ctx, async (tx) => {
     const { row, record } = await captureOf(tx, captureId);
     const waiting = record.state === "retry_wait" || record.state === "transcribe_wait";
-    const r = moveCapture(record, { type: waiting ? "RETRY" : "START" });
+    // Phase O, M33: a meeting note is read only once its attendees are confirmed
+    const r = moveCapture(record, { type: waiting ? "RETRY" : "START" }, { meeting: await meetingGate(tx, captureId) });
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { tries: r.record.tries, ...(r.record.failedStep ? { failedStep: r.record.failedStep } : {}) });
+    if (r.record.state === "failed") await meetingReadFailed(tx, ctx.now, captureId);
     return {
       state: r.record.state,
       tries: r.record.tries,
@@ -450,13 +453,13 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     const atlas = atlasActor;
     const moves: Moved<CaptureState>[] = [];
     let record = received;
-    const step = (event: CaptureEvent) => {
-      const r = moveCapture(record, event);
+    const step = (event: CaptureEvent, context: CaptureContext = {}) => {
+      const r = moveCapture(record, event, context);
       record = r.record;
       moves.push(r.outcome);
     };
     if (record.state === "received") {
-      step({ type: "START" });
+      step({ type: "START" }, { meeting: await meetingGate(tx, captureId) });
       if ((record.state as CaptureState) === "transcribing") step({ type: "TRANSCRIBED", confidence: row.transcriptConfidence ?? "medium" });
     }
 
@@ -464,13 +467,18 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     const checked = runChecks(proposals, checkCtx);
     const { kept, more } = capProposals(checked.items);
     const capped = checked.dropped.filter((d) => d.check === "cap").length;
-    const items = kept.map((draft) => startItem(`${captureId}-${draft.ordinal}`, draft, { maxConfidence: confidenceCap(record) }));
-    const asked = checkQuestion(meta?.question, checkCtx);
+    // Phase O, M33 split: a meeting note's items about an attendee go to them (M34); the recorder's own stay in
+    // their review, decisions included. MT11: the cap counts the whole note, as for any long update (E7)
+    const split = checkCtx.meeting ? await splitMeetingNote(tx, ctx.now, row, kept, checkCtx) : null;
+    const items = (split?.own ?? kept).map((draft) => startItem(`${captureId}-${draft.ordinal}`, draft, { maxConfidence: confidenceCap(record) }));
+    // Phase O: a meeting note asks Atlas nothing: a question said in the meeting was asked of the people there
+    const asked = checkCtx.meeting ? null : checkQuestion(meta?.question, checkCtx);
     // Phase B: a reply that decides something asked Atlas for something, so it is answered (by cards or a
     // note), never "Nothing in this one changes a project"
-    const commands = checkCommands(meta?.commands, checkCtx.openAnswer);
+    const commands = checkCommands(checkCtx.meeting ? null : meta?.commands, checkCtx.openAnswer);
     const decides = commands.kept.length > 0 || commands.note !== null;
-    step({ type: "PROPOSALS_READY", count: items.length + more + capped, asked: asked !== null || decides });
+    // MT2: an item held for who said it keeps the review open, so the recorder can say
+    step({ type: "PROPOSALS_READY", count: items.length + (split?.held ?? 0) + more + capped, asked: asked !== null || decides });
 
     if (items.length) {
       await tx.insert(t.extractions).values(
@@ -496,6 +504,8 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
       );
     }
     await persistCapture(tx, captureId, row.version, record, ctx.now);
+    // Phase O: a note whose every part went to its attendees ends its review here; its meeting waits on them
+    if (split) await settleMeeting(tx, ctx.now, captureId);
     // CV10: a correction withdraws the earlier unsaved item it replaces; the checks kept only such links
     for (const item of items.filter((i) => i.draft.replaces)) {
       const replaced = item.draft.replaces!;
@@ -582,7 +592,9 @@ async function actOn(tx: Tx, now: Date, capture: CaptureRow, asked: AskedQuestio
   }
   if (asked.topic === "draft" && asked.draft) {
     const id = await requestDraft(tx, now, capture, asked.draft, asked.projectId);
-    return { ...asked, made: id ? [id] : [] };
+    // Phase O, MT9: or the question asking which project a call brief is for (M21), so the reply says it waits on that
+    const [which] = id ? [] : await tx.select({ id: t.clarifications.id }).from(t.clarifications).where(and(eq(t.clarifications.captureId, capture.id), eq(t.clarifications.about, "prep")));
+    return { ...asked, made: id ? [id] : which ? [which.id] : [] };
   }
   if (asked.topic === "undo") {
     const r = await undoInTx(tx, now, authorId, { commandId: `undo-${captureId}` });
@@ -598,6 +610,47 @@ async function actOn(tx: Tx, now: Date, capture: CaptureRow, asked: AskedQuestio
     }
   }
   return asked;
+}
+
+// ---- Phase O: what M33 and M34 do to the recorder's capture ----
+
+/** M33 received --EXPIRE--> expired: the attendees were never confirmed, so the note is never read (rule 5). */
+export async function expireMeetingCapture(tx: Tx, now: Date, captureId: string): Promise<void> {
+  const { row, record } = await captureOf(tx, captureId);
+  const r = moveCapture(record, { type: "EXPIRE" }, { meeting: "expired" });
+  await persistCapture(tx, captureId, row.version, r.record, now);
+  await auditCapture(tx, now, captureId, r.outcome, { type: "rule", id: null }, { meeting: true });
+}
+
+/**
+ * M34 held --FIX_SPEAKER--> mine: an item the recorder says was theirs, or about someone who is not asked (MT1),
+ * joins their review as any item Atlas proposed (M3), in its place in the message. Only while it is open.
+ */
+export async function addItemToReview(tx: Tx, now: Date, captureId: string, draft: ExtractedItemDraft): Promise<ExtractedItem> {
+  const { record } = await captureOf(tx, captureId);
+  if (record.state !== "proposed" && record.state !== "reviewing") throw new CommandRefused(`the update is ${record.state}`);
+  const item = startItem(`${captureId}-${draft.ordinal}`, draft, { maxConfidence: confidenceCap(record) });
+  await tx.insert(t.extractions).values({
+    id: item.id,
+    captureId,
+    ordinal: draft.ordinal,
+    kind: draft.kind,
+    scope: draft.scope,
+    projectId: draft.projectId,
+    routing: draft.routing,
+    draft,
+    state: item.state,
+    confidence: item.confidence,
+    value: item.value,
+    saw: item.saw,
+    conflict: item.conflict,
+    withdrawn: item.withdrawn,
+    touched: item.touched,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await audit(tx, now, { actorType: "atlas", action: "MARK", machine: "extracted_item", subjectType: "extraction", subjectId: item.id, fromState: "proposed", toState: item.state, captureId, extractionId: item.id, detail: { mark: draft.mark, confidence: item.confidence, projectId: draft.projectId, routing: draft.routing, from: "meeting" } });
+  return item;
 }
 
 // ---- openReview and discardCapture (M2) ----
@@ -624,6 +677,9 @@ export function discardCapture(ctx: CommandCtx, captureId: string): Promise<{ wi
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     await auditCapture(tx, ctx.now, captureId, r.outcome, by);
     await closeWithCapture(tx, ctx.now, captureId, { actorType: "person", actorId: ctx.actorId });
+    // Phase O, MT2: what waited for who said it is withdrawn with the note; nothing of it reached anyone
+    await endHeldItems(tx, ctx.now, captureId, "discarded", ctx.actorId);
+    await settleMeeting(tx, ctx.now, captureId);
     await syncReminder(tx, ctx.now, row.authorId, captureId, false, true);
     return { withdrawn };
   });
@@ -1396,7 +1452,7 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       for (const w of routing.withdrawn) withdraw(open.find((i) => i.draft.ordinal === w.ordinal)!.id, "left_project", { projectId: w.projectId });
     }
 
-    const saving = moveCapture(record, { type: "SAVE" }, { authorActive: await isActive(tx, authorId), items, isMember });
+    const saving = moveCapture(record, { type: "SAVE" }, { authorActive: await isActive(tx, authorId), items, isMember, held: await heldCount(tx, captureId) });
     const captureMoves: Moved<CaptureState>[] = [saving.outcome];
 
     // D2, E26: an update to cancelled work is withdrawn, never a conflict: there is nothing to resolve
@@ -1549,6 +1605,8 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
     }
     receipt.told.push(...(await toldBy(tx, evaluations, authorId)));
     await writeReceipt(tx, ctx.now, captureId, authorId, receipt);
+    // Phase O, M33: the recorder's part of a meeting note is saved; its meeting is done once its attendees answer
+    await settleMeeting(tx, ctx.now, captureId);
     return {
       outcome: "saved",
       applied: settled.filter((i) => i.state === "applied" && loaded.find((l) => l.id === i.id)?.state !== "applied").map((i) => i.id),
@@ -1658,9 +1716,11 @@ export function runCaptureTimers(ctx: { db: Db; now: Date }): Promise<{ reminded
       if (r.outcome.event === "EXPIRE") {
         await withdrawAll(tx, ctx.now, row.id, "expired", rule);
         await closeWithCapture(tx, ctx.now, row.id, { actorType: "rule", actorId: null }); // CL6
+        await endHeldItems(tx, ctx.now, row.id, "expired", null); // phase O, MT2
       }
       await persistCapture(tx, row.id, row.version, r.record, ctx.now);
       await auditCapture(tx, ctx.now, row.id, r.outcome, rule);
+      if (r.outcome.event === "EXPIRE") await settleMeeting(tx, ctx.now, row.id);
       await syncReminder(tx, ctx.now, row.authorId, row.id, r.outcome.event === "REMIND");
       (r.outcome.event === "REMIND" ? reminded : expired).push(row.id);
     }

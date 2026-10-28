@@ -14,6 +14,7 @@ import { DRAFT_LABEL, type DraftFact, type DraftFacts, type DraftKind, type Draf
 import { ON_LOG_STATES } from "../domain/machines/braid-entry";
 import { DRAFT_FINAL, draftEndText, type DraftBy, type DraftRecord, type DraftState } from "../domain/machines/draft";
 import { withArticle } from "../domain/shared";
+import { namesPerson, namesRecord } from "../domain/names";
 import type { SettableStatus } from "../domain/status/status";
 import { dayDate, milestonesOf, projectsAsked, workOf, workTitle } from "./answers/shared";
 import { clockTime, ENTRY_STATE_LABEL, firstName, getProject, KIND_LABEL, peopleById, projectReader, STATUS_LABEL, todayIn, WORK_STATE_LABEL, type ProjectView } from "./project";
@@ -51,6 +52,8 @@ export async function mayDraft(conn: Conn, viewerId: string, kind: DraftKind, pr
   if (kind === "standup") return true;
   if (!projectId) return false;
   const { world, mayRead } = await projectReader(conn, viewerId);
+  // Phase O, MT10: a call brief is any member's, from their own read of the project, client-safe all the same
+  if (kind === "prep") return mayRead(projectId);
   return mayRead(projectId) && world.memberships.some((m) => m.personId === viewerId && m.projectId === projectId && m.state === "member" && (m.role === "pm" || m.role === "lead"));
 }
 
@@ -284,13 +287,86 @@ export async function weeklyFacts(conn: Conn, viewerId: string, projectId: strin
   };
 }
 
+// ---- A call brief (phase O) ----
+
+/**
+ * Phase O, MT9: the projects a call brief could be about, among those the asker reads (P10): one whose name or
+ * alias the words say, else those whose customer they name ("Sprouts"), else those with a contact they name
+ * ("Kyle"). Never a project the asker cannot read, so two that fit can only be two of theirs.
+ */
+export async function prepProjects(conn: Conn, viewerId: string, who: string): Promise<{ id: string; name: string }[]> {
+  const { mayRead } = await projectReader(conn, viewerId);
+  const projects = (await conn.select().from(t.projects).orderBy(t.projects.name)).filter((p) => mayRead(p.id));
+  const said = who.trim().toLowerCase();
+  const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const named = projects.filter((p) => [p.name, ...p.aliases].some((n) => n.toLowerCase() === said || words(said).join(" ") === words(n).join(" ")));
+  if (named.length) return named.map((p) => ({ id: p.id, name: p.name }));
+  const customers = projects.filter((p) => p.customer && words(said).some((w) => words(p.customer!).includes(w)));
+  if (customers.length) return customers.map((p) => ({ id: p.id, name: p.name }));
+  const ids = projects.map((p) => p.id);
+  const contacts = ids.length
+    ? await conn.select({ projectId: t.projectContacts.projectId, name: t.people.name }).from(t.projectContacts).innerJoin(t.people, eq(t.people.id, t.projectContacts.personId)).where(inArray(t.projectContacts.projectId, ids))
+    : [];
+  const byContact = new Set(contacts.filter((c) => namesPerson(who, c.name, false)).map((c) => c.projectId));
+  return projects.filter((p) => byContact.has(p.id)).map((p) => ({ id: p.id, name: p.name }));
+}
+
+/**
+ * Phase O: a brief for a call with the client (M25's prep), client-safe by default (rule 8): what the client view
+ * shows (the releases by their target date, CD49), the displayed status only once its PM shared the reason, and
+ * the open dependencies on the client's people (its contacts, or the customer by name) with the dates they were
+ * expected. Two hooks wait: chases waiting on the client come with phase M (outbound asks, not built), and recent
+ * decisions only once the client view shows decisions (KB A7.2 shows releases and dates only). Read through the
+ * asker's own view of the project (P10, MT10); `hidden` are the names it must not carry, as for a client status.
+ */
+export async function prepFacts(conn: Conn, viewerId: string, projectId: string, now: Date): Promise<{ facts: DraftFacts; hidden: string[] } | null> {
+  const client = await clientStatusFacts(conn, viewerId, projectId, now);
+  const v = await getProject(conn, viewerId, projectId, now);
+  if (!client || !v.found) return null;
+  const contacts = await conn.select({ name: t.people.name }).from(t.projectContacts).innerJoin(t.people, eq(t.people.id, t.projectContacts.personId)).where(eq(t.projectContacts.projectId, projectId));
+  const customer = v.project.customer;
+  const onClient = (title: string) => contacts.some((c) => namesPerson(title, c.name, false)) || (!!customer && new RegExp(`\\b${customer.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(title));
+  const waiting = v.braid.entries.filter((e) => e.kind === "dependency" && e.onLog && !["met", "late", "closed", "resolved"].includes(e.state) && onClient(e.title));
+  const facts: DraftFact[] = waiting.map((e) => ({ key: `dep:${e.id}`, name: e.title, text: `${e.title}${e.expectedOn ? `, expected ${dayDate(e.expectedOn)}` : ""}` }));
+  const given = new Set(waiting.map((e) => e.title));
+  const [releases, status] = client.facts.sections;
+  return {
+    facts: {
+      kind: "prep",
+      heading: `${v.project.name}: brief for your call${customer ? ` with ${customer}` : ""}, ${dayDate(todayIn(now))}`,
+      sections: [
+        releases,
+        status,
+        { title: `Waiting on ${customer ?? "the client"}`, facts, none: "Nothing waits on them now." },
+        // Phase M's hook: chases waiting on the client's people; and decisions, once the client view shows them
+        { title: "Chases", facts: await chasesWaitingOn(conn, viewerId, projectId), none: null },
+      ],
+      asOf: now.toISOString(),
+      projectIds: [projectId],
+    },
+    // A name inside a dependency it gives ("Store sales feed access" in "... from Sprouts IT") says nothing new
+    hidden: client.hidden.filter((n) => !given.has(n) && ![...given].some((g) => namesRecord(g, n))),
+  };
+}
+
+/** Phase M's hook (outbound asks, M32, not built yet): what the asker chased the client for, still waiting. None until then. */
+export async function chasesWaitingOn(_conn: Conn, _viewerId: string, _projectId: string): Promise<DraftFact[]> {
+  return [];
+}
+
 // ---- Any kind ----
 
 /** The facts for a draft, read for the asker now; null when the project is not theirs to read (P10). */
 export async function draftFacts(conn: Conn, viewerId: string, kind: DraftKind, projectId: string | null, now: Date): Promise<DraftFacts | null> {
   if (kind === "standup") return standupFacts(conn, viewerId, projectId, now);
   if (!projectId) return null;
+  if (kind === "prep") return (await prepFacts(conn, viewerId, projectId, now))?.facts ?? null;
   return kind === "client" ? ((await clientStatusFacts(conn, viewerId, projectId, now))?.facts ?? null) : weeklyFacts(conn, viewerId, projectId, now);
+}
+
+/** Rule 8, DR4: a client-safe draft read again now, with the names it must not carry; null when not readable now. */
+export async function clientSafeNow(conn: Conn, viewerId: string, kind: DraftKind, projectId: string, now: Date): Promise<{ facts: DraftFacts; hidden: string[] } | null> {
+  return kind === "prep" ? prepFacts(conn, viewerId, projectId, now) : clientStatusFacts(conn, viewerId, projectId, now);
 }
 
 /**

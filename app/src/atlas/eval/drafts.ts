@@ -24,6 +24,8 @@ export const DRAFT_EVAL_CASES: DraftEvalCase[] = [
   { id: "g-write-standup-forager", about: "a standup for one project says nothing of the others", author: "kemar", kind: "standup", projectId: "forager", forbidWords: ["Store Insights", "#208"] },
   { id: "g-write-client", about: "DR4 a client status holds only the releases", author: "alicia", kind: "client", projectId: "forager", forbidWords: ["Trend model", "Data sources", "#151", "Kemar", "blocker"] },
   { id: "g-write-weekly", about: "a quiet week is said as it is, with nothing added", author: "alicia", kind: "weekly", projectId: "forager" },
+  // Phase O: a call brief holds only what the client may see, and what waits on the client's people (MT10: Jodian, a member)
+  { id: "o-write-prep", about: "a call brief: releases and what waits on Sprouts, nothing internal", author: "kemar", kind: "prep", projectId: "forager", forbidWords: ["Trend model", "Data sources", "#151", "pipeline", "blocker"] },
 ];
 
 /** The facts a case's draft is written from, and the names the check knows for its author, as the app reads them. */

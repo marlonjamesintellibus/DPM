@@ -20,7 +20,7 @@
 // A try's number only rises, across a Refresh too, so a reply to a try from before the Refresh can never be
 // taken for the new one (rule 6).
 import { config } from "../config";
-import { DRAFT_LABEL, draftProblem, draftTemplate, type DraftFacts, type DraftKind, type KnownNames } from "../drafts";
+import { CLIENT_SAFE, DRAFT_LABEL, draftProblem, draftTemplate, type DraftFacts, type DraftKind, type KnownNames } from "../drafts";
 import { defineMachine, transition, type Outcome } from "../machine";
 
 export const DRAFT_STATES = ["none", "requested", "ready", "copied", "posted", "discarded", "expired"] as const;
@@ -122,7 +122,8 @@ const failure = (c: Ctx, e: Extract<DraftEvent, { type: "DRAFT_FAILED" }>) =>
 // Rule 4: the right is checked again when Copy runs, as for Refresh: a PM made a member since cannot copy a
 // client status. Rule 8, ReaderCheck: a client status goes to the client, so the client view is checked now;
 // the others are copied by their owner for themselves
-const copyGuard = (c: Ctx) => rightGuard(c) ?? (c.record.kind !== "client" || c.readersOk === true ? null : "it says something the client view does not show now");
+// Phase O: a call brief is client-safe as a client status is (CLIENT_SAFE), so its copy is checked the same way
+const copyGuard = (c: Ctx) => rightGuard(c) ?? (!CLIENT_SAFE.includes(c.record.kind) || c.readersOk === true ? null : "it says something the client view does not show now");
 const postGuard = (c: Ctx) =>
   rightGuard(c) ?? (c.confirmed === true ? null : "a post is sent only once you confirm it") ?? (c.readersOk === true ? null : "someone there may not see everything in it");
 

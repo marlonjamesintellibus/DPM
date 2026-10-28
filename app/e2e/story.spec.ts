@@ -589,3 +589,56 @@ test("Phase E. Kemar's promise from Friday was due Monday: Tuesday morning's che
   await page.goto("/?view=inbox");
   await expect(checkIn).toHaveCount(0);
 });
+
+test("Phase O. Kemar's meeting note: he says Alicia was there and knew it was recorded; her promise is hers to confirm, and she confirms it", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  await page.getByLabel("Meeting note").check();
+  await page.getByRole("combobox", { name: "Meeting project" }).selectOption({ label: "Forager 2.0" });
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Forager sync with Alicia. Alicia: I'll send Kyle the buyer list Friday.");
+  await box.press("Enter");
+  // M33: nothing is read until he says who was there and that they knew (MT4)
+  const who = page.getByRole("group", { name: "Who was there" });
+  await expect(who).toContainText("Meeting note for Forager 2.0. Who was there?");
+  await expect(who.getByRole("button", { name: "Read it for everyone there" })).toBeDisabled();
+  await who.getByLabel("Alicia Campbell").check();
+  await who.getByLabel("Everyone there knew it was recorded").check();
+  await who.getByRole("button", { name: "Read it for everyone there" }).click();
+  // Her promise goes to her; nothing of hers is in his review (rule 10)
+  await expect(page.getByText("Got it. Each part is with the person it is about.")).toBeVisible();
+  const parts = page.getByRole("list", { name: "About the people there" });
+  await expect(parts).toContainText("Alicia: Send Kyle the buyer list, by Fri 23 Oct");
+  await expect(parts).toContainText("Sent to Alicia to confirm.");
+
+  // M34: an inbox item and a notice in her chat (no phase F yet); she sees only the words that fed it (rule 9)
+  await viewAs("alicia", "/?view=chat");
+  await expect(page.getByText("Kemar's meeting note on Forager 2.0 says this is yours: Send Kyle the buyer list, by Fri 23 Oct.", { exact: false })).toBeVisible();
+  await page.goto("/?view=inbox");
+  await page.getByRole("link", { name: /Kemar's meeting note: Send Kyle the buyer list, by Fri 23 Oct/ }).first().click();
+  await expect(page.getByText("“Alicia: I'll send Kyle the buyer list Friday.”")).toBeVisible();
+  await expect(page.getByText("Forager sync with Alicia")).toHaveCount(0);
+  await page.getByRole("group", { name: "Is this right?" }).getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByText("Saved as yours.")).toBeVisible();
+  // It is her own promise now, private to her (CD3)
+  await viewAs("alicia", "/?view=chat&c=new&ask=1");
+  await box.fill("What did I promise?");
+  await box.press("Enter");
+  await expect(page.getByRole("link", { name: /Send Kyle the buyer list.*Due Fri 23 Oct/ })).toBeVisible();
+  // Kemar's note says she confirmed it
+  await viewAs("kemar", "/?view=chat");
+  await expect(page.getByRole("list", { name: "About the people there" }).first()).toContainText("Alicia confirmed it.");
+});
+
+test("Phase O, MT9. Kemar's Sprouts call could be about two of his projects: Atlas asks which, then drafts a client-safe brief", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Prep me for the Sprouts call");
+  await box.press("Enter");
+  await expect(page.getByText("Which project is the call about: Forager 2.0 or Store Insights?")).toBeVisible();
+  await page.getByRole("group", { name: "Choose one" }).getByRole("button", { name: "Forager 2.0" }).click();
+  await expect(page.getByText("Got it: Forager 2.0. Your brief follows.")).toBeVisible();
+  // Only what the client may see (rule 8): the releases by their target date, never internal milestones or work
+  const brief = page.getByRole("textbox", { name: "Your call brief" });
+  await expect(brief).toHaveValue(/Buyer pilot · Release 1: planned Fri 30 Oct/);
+  await expect(brief).not.toHaveValue(/Trend model|#151|Data sources/);
+});

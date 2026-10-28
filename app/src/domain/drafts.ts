@@ -8,11 +8,15 @@
 import { saysHealthOrJudgement } from "./atlas-checks/checks";
 import { namesPerson, namesRecord } from "./names";
 
-export const DRAFT_KINDS = ["standup", "client", "weekly"] as const;
+/** Phase O adds prep: "Prep me for the Sprouts call", a brief for a call with the client, client-safe by default. */
+export const DRAFT_KINDS = ["standup", "client", "weekly", "prep"] as const;
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
 /** What the chat calls each kind. */
-export const DRAFT_LABEL: Record<DraftKind, string> = { standup: "standup", client: "client status", weekly: "weekly summary" };
+export const DRAFT_LABEL: Record<DraftKind, string> = { standup: "standup", client: "client status", weekly: "weekly summary", prep: "call brief" };
+
+/** Phase O: the kinds that hold only what the client may see (rule 8), checked against the client view at Copy (DR4). */
+export const CLIENT_SAFE: readonly DraftKind[] = ["client", "prep"];
 
 /**
  * One fact, as DPM words it in the template. `key` says what it is about, so a copy can compare it with the
@@ -86,7 +90,9 @@ const STARTS = new Set(
     "added done finished fixed got handed kept made moved opened picked raised reported sent set spent started updated wrapped " +
     "note plan summary update updates week work milestones releases waiting " +
     // A note's own lines: "Subject: ...", "Hi team,", "Best regards,"
-    "subject dear team everyone all best kind regards cheers thank warm"
+    "subject dear team everyone all best kind regards cheers thank warm " +
+    // Phase O: a call brief speaks to its reader ("Ask where this stands", "Confirm the dates")
+    "ask check confirm remind mention share expect follow flag raise tell let"
   )
     .split(" ")
     // "Two releases are planned": the number check reads a count
@@ -293,7 +299,7 @@ const DATE = /\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) \d{1,2} (?:Jan|Feb|Mar|Apr|May|J
 // The verb must say draft or write: "Let's do my standup" is phase J's standup, never a draft
 const VERB = String.raw`(?:(?:please|pls|atlas|ok|okay|hi|hey)[\s,]+)?(?:(?:can|could|would) you |pls |please )?(?:draft|write(?: up)?|prep(?:are)?|put together)(?: me| us)?`;
 const DET = String.raw`(?: (?:a|an|the|my|our|mi|di|today'?s))?`;
-const KIND_WORDS: Record<DraftKind, string> = {
+const KIND_WORDS: Record<Exclude<DraftKind, "prep">, string> = {
   standup: String.raw`stand-?up(?: update| note| message)?`,
   client: String.raw`(?:client(?:'s)? (?:status|update|report)(?: update| report| note| email| message)?|status (?:update |report |note |email )?for (?:the )?client)`,
   weekly: String.raw`(?:weekly (?:summary|update|report|status)(?: update| report)?|(?:this )?week'?s (?:summary|update|report)|summary (?:of|for) (?:the|this) week)`,
@@ -304,6 +310,26 @@ const REST = String.raw`(?:\s+(?:for|on|about|of|in|pon|fi)\s+(?:[^.!?\n]|\.(?=\
 /** The kind of draft a whole message asks for, or null when it is not a request for a draft. */
 export function draftKindOf(text: string): DraftKind | null {
   const t = text.trim().toLowerCase().replace(/[‘’]/g, "'");
-  for (const kind of DRAFT_KINDS) if (new RegExp(`^${VERB}${DET} ${KIND_WORDS[kind]}${REST}$`).test(t)) return kind;
-  return null;
+  for (const kind of ["standup", "client", "weekly"] as const) if (new RegExp(`^${VERB}${DET} ${KIND_WORDS[kind]}${REST}$`).test(t)) return kind;
+  return prepWho(text) !== null ? "prep" : null;
+}
+
+// Phase O: "Prep me for the Sprouts call", "Brief me before my meeting with Kyle", "Get me ready for the Forager
+// sync". The words must say a call or meeting: "Prep me for tomorrow" is not a brief
+const CALL = String.raw`(?:call|meeting|sync|catch-?up|check-?in|review|demo)`;
+const PREP_LEAD = String.raw`^(?:(?:please|pls|atlas|ok|okay|hi|hey)[\s,]+)?(?:(?:can|could|would) you |pls |please )?(?:prep(?:are)?|brief|get)(?: me| us)?(?: ready)? (?:for|before|ahead of)`;
+const PREP_TAIL = String.raw`(?:,? (?:please|pls|atlas))?[\s.!?]*$`;
+const PREP_THE = new RegExp(`${PREP_LEAD} (?:the |my |our |a |this |today'?s |tomorrow'?s )?(.{2,60}?) ${CALL}(?: (?:today|tomorrow|this (?:morning|afternoon)))?${PREP_TAIL}`, "i");
+const PREP_WITH = new RegExp(`${PREP_LEAD} (?:the |my |our |a |this |today'?s |tomorrow'?s )?${CALL} (?:with|for|about|on) (.{2,60}?)${PREP_TAIL}`, "i");
+
+/**
+ * Phase O: who or what a request for a call brief names ("Sprouts", "Kyle", "Forager"), as said, or null when the
+ * whole message is not such a request. DPM finds the project from it (the customer, a contact or the project's
+ * name), never Atlas.
+ */
+export function prepWho(text: string): string | null {
+  const t = text.trim().replace(/[‘’]/g, "'");
+  const m = PREP_WITH.exec(t) ?? PREP_THE.exec(t);
+  const who = m?.[1]?.trim().replace(/^(?:the|my|our)\s+/i, "");
+  return who ? who : null;
 }

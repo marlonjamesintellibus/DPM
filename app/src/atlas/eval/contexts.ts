@@ -19,7 +19,16 @@ export async function evalContexts(conn: Conn): Promise<Record<EvalAuthor, Check
 export function caseContext(c: EvalCase, contexts: Record<EvalAuthor, CheckContext>): CheckContext {
   const base = contexts[c.author ?? "kemar"];
   const projects = c.braid ? base.projects.map((p) => ({ ...p, braid: [...p.braid, ...c.braid!.filter((b) => b.projectId === p.id).map(({ projectId: _, ...e }) => e)] })) : base.projects;
-  return { ...base, projects, text: c.text, ...(c.earlier ? { earlier: c.earlier } : {}), ...(c.answer ? { openAnswer: c.answer } : {}), ...(c.standup ? { standup: { quoteIn: answerSpans(c.text) } } : {}) };
+  return {
+    ...base,
+    projects,
+    text: c.text,
+    ...(c.earlier ? { earlier: c.earlier } : {}),
+    ...(c.answer ? { openAnswer: c.answer } : {}),
+    ...(c.standup ? { standup: { quoteIn: answerSpans(c.text) } } : {}),
+    // Phase O: a meeting note is read with who was there (M33)
+    ...(c.meeting ? { meeting: c.meeting } : {}),
+  };
 }
 
 /** Phase J: a standup case's answers, each line after its "Atlas:" question, as check 2 looks for quotes in them. */

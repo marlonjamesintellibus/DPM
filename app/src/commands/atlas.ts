@@ -4,7 +4,7 @@
 // send a new voice note (D1) or to try again or type it (E18). Phase J: a reply while the author's
 // standup asks is its answer, and a standup's composed answers are read as taps DPM proposes itself
 // and typed answers Atlas reads, each with its question (M28).
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { wordAnswer } from "../atlas/answer";
 import { AtlasReadFailed, type Drafter, type Extraction, type Extractor, type ReadFailure } from "../atlas/extractor";
 import { atlasTranscript, TranscribeFailed, type Transcriber } from "../atlas/transcriber";
@@ -72,10 +72,18 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
       const readAttempt = started.voice ? 1 : attempt;
       // Phase J, M28: a standup's answers are the taps DPM reads and the typed answers Atlas reads with their questions
       const standup = await composedRead(ctx.db, captureId);
-      if (!standup) {
+      // Phase O: a meeting note is never an answer to a question or a standup; it is read on its own (M33)
+      const meeting = context.meeting !== undefined;
+      if (!standup && !meeting) {
         // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them. First, so
         // a standup asking in the same chat does not take "#152" as its own answer (SU4)
-        if (await readAsAnswer(at(), captureId, readAttempt)) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
+        if (await readAsAnswer(at(), captureId, readAttempt)) {
+          // Phase O, MT9: "Forager" said to "Which project is the call about?" asks for that brief; it is written now
+          const [brief] = await ctx.db.select({ captureId: t.clarifications.captureId }).from(t.clarifications).where(and(eq(t.clarifications.answeredBy, captureId), eq(t.clarifications.about, "prep")));
+          const briefId = brief ? await draftOfCapture(ctx.db, brief.captureId) : null;
+          if (briefId) await writeDraft(ctx.db, () => at().now, briefId, drafter);
+          return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
+        }
         // Phase J: a reply while the author's standup asks is its answer, unless it is their own question or
         // command (SU4); the answers are read once it is composed
         const typed = await readAsStandupAnswer(at(), captureId, readAttempt, context);
@@ -136,14 +144,18 @@ function tapsOnly(standup: StandupRead): Extraction {
   return { proposals: standup.tapped, malformed: [], model: "standup", usage: null, question: null, commands: [] };
 }
 
-/** Captures waiting for a read: never started, or waiting to try again. A worker runs readCapture on each. */
+/**
+ * Captures waiting for a read: never started, or waiting to try again. A worker runs readCapture on each. Phase O,
+ * M33: a meeting note waits until its recorder confirmed the attendees, or said it is their own notes.
+ */
 export async function capturesToRead(db: CommandCtx["db"]): Promise<string[]> {
   const rows = await db
-    .select({ id: t.captures.id })
+    .select({ id: t.captures.id, meeting: t.meetings.state })
     .from(t.captures)
+    .leftJoin(t.meetings, eq(t.meetings.captureId, t.captures.id))
     .where(inArray(t.captures.state, ["received", "transcribe_wait", "retry_wait"]))
     .orderBy(t.captures.receivedAt);
-  return rows.map((r) => r.id);
+  return rows.filter((r) => r.meeting !== "received" && r.meeting !== "expired").map((r) => r.id);
 }
 
 /**

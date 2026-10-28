@@ -11,7 +11,9 @@ import { getDb } from "@/db/client";
 import type { Answer } from "@/domain/question";
 import { suggestionsAfter } from "@/domain/topics";
 import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
-import { clockTime, leadsAProject } from "@/queries/project";
+import { clockTime, leadsAProject, projectReader } from "@/queries/project";
+import * as t from "@/db/schema";
+import { MeetingAttendees } from "./meeting";
 import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
@@ -24,6 +26,8 @@ import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
 
 const READING = new Set(["received", "transcribing", "transcribe_wait", "reading", "retry_wait"]);
+/** Phase O, M33: a meeting note waits for its recorder to say who was there; Atlas is not reading it yet. */
+const waitsForAttendees = (c: ChatCapture) => c.meeting?.state === "received" || c.meeting?.state === "expired";
 /** Section 17: "Still working on it…" after this long; a reply still being worded after WORDING_MS shows DPM's own words (MF4). */
 const STILL_WORKING_MS = 8_000;
 const WORDING_MS = 30_000;
@@ -43,9 +47,12 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
   if (thread && !thread.found) notFound();
   const open = thread?.found ? thread : null;
   // Phase G: and while Atlas writes a draft (its model timer ends that, rule 5)
-  const reading = !!open?.turns.some((c) => READING.has(c.state) || wording(c.answer, at) || c.draft?.state === "requested");
+  const reading = !!open?.turns.some((c) => (READING.has(c.state) && !waitsForAttendees(c)) || wording(c.answer, at) || c.draft?.state === "requested");
   // W3-D12: the lead questions (phase N) are named only to a PM or Lead
   const lead = !open && (await leadsAProject(db, viewerId));
+  // Phase O: a meeting note is marked with one of the viewer's projects (P10)
+  const reader = await projectReader(db, viewerId);
+  const meetingProjects = (await db.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).orderBy(t.projects.name)).filter((p) => reader.mayRead(p.id));
   return (
     <div className="flex min-h-0 flex-1">
       <RefreshWhile active={reading} />
@@ -72,7 +79,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <ChatSession key={open?.conversation.id ?? "new"} focus={ask} conversationId={open?.conversation.id ?? null}>
+        <ChatSession key={open?.conversation.id ?? "new"} focus={ask} conversationId={open?.conversation.id ?? null} meetingProjects={meetingProjects}>
           {open ? (
             <>
               {open.conversation.state === "archived" && <p className="type-caption text-fg-3">This conversation is archived. Sending a message brings it back.</p>}
@@ -250,11 +257,21 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
     ...(capture.personal ? [`You · ${capture.personal} personal ${capture.personal === 1 ? "item" : "items"}, only you see ${capture.personal === 1 ? "it" : "them"}`] : []),
     ...(capture.notFiled ? [`${capture.notFiled} not filed in any project`] : []),
   ];
-  const line = waiting && capture.needsOk ? capture.line.replace(/;/, ", and") : capture.line;
-  const thinking = reading || wording(capture.answer, at);
+  // Phase O: a meeting note whose every part went to the people it is about has nothing of the recorder's to review
+  const line = capture.meeting?.parts.length && capture.state === "nothing_to_update" ? "Got it. Each part is with the person it is about." : waiting && capture.needsOk ? capture.line.replace(/;/, ", and") : capture.line;
+  const thinking = (reading && !waitsForAttendees(capture)) || wording(capture.answer, at);
   const since = at.getTime() - capture.receivedAt.getTime();
   // Phase J: a standup's answers were put together by DPM; they are not a message the person typed
   const yours = capture.fromStandup ? null : <YourMessage capture={capture} />;
+  // Phase O, M33: a meeting note waits for who was there, or ended without being read
+  if (waitsForAttendees(capture)) {
+    return (
+      <>
+        {yours}
+        <MeetingBlock capture={capture} />
+      </>
+    );
+  }
   if (thinking) {
     // Section 17: never "Reading your update": a message may be a question
     return (
@@ -328,7 +345,50 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
       <CommandsBlock capture={capture} />
       <ClarifyBlock capture={capture} />
       <StandupBlock capture={capture} />
+      <MeetingBlock capture={capture} />
     </>
+  );
+}
+
+/**
+ * Phase O, M33: under a meeting note, for its recorder only. While it waits: who was there, and whether they knew
+ * it was recorded (MT4), with an earlier note of the same meeting offered to merge (MT7). Once read: each part
+ * about someone and how it stands (M34): sent to them, held for who said it (MT2), confirmed, not right, expired.
+ */
+function MeetingBlock({ capture }: { capture: ChatCapture }) {
+  const m = capture.meeting;
+  if (!m) return null;
+  if (m.state === "received") {
+    return (
+      <AtlasLine>
+        {m.project ? (
+          <MeetingAttendees id={m.id} project={m.project.name} candidates={m.candidates} chosen={m.attendees.map((a) => a.id)} merge={m.merge} />
+        ) : (
+          <span className="type-caption text-fg-3">You can no longer read this meeting&rsquo;s project, so it will not be read.</span>
+        )}
+      </AtlasLine>
+    );
+  }
+  if (m.ended) return <AtlasLine>{m.ended}</AtlasLine>;
+  const said = m.mode === "own" ? "Read as your own notes only: nothing goes to anyone else." : m.attendees.length ? `Read for ${m.attendees.map((a) => a.name.split(" ")[0]).join(", ")}.` : null;
+  if (!said && !m.parts.length) return null;
+  return (
+    <AtlasLine>
+      {said && <span className="type-caption text-fg-3">Meeting note{m.project ? ` · ${m.project.name}` : ""} · {said}</span>}
+      {m.parts.length > 0 && (
+        <ul aria-label="About the people there" className="overflow-hidden rounded-panel border border-line">
+          {m.parts.map((p) => (
+            <li key={p.id} className="flex flex-col gap-0.5 border-b border-line px-3 py-2.5 last:border-b-0">
+              <span className="type-body text-fg-1">
+                {p.who ? `${p.who}: ` : ""}
+                {p.title}
+              </span>
+              <span className="type-caption text-fg-3">{p.outcome}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </AtlasLine>
   );
 }
 

@@ -15,6 +15,8 @@ export function itemKey(i: ExtractedItemDraft): string {
   // (CM5) names the commitment it moves, and one said done (CM6) the commitment it ends
   if (i.commitment) {
     const c = i.commitment;
+    // Phase O: a meeting note's promise by someone else, or by someone Atlas could not tell (MT2)
+    if (i.speaker) return `promise-by:${i.speaker.sure && i.speaker.personId ? i.speaker.personId : "unsure"}@${c.dueOn}`;
     if (c.act === "done") return `promise-done:${c.commitmentId}`;
     return c.commitmentId ? `same-promise:${c.commitmentId}@${c.dueOn}` : `promise:${c.link?.id ?? "none"}@${c.dueOn}`;
   }

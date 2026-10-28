@@ -1,4 +1,4 @@
-// Phase G, M25: Atlas words a draft (a standup, a client status or a weekly summary) from the facts DPM read
+// Phase G, M25: Atlas words a draft (a standup, a client status, a weekly summary, or phase O's call brief) from the facts DPM read
 // for its asker, and nothing else (rule 2). What it writes goes through the facts check in the machine's guard
 // (draftProblem): a record, date, number or name it was not given refuses the draft, which is tried again, and
 // then DPM's plain template is used (DR2). Phase R, CD20: standard English.
@@ -8,6 +8,8 @@ const FOR: Record<DraftKind, string> = {
   standup: "their standup: a short note to their team about what they did since their last standup, what they are on now and what is blocked. Write it as them, in the first person",
   client: "a status note to the client. Write it as the project team to the client. Only what the facts say: the releases and their planned dates, and the status only when it is given",
   weekly: "a weekly summary of the project for the team and its leads. Write it as the project's PM",
+  // Phase O: what they can say on a call with the client, only what the client may see (rule 8)
+  prep: "a short brief to read before their call with the client: what they can tell the client, and what waits on the client. Write it to them, as short notes. Only what the facts say: the releases and their planned dates, the status only when it is given, and what waits on the client's people",
 };
 
 export function draftSystemPrompt(kind: DraftKind): string {

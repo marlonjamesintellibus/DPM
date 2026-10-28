@@ -66,8 +66,12 @@ export async function createOwnerAsks(tx: Tx, now: Date, capture: { id: string; 
 }
 
 /** The asked field as it is today; null for new work. */
-async function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
-  const target = r.target;
+function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
+  return fieldNow(tx, r.target);
+}
+
+/** A record's field as it is today, as an update compares it (phase O's M34 reads it too); null for none. */
+export async function fieldNow(tx: Tx, target: { type: string; id: string; field: string } | null): Promise<string | null> {
   if (!target) return null;
   switch (target.type) {
     case "work_item": {
@@ -83,6 +87,7 @@ async function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
       return row?.state ?? null;
     }
   }
+  return null;
 }
 
 async function loadAsk(tx: Tx, askId: string) {

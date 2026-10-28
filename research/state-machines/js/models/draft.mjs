@@ -25,12 +25,17 @@
 // Found in the build's review (28 Oct 2026), CopyRight and Rounds off: Alicia, made a member of Forager
 // after asking, can still copy her client status for the client (rule 4); and a late reply to try 1,
 // sent before a Refresh, is taken as the refreshed draft's try 1 (rule 6).
+// Phase O (section 17) adds a fourth kind, a call brief ("Prep me for the Sprouts call"): any member of the
+// project asks for it (MT10), it holds only the client view as a client status does, it is copied only (never
+// posted), and its Copy is checked against the client view now as a client status's is (rule 8, DR4).
 import { clone, product } from '../lib.mjs';
 
 const TRIES = 2;
 const PEOPLE = ['kemar', 'alicia'];
-const KINDS = ['standup', 'client', 'weekly'];
-const DEST = { standup: 'group', client: 'client', weekly: 'group' };
+const KINDS = ['standup', 'client', 'weekly', 'prep'];
+const DEST = { standup: 'group', client: 'client', weekly: 'group', prep: 'client' };
+// The kinds that hold only the client view, checked against it at Copy
+const CLIENT_SAFE = ['client', 'prep'];
 
 // The arrows the plan draws (none -> requested is the request itself; requested -> requested is a retry)
 const DRAWN = ['none>requested', 'requested>requested', 'requested>ready', 'ready>ready', 'ready>copied', 'ready>posted', 'ready>discarded', 'ready>expired'];
@@ -41,7 +46,7 @@ const ABOUT = { ms: 'forager', reason: 'forager', risk: 'forager', w151: 'forage
 // Who owns each record a draft talks about (rule 10)
 const OWNER = { w151: 'kemar', ms: 'alicia' };
 // The facts each kind of draft is built from, before the per-viewer filter
-const WANTS = { standup: { kemar: ['w151', 'si'], alicia: ['ms'] }, client: ['ms', 'reason'], weekly: ['ms', 'reason', 'risk', 'w151'] };
+const WANTS = { standup: { kemar: ['w151', 'si'], alicia: ['ms'] }, client: ['ms', 'reason'], weekly: ['ms', 'reason', 'risk', 'w151'], prep: ['ms', 'reason', 'risk'] };
 
 const role = (s, p, person) => s.roles[p][person] ?? null;
 const lead = (s, person) => ['pm', 'lead'].includes(role(s, 'forager', person));
@@ -53,10 +58,10 @@ const readerSees = (s, reader, f) => (reader === 'client' ? clientView(s).includ
 const allSee = (s, dest, facts) => facts.every((f) => readers(s, dest).every((r) => readerSees(s, r, f)));
 const subset = (a, b) => a.every((x) => b.includes(x));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-// DR3: a client status or weekly summary is for the PM or a Lead only
-const mayAsk = (s, person, kind) => kind === 'standup' || lead(s, person);
-// The right to post there: a member of the group for a standup, the PM or a Lead otherwise
-const mayPost = (s, person, kind) => (kind === 'standup' ? !!role(s, 'forager', person) : lead(s, person));
+// DR3: a client status or weekly summary is for the PM or a Lead only; MT10: a call brief is any member's
+const mayAsk = (s, person, kind) => kind === 'standup' || (kind === 'prep' ? !!role(s, 'forager', person) : lead(s, person));
+// The right to post there: a member of the group for a standup, the PM or a Lead otherwise; a call brief is never posted
+const mayPost = (s, person, kind) => (kind === 'prep' ? false : kind === 'standup' ? !!role(s, 'forager', person) : lead(s, person));
 
 export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh = 'undrawn', CopyRight = false, Rounds = false, Bug = null } = {}) {
   // by is set only on a step that changes a record or posts, so the properties can ask who did it
@@ -67,6 +72,7 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
   const given = (s, owner, kind) => {
     let fs = kind === 'standup' ? WANTS.standup[owner] : WANTS[kind];
     if (kind === 'client') fs = Bug === 'clientGetsInternals' ? WANTS.weekly : fs.filter((f) => clientView(s).includes(f));
+    if (kind === 'prep') fs = fs.filter((f) => clientView(s).includes(f));
     if (Bug !== 'notPerViewer') fs = fs.filter((f) => reads(s, owner, f));
     if (Bug === 'quotesGiven') fs = [...fs, 'quote'];
     return [...new Set(fs)].sort();
@@ -170,7 +176,7 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
         if (s.d.st !== 'ready' && !(Bug === 'copyAfterExpiry' && s.d.st === 'expired')) return [];
         // CopyRight: the right is read when Copy runs (rule 4); refused otherwise, the draft unchanged
         if (CopyRight && !mayAsk(s, s.d.owner, s.d.kind)) return [];
-        if (s.d.kind === 'client' && !readersOk(s)) return [];
+        if ((s.d.kind === 'client' || (s.d.kind === 'prep' && Bug !== 'prepNotChecked')) && !readersOk(s)) return [];
         return set(s, { st: 'copied' });
       },
     },
@@ -274,12 +280,12 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
       CopiedOnlyWithRight: (s, t) => t.d.st !== 'copied' || s.d.st === 'copied' || mayAsk(t, t.d.owner, t.d.kind),
       // P10: every fact given to Atlas is one the asker may read when the job runs
       OwnerMaySeeEveryFact: (s, t) => same(t.d.given, s.d.given) || t.d.given.every((f) => reads(t, t.d.owner, f)),
-      // DR4: a client status is built from the client view only, never BRAID internals
-      ClientDraftOnlyClientFacts: (s, t) => t.d.kind !== 'client' || same(t.d.given, s.d.given) || subset(t.d.given, clientView(t)),
+      // DR4: a client status (and phase O's call brief) is built from the client view only, never BRAID internals
+      ClientDraftOnlyClientFacts: (s, t) => !CLIENT_SAFE.includes(t.d.kind) || same(t.d.given, s.d.given) || subset(t.d.given, clientView(t)),
       // Rule 8: what goes out (a post, a client status copied for the client) holds only facts every reader there may see now
       EveryReaderMaySeeEveryFact: (s, t) =>
         (t.d.posts === s.d.posts || allSee(t, DEST[t.d.kind], t.d.facts)) &&
-        (t.d.st !== 'copied' || s.d.st === 'copied' || t.d.kind !== 'client' || allSee(t, 'client', t.d.facts)),
+        (t.d.st !== 'copied' || s.d.st === 'copied' || !CLIENT_SAFE.includes(t.d.kind) || allSee(t, 'client', t.d.facts)),
       // Rule 9: a post goes out only when the person it comes from confirms it
       OutwardIsConfirmed: (s, t) => t.d.posts === s.d.posts || t.by === t.d.owner,
       // Rule 1: nothing Atlas does changes a record; a record changes only on a person's own step
