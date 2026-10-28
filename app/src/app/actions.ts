@@ -48,6 +48,7 @@ import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { acceptOwnerAsk, declineOwnerAsk } from "@/commands/owner-ask";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonFor, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { tapStandup, type StandupTap } from "@/commands/standup";
 import { undoSave } from "@/commands/undo";
 import { decideVocabularyChange } from "@/commands/vocabulary";
 import { undoReply } from "@/queries/answers/undo";
@@ -169,6 +170,28 @@ export async function answerClarificationAction(clarificationId: string, option:
     message = (await answerClarification(ctx, clarificationId, option)).message;
   });
   return r.ok ? { ok: true, message } : r;
+}
+
+// ---- Standup with Atlas (phase J, M28) ----
+
+/**
+ * A button under a standup question: a tap answer, Skip or That's all, for the question it was shown with
+ * (rule 6). When it ends the standup, the answers it composed are read after the reply, as a sent message is.
+ */
+export async function answerStandupAction(standupId: string, n: number, tap: StandupTap): Promise<ActionResult> {
+  let ran: { ctx: CommandCtx; composed: string | null } | null = null;
+  const r = await run(async (ctx) => {
+    ran = { ctx, composed: (await tapStandup(ctx, standupId, n, tap)).composed };
+  });
+  const done = ran as { ctx: CommandCtx; composed: string | null } | null;
+  if (r.ok && done?.composed) {
+    const captureId = done.composed;
+    after(async () => {
+      const atlas = atlasFromEnv();
+      await readCapture({ ...done.ctx, now: now() }, captureId, atlas.extractor, { clock: now, drafter: atlas.drafter });
+    });
+  }
+  return r;
 }
 
 // ---- Learning from use (phase S) ----

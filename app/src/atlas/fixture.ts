@@ -2,7 +2,8 @@
 // it has a recording for and refuses the rest, so nothing pretends a real read happened. A one-sentence
 // question is the exception (section 15, QA8): the rule in domain/question.ts spots it, and DPM answers
 // it from data, so no read is pretended. So is small talk, a whole message of "Hi" or "Thanks!" (CQ12),
-// and a one-sentence reply that decides lines of the open answer (phase B: "Approve the refresh decision").
+// and a one-sentence reply that decides lines of the open answer (phase B: "Approve the refresh decision"),
+// and "Start my standup" (phase J): a standup of taps never reaches a model, and typed answers need one.
 // Phase D adds one recording: a vague update whose words fit two of Kemar's records, so the browser story
 // can answer Atlas's question (M21).
 import type { RawProposal } from "../domain/atlas-checks/types";

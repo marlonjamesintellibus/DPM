@@ -17,6 +17,11 @@
 //   emptyAbandons   STOP, or the last SKIP, with nothing answered is abandoned, not an empty capture
 //   ownerAsks       at save, an answer about a record Kemar no longer owns is an Ask to its owner (rule 10)
 //   startAfterSkip  "Start my standup" is an arrow, from scheduled and from skipped (SU1)
+//   askSeen         found building it (phase J): the save stops when who decides a record changed since Kemar
+//                   confirmed it, and shows him; only an item he took again as an ask is asked of its owner
+//                   (rule 9: outward is confirmed by the person it comes from)
+// As built, a day with nothing scheduled starts at none (phase F schedules nothing yet), and "Start my
+// standup" starts from none as from scheduled.
 import { clone, product } from '../lib.mjs';
 
 const ITEMS = ['w208', 'w212'];
@@ -29,9 +34,9 @@ const ANSWERS = { item: ['done', 'going', 'stuck', 'other'], new: ['nothing', 'n
 const kindOf = (subject) => (ITEMS.includes(subject) ? 'item' : subject);
 const WAITING = ['scheduled', 'asking'];
 const FINAL = ['skipped', 'composed', 'abandoned'];
-const DRAWN = ['scheduled>asking', 'scheduled>skipped', 'asking>composed', 'asking>abandoned'];
+const DRAWN = ['scheduled>asking', 'scheduled>skipped', 'asking>composed', 'asking>abandoned', 'none>asking'];
 export const WORLD = ['Reassign', 'Cancel', 'Remove', 'GoesOff', 'SendsUpdate'];
-export const FIXES = ['timerSkips', 'skipFirst', 'emptyAbandons', 'ownerAsks', 'startAfterSkip'];
+export const FIXES = ['timerSkips', 'skipFirst', 'emptyAbandons', 'ownerAsks', 'startAfterSkip', 'askSeen'];
 
 export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max = 4, Bug = null } = {}) {
   const fix = Object.fromEntries(FIXES.map((f) => [f, Fixes.includes(f)]));
@@ -102,14 +107,15 @@ export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max =
       // The answer is the blocked note; naming something makes a blocker report (Section 12)
       if (a === 'names') add({ rec: 'blocker', p: PROJECT[x], names: 'alicia', facts: [x], m: q.m });
     } else if (a === 'done' || a === 'stuck') {
-      add({ rec: x, p: PROJECT[x], to: a === 'done' ? 'done' : 'blocked', saw: q.saw, m: q.m, facts: [x] });
+      // who: who decides the change as the card shows it when it is read (check 3: him, or the owner asked)
+      add({ rec: x, p: PROJECT[x], to: a === 'done' ? 'done' : 'blocked', saw: q.saw, m: q.m, facts: [x], who: t.work[x].owner });
       if (a === 'stuck') t.su.follow = x;
     } else if (a === 'other') {
       // SU4: "Not that, but #212 is done" is read as a free-form update with the question as context
       const y = ITEMS.find((k) => k !== x);
       if (!t.su.asked.includes(y)) t.su.asked = [...t.su.asked, y];
       const facts = Bug === 'questionAsQuote' ? [x, y] : [y];
-      if (t.member[PROJECT[y]]) add({ rec: y, p: PROJECT[y], to: 'done', saw: t.work[y].st, m: true, facts }, 1);
+      if (t.member[PROJECT[y]]) add({ rec: y, p: PROJECT[y], to: 'done', saw: t.work[y].st, m: true, facts, who: t.work[y].owner }, 1);
     }
   };
 
@@ -131,13 +137,13 @@ export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max =
   return {
     name: `Standup (${Fixes.length === FIXES.length ? 'fixed' : Fixes.length ? Fixes.join(', ') : 'as drawn'}${Bug ? `, bug ${Bug}` : ''})`,
     init: () =>
-      [true, false].map((insights) => ({
+      product([true, false], ['scheduled', 'none']).map(([insights, day]) => ({
         work: { w208: { owner: 'kemar', st: 'in_progress' }, w212: { owner: 'kemar', st: 'in_progress' } },
         member: { forager: true, insights },
         on: true,
         updated: false,
         moves: 0,
-        su: { st: 'scheduled', q: null, asked: [], answers: [], items: [], follow: null, runs: 0 },
+        su: { st: day, q: null, asked: [], answers: [], items: [], follow: null, runs: 0 },
         cap: null,
         braid: [],
         tasks: 0,
@@ -185,7 +191,7 @@ export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max =
         step(s) {
           const t = t0(s, 'kemar');
           const from = s.su.st;
-          let ok = from === 'scheduled' || (fix.startAfterSkip && from === 'skipped');
+          let ok = from === 'none' || from === 'scheduled' || (fix.startAfterSkip && from === 'skipped');
           // Planted bug twoPerDay: a second standup starts after the first ended (one more is enough to show it)
           if (Bug === 'twoPerDay' && FINAL.includes(from) && s.su.runs < 2) ok = true;
           // Planted bug startNeedsWork: refused with no open work, where SU1 asks "Anything blocking you?"
@@ -263,10 +269,13 @@ export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max =
           if (c.st === 'saved') t.cap.again = true;
           const due = t.cap.items.filter((it) => it.st === 'ok' || (Bug === 'resave' && it.st === 'applied'));
           const theirs = (it) => it.rec !== 'blocker' && fix.ownerAsks && t.work[it.rec].owner !== 'kemar';
+          // askSeen: who decides it now is not who the card showed when he confirmed it
+          const deciderMoved = (it) => it.rec !== 'blocker' && fix.ownerAsks && fix.askSeen && it.who !== t.work[it.rec].owner;
           let failed = false;
           for (const it of due) {
             const right = Bug === 'rightAtAsk' ? it.m : t.member[it.p];
             if (!right) Object.assign(it, { st: 'conflict', why: 'right' });
+            else if (deciderMoved(it)) Object.assign(it, { st: 'conflict', why: 'owner' });
             else if (!theirs(it) && !apply(clone(t), it)) Object.assign(it, { st: 'conflict', why: 'version' });
             else continue;
             failed = true;
@@ -293,11 +302,12 @@ export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max =
         step(s, id, how) {
           const it = s.cap?.st === 'reviewing' && s.cap.items.find((i) => i.id === id && i.st === 'conflict');
           if (!it) return [];
-          if (how === 'again' && (it.why !== 'version' || !(WORK[s.work[it.rec].st] ?? []).includes(it.to))) return [];
+          if (how === 'again' && (!['version', 'owner'].includes(it.why) || !(WORK[s.work[it.rec].st] ?? []).includes(it.to))) return [];
           const t = t0(s, 'kemar');
           const u = t.cap.items.find((i) => i.id === id);
           if (how === 'drop') u.st = 'dropped';
-          else Object.assign(u, { st: 'ok', why: null, saw: s.work[it.rec].st });
+          // Taken again over an owner who changed, it shows who decides it now (askSeen)
+          else Object.assign(u, { st: 'ok', why: null, saw: s.work[it.rec].st, ...(it.why === 'owner' ? { who: s.work[it.rec].owner } : {}) });
           return [t];
         },
       },
@@ -421,6 +431,9 @@ export default function Standup({ Fixes = FIXES, World = WORLD, Moves = 2, Max =
           return [it.saw, it.to].includes(s.work[it.rec].st);
         }),
       // Rule 10: his word changes only his records; someone else's changes only when they act
+      // Rule 9: an ask to someone else goes only as the author last confirmed it: to the owner the card showed
+      OutwardConfirmed: (s, t) =>
+        (t.cap?.items ?? []).every((it) => it.st !== 'owner_ask' || s.cap?.items.find((i) => i.id === it.id)?.st === 'owner_ask' || it.who === t.work[it.rec].owner),
       YourWordChangesOnlyYours: (s, t) =>
         ITEMS.every((x) => s.work[x].owner === 'kemar' || s.work[x].st === t.work[x].st || !['kemar', 'atlas'].includes(t.by)) &&
         (s.tasks === t.tasks || t.by === 'alicia'),

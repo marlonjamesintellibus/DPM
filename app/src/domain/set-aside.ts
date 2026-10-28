@@ -90,9 +90,14 @@ function trimmed(text: string, span: SourceSpan): SourceSpan | null {
   return end > start ? { start, end } : null;
 }
 
-export function setAside(input: { text: string; used: readonly SourceSpan[]; dropped: readonly StoredDrop[]; asked: string | null }): SetAside {
+/**
+ * onlyIn (phase J): a standup's answers, where only the words the author typed can go unused; DPM's questions
+ * and their taps are never listed as their words.
+ */
+export function setAside(input: { text: string; used: readonly SourceSpan[]; dropped: readonly StoredDrop[]; asked: string | null; onlyIn?: readonly SourceSpan[] }): SetAside {
   const { text } = input;
   const covered: SourceSpan[] = [...input.used];
+  if (input.onlyIn) covered.push(...gaps(text.length, input.onlyIn, ""));
 
   const refused: SetAside["refused"] = [];
   const seen = new Set<string>();

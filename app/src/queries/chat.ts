@@ -13,6 +13,7 @@ import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, projectReader, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 import { undoReply } from "./answers/undo";
+import { composedFrom, standupViewOf, type StandupView } from "./standup";
 import { undoViewOf, type UndoView } from "./undo";
 
 export type ChatSummaryRow = {
@@ -60,6 +61,10 @@ export type ChatCapture = {
   clarification: ClarifyView | null;
   /** Phase D, CL2: this message answered a question by its words; what came of it. */
   answered: string | null;
+  /** Phase J, M28: the standup questions asked after this message, the one waiting, and how it ended. */
+  standup: StandupView | null;
+  /** Phase J: this message is a standup's answers, put together by DPM; the chat shows it as Atlas's, not as theirs. */
+  fromStandup: boolean;
 };
 
 /**
@@ -339,6 +344,8 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     ...commands,
     undo: capture.state === "saved" ? await undoOf(conn, capture, now) : null,
     ...(await clarificationsOf(conn, capture, commands.commands.length > 0)),
+    standup: await standupViewOf(conn, capture),
+    fromStandup: (await composedFrom(conn, capture.id)) !== null,
   };
 }
 

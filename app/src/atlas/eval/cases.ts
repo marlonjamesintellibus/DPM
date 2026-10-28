@@ -63,6 +63,8 @@ export type EvalCase = {
   commands?: string[];
   /** Phase D: the records DPM asks the author to choose between (see the keys above). */
   unsure?: string;
+  /** Phase J: the text is a standup's typed answers, each after its "Atlas:" question; quotes only from the answers (M28). */
+  standup?: true;
 };
 
 // Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
@@ -1082,5 +1084,41 @@ export const EVAL_CASES: EvalCase[] = [
     about: "words that name the record are never unsure",
     text: "Worked on the store feed connector today, #152 is in progress.",
     expect: ["upd:wi-152.state=in_progress"],
+  },
+  // Phase J: "Start my standup" starts it; a standup's typed answers are read each with the question before it,
+  // quoting only the author's words (M28). Taps never reach Atlas, so these are the answers DPM could not read
+  { id: "j-start", about: "M28 'Start my standup' is the standup command, nothing proposed", text: "Start my standup", expect: [], forbid: ["*"], ask: { topic: "standup", projectId: null } },
+  {
+    id: "j-not-that",
+    about: "SU4: an answer about another item than the one asked is about that item",
+    text: "Atlas: #145 Google Trends connector is In progress. Done, still going, or stuck?\nKemar: Not that one, but #152 is done",
+    standup: true,
+    expect: ["upd:wi-152.state=done"],
+    forbid: ["upd:wi-145.*"],
+  },
+  {
+    id: "j-waiting-on",
+    about: "what stuck work waits on is a blocker report; the work is already blocked by DPM",
+    text: "Atlas: #145 Google Trends connector is In progress. Done, still going, or stuck?\nKemar: Stuck\nAtlas: What's it waiting on?\nKemar: Kyle hasn't sent the Google Trends API key",
+    standup: true,
+    expect: [["new:blocker:forager", "new:blocker:none", "new:dependency:forager"]],
+    allow: ["upd:wi-145.state=blocked", "upd:wi-145.blocked_note=*"],
+    forbid: ["upd:wi-145.state=done", "upd:wi-145.state=in_progress"],
+  },
+  {
+    id: "j-new-blocker",
+    about: "a new blocker named in answer to 'Anything new blocking you?'",
+    text: "Atlas: Anything new blocking you?\nKemar: The trend scoring model needs more GPU quota and Sprouts IT hasn't approved it yet",
+    standup: true,
+    expect: [["new:blocker:forager", "new:dependency:forager"]],
+    allow: ["upd:wi-147.state=blocked", "upd:wi-147.blocked_note=*", "new:risk:forager"],
+  },
+  {
+    id: "j-nothing",
+    about: "an answer that says nothing is blocking proposes nothing",
+    text: "Atlas: Anything new blocking you?\nKemar: Nope, all clear on my side today",
+    standup: true,
+    expect: [],
+    forbid: ["*"],
   },
 ];

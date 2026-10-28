@@ -11,6 +11,7 @@ import { candidateProjects } from "../domain/machines/membership";
 import type { AnswerCard } from "../domain/question";
 import type { Confidence } from "../domain/shared";
 import { projectReader } from "./project";
+import { composedRead } from "./standup";
 
 export async function loadCheckContext(
   conn: Conn,
@@ -96,9 +97,12 @@ export async function loadCheckContext(
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, input.authorId));
   const earlier = input.captureId ? await loadEarlierTurns(conn, input.captureId) : [];
   const openAnswer = input.captureId ? await loadOpenAnswer(conn, input.captureId) : null;
+  // Phase J: a standup's answers are quoted only from the answers, and the questions taps answered
+  const standup = input.captureId ? await composedRead(conn, input.captureId) : null;
   return {
     ...(earlier.length ? { earlier } : {}),
     ...(openAnswer ? { openAnswer } : {}),
+    ...(standup ? { standup: { quoteIn: standup.quoteIn } } : {}),
     text: input.text,
     messageAt: input.messageAt,
     transcriptConfidence: input.transcriptConfidence,

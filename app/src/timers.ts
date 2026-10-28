@@ -5,8 +5,9 @@
 // the owner goes moot, is withdrawn or expires (M37, U5 and U7), eval candidates nobody decided are
 // deleted after config.evalCandidateDays (phase S, M36), a chat command's card nobody answered expires
 // after config.commandExpiryMinutes (phase B, M20, AC10), a question Atlas asked in the chat goes to the
-// review or closes after config.clarifyExpiryHours (phase D, M21), and corrections nobody decided are reminded,
-// then expire (phase L, M31). Each timer is one command and safe to run again; a reminder never decides
+// review or closes after config.clarifyExpiryHours (phase D, M21), corrections nobody decided are reminded,
+// then expire (phase L, M31), and a standup question left config.standupIdleMinutes composes what was answered,
+// read at once, or abandons it (phase J, M28). Each timer is one command and safe to run again; a reminder never decides
 // anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
@@ -20,6 +21,7 @@ import { runClarificationTimers } from "./commands/clarification";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
+import { runStandupTimers } from "./commands/standup";
 import { runVocabularyTimers } from "./commands/vocabulary";
 import { getDb, type Db } from "./db/client";
 import * as t from "./db/schema";
@@ -44,6 +46,14 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
       console.error(`timer ${timer.name} failed`, error);
     }
   }
+  // Phase J: the answers a standup's idle timer composed are read now, not after UNSTARTED_AFTER_MS
+  const composed: string[] = [];
+  try {
+    composed.push(...(await runStandupTimers({ db, now: now() })).composed);
+  } catch (error) {
+    run.failed.push(runStandupTimers.name);
+    console.error("timer runStandupTimers failed", error);
+  }
   // D19: a read that went stale waits for another try; so does a note the server never started on
   const due = await capturesToRead(db);
   if (!due.length) return run;
@@ -51,7 +61,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   const extractor = opts.extractor ?? atlasFromEnv().extractor;
   for (const id of due) {
     const c = rows.find((r) => r.id === id);
-    if (!c || (c.state === "received" && now().getTime() - c.receivedAt.getTime() < UNSTARTED_AFTER_MS)) continue;
+    if (!c || (c.state === "received" && !composed.includes(id) && now().getTime() - c.receivedAt.getTime() < UNSTARTED_AFTER_MS)) continue;
     try {
       await readCapture({ db, now: now(), actorId: c.authorId }, id, extractor, { clock: now, drafter: opts.extractor ? null : atlasFromEnv().drafter });
       run.read.push(id);

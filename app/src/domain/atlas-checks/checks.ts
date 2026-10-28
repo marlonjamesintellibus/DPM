@@ -6,7 +6,7 @@ import { config } from "../config";
 import { OUTCOME_FROM, OUTCOMES, type BraidEntryState, type ResolveOutcome } from "../machines/braid-entry";
 import { fitLeave, type LeaveFit } from "../machines/leave";
 import { namesPerson } from "../names";
-import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind } from "../rights";
+import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind, type ProjectRole } from "../rights";
 import { CONFIDENCES, lowerTo, NEW_WORK_STATES, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type NewWorkState, type RoutingState, type SourceSpan } from "../shared";
 
 export { lowerTo };
@@ -71,6 +71,17 @@ const FIELDS: Record<CandidateRecord["type"], Record<string, FieldRule>> = {
   milestone: { forecast: { who: "owner", date: true } },
   handover: { state: { who: "owner", values: ["not_done", "in_progress", "handed_over"] } },
 };
+
+/**
+ * Check 3's rule, read again when Save runs (phase J, the model check's fix to M28, for every update): whether
+ * the author may change this field of the record themselves now, as its owner, or as a PM or Lead where the
+ * field allows it. When they may not, saving asks the record's owner (section 20, U5, M37), never writes it.
+ */
+export function mayChangeField(type: CandidateRecord["type"], field: string, who: { isOwner: boolean; role: ProjectRole | null }): boolean {
+  const rule = FIELDS[type][field];
+  if (!rule || !who.role) return false;
+  return who.isOwner || (rule.who === "owner_or_lead" && (who.role === "pm" || who.role === "lead"));
+}
 
 type Target =
   | { type: "record"; project: CandidateProject; record: CandidateRecord }
@@ -265,11 +276,21 @@ const targetInScope: Check = [
   },
 ];
 
+/** Phase J: the quote, looked for only inside these spans (a standup's answers, and the questions taps answered). */
+export function locateQuoteIn(text: string, quote: string, spans: readonly SourceSpan[]): SourceSpan | null {
+  for (const sp of spans) {
+    const at = locateQuote(text.slice(sp.start, sp.end), quote);
+    if (at) return { start: sp.start + at.start, end: sp.start + at.end };
+  }
+  return null;
+}
+
 const quoteIsReal: Check = [
   2,
   (w, s) => {
-    const span = locateQuote(s.ctx.text, w.p.quote ?? "");
-    if (!span) return "the quoted words are not in the message";
+    const quote = w.p.quote ?? "";
+    const span = s.ctx.standup ? locateQuoteIn(s.ctx.text, quote, s.ctx.standup.quoteIn) : locateQuote(s.ctx.text, quote);
+    if (!span) return s.ctx.standup ? "the quoted words are not in your answers" : "the quoted words are not in the message";
     w.spans = [span];
     return null;
   },
@@ -291,9 +312,7 @@ const fieldAllowed: Check = [
         return `${describe(t)}'s due date is the plan; ask ${s.leadOf(t.project)} to move it, or say when you now expect it done`;
       return `${w.field || "that field"} on ${describe(t)} cannot change from a message`;
     }
-    const isOwner = t.record.ownerId === s.ctx.author.id;
-    const isLead = t.project.role === "pm" || t.project.role === "lead";
-    if (!isOwner && !(rule.who === "owner_or_lead" && isLead)) {
+    if (!mayChangeField(t.record.type, w.field, { isOwner: t.record.ownerId === s.ctx.author.id, role: t.project.role })) {
       // Section 20, U5 (S5): saving asks the owner instead (M37), when they are on the project to ask
       const owner = t.record.ownerId ? t.project.people.find((p) => p.personId === t.record.ownerId && p.role !== null) : undefined;
       if (!owner) return `${describe(t)} belongs to ${s.nameOf(t.record.ownerId)}; ask them to change its ${w.field}`;

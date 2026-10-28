@@ -16,6 +16,7 @@ import { setAside, type SetAside, type StoredDrop } from "../domain/set-aside";
 import type { Confidence, ExtractedItemDraft, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
+import { composedRead } from "./standup";
 
 export type ReviewMark = ReturnType<typeof displayMark>;
 
@@ -177,7 +178,9 @@ export async function readSetAside(
     .orderBy(desc(t.auditEntries.id))
     .limit(1);
   const dropped = (read?.detail?.dropped ?? []) as StoredDrop[];
-  return setAside({ text: capture.text, used: items.flatMap((i) => i.draft.spans), dropped, asked: capture.question?.asked ?? null });
+  // Phase J: in a standup's answers only the words the author typed are theirs to list
+  const standup = await composedRead(conn, capture.id);
+  return setAside({ text: capture.text, used: items.flatMap((i) => i.draft.spans), dropped, asked: capture.question?.asked ?? null, ...(standup ? { onlyIn: standup.ownWords } : {}) });
 }
 
 /** "1 part not used", for the chat's summary line; empty when nothing was set aside. */

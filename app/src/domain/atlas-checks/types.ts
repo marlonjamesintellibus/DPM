@@ -5,7 +5,7 @@ import type { IsoDate } from "../dates";
 import type { CommandAct, CommandSubject } from "../machines/chat-command";
 import type { LeaveState } from "../machines/leave";
 import type { BraidKind, ProjectRole } from "../rights";
-import type { Confidence, ExtractedItemDraft, ItemKind, TargetType } from "../shared";
+import type { Confidence, ExtractedItemDraft, ItemKind, SourceSpan, TargetType } from "../shared";
 
 /**
  * Why Atlas filed a proposal in its project. `basis` names the kind of evidence so check 14 can
@@ -124,6 +124,12 @@ export type CheckContext = {
   earlier?: readonly EarlierTurn[];
   /** Phase B: the answer open in this conversation, whose lines a reply may act on ("Approve the Kyle risk"). */
   openAnswer?: OpenAnswer | null;
+  /**
+   * Phase J: the message is a standup's answers (M28). Check 2 looks for a quote only in these spans, each
+   * answer and each question a tap answered, so words Atlas reads are never quoted from DPM's own question.
+   * Atlas is told it reads a standup's answers.
+   */
+  standup?: { quoteIn: readonly SourceSpan[] };
 };
 
 /** One line of the open answer as Atlas is shown it: what it is, and what the asker may do on it. */

@@ -34,6 +34,7 @@ import type { Answer, AskedQuestion } from "../domain/question";
 import type { LeaveState } from "../domain/machines/leave";
 import type { MembershipState } from "../domain/machines/membership";
 import type { OverrideState } from "../domain/machines/set-status";
+import type { StandupEnd, StandupQuestion, StandupState, StandupStep } from "../domain/machines/standup";
 import type { BraidKind, ProjectRole } from "../domain/rights";
 import type { Confidence, ExtractedItemDraft, ItemKind, RoutingState } from "../domain/shared";
 import type { SettableStatus } from "../domain/status/status";
@@ -550,6 +551,37 @@ export const clarifications = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("clarifications_open").on(t.state, t.conversationId), index("clarifications_answered_by").on(t.answeredBy)],
+);
+
+/**
+ * M28. A person's standup for one day (conversational plan, phase J): the questions asked and what they said,
+ * the one waiting, and the capture its answers became. One per person per day (SU10).
+ */
+export const standups = pgTable(
+  "standups",
+  {
+    id: text("id").primaryKey(),
+    personId: text("person_id").notNull().references(() => people.id),
+    day: day("day").notNull(),
+    /** Where it asks: a typed reply in this conversation is its answer. */
+    conversationId: text("conversation_id").references(() => conversations.id),
+    /** The message that started it ("Start my standup"). */
+    startedBy: text("started_by").references(() => captures.id),
+    state: text("state").$type<StandupState>().notNull(),
+    steps: jsonb("steps").$type<StandupStep[]>().notNull(),
+    current: jsonb("current").$type<StandupQuestion>(),
+    /** The idle timer counts from here (SU7). */
+    askedAt: instant("asked_at"),
+    /** The message the chat shows it under now: the one that started it, or the latest typed reply. */
+    shownIn: text("shown_in").references(() => captures.id),
+    endedBy: text("ended_by").$type<StandupEnd>(),
+    /** The message its answers became (composed). */
+    captureId: text("capture_id").references(() => captures.id),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [uniqueIndex("standups_person_day").on(t.personId, t.day), index("standups_open").on(t.state, t.conversationId), index("standups_capture").on(t.captureId)],
 );
 
 /** M36. A candidate for the eval set; the text only while logged and while the person allows it (LF1, LF2). */
