@@ -15,6 +15,8 @@ import type { OwnerAskRecord } from "../domain/machines/owner-ask";
 import type { CommitmentRecord } from "../domain/machines/commitment";
 import type { CoverRecord } from "../domain/machines/cover-request";
 import type { LeaveRecord } from "../domain/machines/leave";
+import type { MeetingRecord } from "../domain/machines/meeting";
+import type { AttributedItemRecord } from "../domain/machines/attributed-item";
 import * as t from "./schema";
 
 export type Versions = Map<string, number>;
@@ -513,4 +515,76 @@ export async function persistKindRequest(tx: Tx, record: KindRequestRecord, vers
     .where(and(eq(t.braidKindRequests.id, record.id), eq(t.braidKindRequests.version, version)))
     .returning({ id: t.braidKindRequests.id });
   expectOne(rows, `kind change request ${record.id}`);
+}
+
+// ---- Meetings (phase O, M33 and M34) ----
+
+type MeetingRow = typeof t.meetings.$inferSelect;
+type AttributedRow = typeof t.attributedItems.$inferSelect;
+
+/** M33: a meeting note as its machine reads it. */
+export function meetingOf(row: MeetingRow): MeetingRecord {
+  return {
+    id: row.id,
+    captureId: row.captureId,
+    recorderId: row.recorderId,
+    projectId: row.projectId,
+    attendees: [...row.attendees],
+    mode: row.mode,
+    mergedWith: row.mergedWith,
+    state: row.state,
+    receivedOn: row.receivedOn,
+  };
+}
+
+/** Inserts a new meeting (version null), or writes a move against the version it was read at. */
+export async function persistMeeting(tx: Tx, r: MeetingRecord, version: number | null, now: Date): Promise<void> {
+  const { id, ...columns } = r;
+  if (version === null) {
+    await tx.insert(t.meetings).values({ id, ...columns, createdAt: now, updatedAt: now });
+    return;
+  }
+  const rows = await tx
+    .update(t.meetings)
+    .set({ ...columns, version: nextVersion(t.meetings.version), updatedAt: now })
+    .where(and(eq(t.meetings.id, id), eq(t.meetings.version, version)))
+    .returning({ id: t.meetings.id });
+  expectOne(rows, `meeting ${id}`);
+}
+
+/** M34: an attributed item as its machine reads it. */
+export function attributedOf(row: AttributedRow): AttributedItemRecord {
+  return {
+    id: row.id,
+    meetingId: row.meetingId,
+    captureId: row.captureId,
+    recorderId: row.recorderId,
+    personId: row.personId,
+    projectId: row.projectId,
+    kind: row.kind,
+    draft: row.draft,
+    quote: row.quote,
+    state: row.state,
+    wording: row.wording,
+    dueOn: row.dueOn,
+    askedOn: row.askedOn,
+    decidedOn: row.decidedOn,
+    reason: row.reason,
+    alsoFrom: [...row.alsoFrom],
+  };
+}
+
+/** Inserts a new attributed item (version null), or writes a move against the version it was read at. */
+export async function persistAttributed(tx: Tx, r: AttributedItemRecord, version: number | null, now: Date): Promise<void> {
+  const { id, ...columns } = r;
+  if (version === null) {
+    await tx.insert(t.attributedItems).values({ id, ...columns, createdAt: now, updatedAt: now });
+    return;
+  }
+  const rows = await tx
+    .update(t.attributedItems)
+    .set({ ...columns, version: nextVersion(t.attributedItems.version), updatedAt: now })
+    .where(and(eq(t.attributedItems.id, id), eq(t.attributedItems.version, version)))
+    .returning({ id: t.attributedItems.id });
+  expectOne(rows, `attributed item ${id}`);
 }

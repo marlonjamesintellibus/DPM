@@ -4,9 +4,10 @@
 // an entry's kind, a status they set that waits for a reason or to be kept, whether a blocker is resolved
 // now its work moves (E93), whether a dependency past its date was delivered (U2), leave they decide as
 // its admin (D6; a lead shown only what it touches plans cover, which is no decision), Asks to them as an
-// owner (M37) and a teammate's ask to cover their work while away (phase P, M35). Read from their own
-// inbox, so each approver sees a decision until one of them decides it (LD8, S11), and only on projects
-// they still read (P10). Each line offers what its inbox item offers (phase B).
+// owner (M37), a teammate's ask to cover their work while away (phase P, M35) and what a meeting note says
+// of theirs (phase O, M34). Read from their own inbox, so each approver sees a decision until one of them
+// decides it (LD8, S11), and only on projects they still read (P10). Each line offers what its inbox item
+// offers (phase B).
 import { getInbox, type InboxCause, type InboxEntry } from "../inbox";
 import { clockTime, shortDate, todayIn } from "../project";
 import { OFFER, subjectOf } from "./needs-me";
@@ -27,6 +28,8 @@ const DECISIONS: Partial<Record<InboxCause, string>> = {
   leave_impact: "Leave",
   owner_ask: "Asks you",
   cover_ask: "Cover",
+  // Phase O, M34: whether what a meeting note says of theirs is right is theirs alone to say (rule 10)
+  attributed: "Meeting note",
 };
 
 /** D6: leave waits on the admin who decides it; the leads it is shown to only plan cover. */

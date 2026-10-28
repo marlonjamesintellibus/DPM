@@ -11,6 +11,7 @@ import { Card, FieldRow } from "@/components/ui/card";
 import { ActionNote, Button, KindChip } from "@/components/ui/controls";
 import { Icon } from "@/components/shell/icon";
 import type { Review, ReviewItem } from "@/queries/review";
+import { HeldSpeaker } from "@/components/chat/meeting";
 
 type Props = { review: Review };
 
@@ -29,6 +30,7 @@ export function ReviewScreen({ review }: Props) {
     <div className="flex items-start gap-4">
       <div className="flex w-[340px] shrink-0 flex-col gap-4">
         <MessageCard review={review} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} />
+        <HeldCard review={review} />
         <SetAsideCard review={review} />
       </div>
       <ChangesCard review={review} open={open} hover={hover} selected={selected} onHover={setHover} onSelect={setSelected} />
@@ -149,6 +151,25 @@ function MessageCard({
           .
         </p>
       )}
+    </Card>
+  );
+}
+
+// ---- Who said it (phase O, MT2) ----
+
+/** A meeting note's items Atlas could not tell who said: nothing of them goes anywhere until the recorder says. */
+function HeldCard({ review }: { review: Review }) {
+  if (!review.held.length) return null;
+  return (
+    <Card label="Meeting note · only you see this" title="Who said these?">
+      {review.held.map((h) => (
+        <div key={h.id} className="flex flex-col gap-1.5">
+          <span className="type-body text-fg-1">{h.title}</span>
+          <span className="type-caption text-fg-3">&ldquo;{h.quote}&rdquo;</span>
+          <HeldSpeaker id={h.id} choices={h.choices} />
+        </div>
+      ))}
+      <p className="type-caption text-fg-3">Save waits until you say. Someone else&rsquo;s goes to them to confirm; yours joins this review.</p>
     </Card>
   );
 }

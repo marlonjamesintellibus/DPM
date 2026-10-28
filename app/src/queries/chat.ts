@@ -14,6 +14,8 @@ import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, projectReader, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 import { undoReply } from "./answers/undo";
+import { draftViewOf, type DraftView } from "./drafts";
+import { meetingViewOf, type MeetingView } from "./meeting";
 import { composedRead, standupViewOf, type StandupView } from "./standup";
 import { awayViewOf, describeCoverAsk, type AwayView } from "./cover";
 import { undoViewOf, type UndoView } from "./undo";
@@ -69,6 +71,10 @@ export type ChatCapture = {
   fromStandup: boolean;
   /** Phase P: the message said leave; what is due while away, who was asked or covers each thing, and who could be. */
   away: AwayView | null;
+  /** Phase G, M25: the draft this message asked for, as it stands. */
+  draft: DraftView | null;
+  /** Phase O, M33: this message is a meeting note; who was there, and how each part about someone stands. */
+  meeting: MeetingView | null;
 };
 
 /**
@@ -130,7 +136,11 @@ export type ChatSummary = {
 const NOTICES_SHOWN = 10;
 
 async function noticesFor(conn: Conn, viewerId: string, now: Date = new Date()): Promise<ChatNotice[]> {
-  const rows = await conn.select().from(t.notices).where(eq(t.notices.personId, viewerId)).orderBy(desc(t.notices.at), desc(t.notices.id)).limit(NOTICES_SHOWN);
+  const all = await conn.select().from(t.notices).where(eq(t.notices.personId, viewerId)).orderBy(desc(t.notices.at), desc(t.notices.id)).limit(NOTICES_SHOWN);
+  // Phase O, P10: what a meeting note asked of someone names its project's records; once they cannot read that
+  // project (they left it, E77), the notice is no longer shown
+  const reader = all.some((n) => n.subjectType === "attributed_item") ? await projectReader(conn, viewerId) : null;
+  const rows = all.filter((n) => n.subjectType !== "attributed_item" || !n.projectId || reader!.mayRead(n.projectId));
   const out: ChatNotice[] = rows.map((n) => ({
     id: n.id,
     at: n.at,
@@ -294,6 +304,17 @@ async function noticeHome(conn: Conn, viewerId: string, n: ChatNotice): Promise<
       .where(and(eq(t.commitments.id, n.subject.id), eq(t.commitments.ownerId, viewerId)));
     return row?.conversationId ?? null;
   }
+  // Phase O: what came of a meeting note's part belongs with the note, for its recorder; the person it was about
+  // has no message of theirs there, so theirs shows in their newest conversation
+  if (n.subject.type === "attributed_item" || n.subject.type === "meeting") {
+    const table = n.subject.type === "meeting" ? t.meetings : t.attributedItems;
+    const [row] = await conn
+      .select({ conversationId: t.captures.conversationId })
+      .from(table)
+      .innerJoin(t.captures, eq(t.captures.id, table.captureId))
+      .where(and(eq(table.id, n.subject.id), eq(t.captures.authorId, viewerId)));
+    return row?.conversationId ?? null;
+  }
   if (n.subject.type !== "braid_entry") return null;
   const sources = await conn
     .select({
@@ -413,6 +434,8 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     standup: await standupViewOf(conn, capture),
     fromStandup: standupText !== null,
     away: await awayViewOf(conn, capture, items, now),
+    draft: await draftViewOf(conn, capture),
+    meeting: await meetingViewOf(conn, capture),
   };
 }
 

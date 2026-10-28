@@ -129,6 +129,8 @@ type Work = {
   closeMatches: string[] | null;
   /** Phase E: a promise, or a live commitment said to be done (CM6). */
   promise: PromiseWork | null;
+  /** Phase O, a meeting note: who made the promise when it was not the author, or Atlas was unsure (MT2). */
+  speaker: { personId: string | null; sure: boolean } | null;
 };
 
 /** Phase E: what a commitment item carries through the checks. */
@@ -388,6 +390,8 @@ const confidenceFloor: Check = [
     if (d && (d.relative || d.weekdayMismatch)) c = lowerTo(c, "medium"); // E13
     // CD4: with no day said, the next working day is DPM's guess, so the author checks it on the card
     if (w.promise?.dueFrom === "none") c = lowerTo(c, "medium");
+    // Phase O, MT2: Atlas could not tell who said it
+    if (w.speaker && !w.speaker.sure) c = lowerTo(c, "low");
     w.confidence = c;
     return null;
   },
@@ -526,9 +530,10 @@ const projectIsCandidate: Check = [
     };
     w.scope = "project";
     if (w.kind === "commitment") {
-      // CD3: a promise is its author's alone, whatever record it names
+      // CD3: a promise is its author's alone, whatever record it names. Phase O: someone else's, from a meeting,
+      // is theirs alone once they confirm it (M34)
       w.scope = "personal";
-      route("routed", null, "Only you see your promises");
+      route("routed", null, w.speaker ? (w.speaker.sure && w.speaker.personId ? `${s.nameOf(w.speaker.personId)}'s promise, from the meeting` : "Who said this?") : "Only you see your promises");
     } else if (w.target?.type === "leave") {
       // E80: leave goes to "You" whatever project the model named
       w.scope = "personal";
@@ -645,7 +650,11 @@ const sameWords = (a: string, b: string) => {
  */
 function readPromise(w: Work, s: Scope): string | null {
   const p = w.p;
-  const live = s.ctx.commitments ?? [];
+  // Phase O: in a meeting note, someone else's promise is theirs (CD5) and never matches the author's own (CD3)
+  const speaker = meetingSpeaker(p, s);
+  if (speaker === "unknown") return "that is not someone in the meeting";
+  w.speaker = speaker;
+  const live = speaker ? [] : (s.ctx.commitments ?? []);
   const named = p.commitmentId ? (live.find((c) => c.id === p.commitmentId) ?? null) : null;
   if (p.newValue?.trim() === "done") {
     // CM6: only a live commitment of the author's; anything else is not theirs to say done
@@ -655,8 +664,10 @@ function readPromise(w: Work, s: Scope): string | null {
   }
   const found = p.targetId ? s.findTarget(p.targetId) : null;
   const record = found?.type === "record" && found.record.type !== "handover" ? found : null;
-  // CM3: their own work item or milestone, finished by a day they name, is its forecast; with no day it stays a promise
-  if (record && record.record.ownerId === s.ctx.author.id && FINISHING.test(p.quote ?? "") && readDateValue(p.quote ?? "", s.ctx.messageAt, null)) {
+  // CM3: their own work item or milestone, finished by a day they name, is its forecast; with no day it stays a promise.
+  // Phase O: an attendee's own record, said by them in the meeting, is its forecast too, asked of them (U5, M34)
+  const promiser = speaker ? speaker.personId : s.ctx.author.id;
+  if (record && promiser && record.record.ownerId === promiser && (!speaker || speaker.sure) && FINISHING.test(p.quote ?? "") && readDateValue(p.quote ?? "", s.ctx.messageAt, null)) {
     const name = record.record.number ?? record.record.title;
     w.kind = "update";
     w.field = "forecast";
@@ -677,6 +688,22 @@ function readPromise(w: Work, s: Scope): string | null {
   return null;
 }
 
+/**
+ * Phase O: who made a promise in a meeting note. null: the author's own, as in any message (or no meeting).
+ * Someone else must be one of the attendees or a person on the author's projects (MT3: named, not present, is
+ * still someone; DPM decides what goes to them). "unknown" for anyone else, never echoed (P10). speakerSure false
+ * is MT2: Atlas could not tell who said it, so the recorder says in review.
+ */
+function meetingSpeaker(p: RawProposal, s: Scope): { personId: string | null; sure: boolean } | null | "unknown" {
+  const meeting = s.ctx.meeting;
+  if (!meeting) return null;
+  const known = (id: string) => meeting.attendees.some((a) => a.personId === id) || s.ctx.projects.some((x) => x.people.some((person) => person.personId === id));
+  const id = p.speakerId?.trim() || null;
+  if (p.speakerSure === false) return { personId: id && (id === s.ctx.author.id || known(id)) ? id : null, sure: false };
+  if (!id || id === s.ctx.author.id) return null;
+  return known(id) ? { personId: id, sure: true } : "unknown";
+}
+
 // CD5: someone else's promise is theirs to make ("Kyle will send it", "Jodian seh she a go do it"); the author's
 // own words about doing it ("I'll", "mi a go", "let me") keep it theirs. Only the author's own "I will" counts
 // against someone else's: "we'll" and "I can" are loose words ("Kyle will send it, we'll see")
@@ -691,6 +718,9 @@ function promiseGuard(w: Work, s: Scope): string | null {
   if (!w.promise) return null;
   if (w.promise.act === "promise" && !w.promise.what) return "a promise needs what you promised";
   if (w.promise.act !== "promise") return null;
+  // Phase O: a meeting note's promise by someone else, or by someone Atlas could not name, is theirs by the note
+  // itself: DPM sends it to them, or keeps it in the recorder's review until they say who (M34, MT2)
+  if (w.speaker) return null;
   // Anyone on the author's projects by first name, in any case, and anyone else by a name-like word (CD30)
   const names = s.ctx.projects
     .flatMap((p) => p.people)
@@ -913,6 +943,7 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
   if (w.ask) draft.ask = { ownerId: w.ask };
   if (w.closeMatches) draft.closeMatches = { ids: w.closeMatches, chosen: null };
   if (w.kind === "new_work") draft.newWork = { title: w.p.workTitle!.trim(), state: w.newValue as NewWorkState };
+  if (w.speaker) draft.speaker = w.speaker;
   if (w.kind === "commitment" && w.promise) {
     const pr = w.promise;
     draft.commitment = {
@@ -972,6 +1003,7 @@ function start(p: RawProposal): Work {
     routedBy: null,
     closeMatches: null,
     promise: null,
+    speaker: null,
   };
 }
 

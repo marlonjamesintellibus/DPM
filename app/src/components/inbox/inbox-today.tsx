@@ -14,6 +14,8 @@ import { withArticle } from "@/domain/shared";
 import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { describeOwnerAsk } from "@/queries/owner-ask";
+import { describeAttributed } from "@/queries/meeting";
+import { MeetingItemControls } from "@/components/chat/meeting";
 import { signalsFor } from "@/queries/signals";
 import { clockTime, firstName, getProject, KIND_LABEL, projectReader, todayIn, type ProjectView } from "@/queries/project";
 import { asksDrop } from "@/domain/machines/commitment";
@@ -48,6 +50,7 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   commitment_check: "Your promise",
   commitment_stands: "Your promise",
   cover_ask: "Cover",
+  attributed: "Meeting note",
 };
 
 /** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
@@ -268,6 +271,8 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
         </DetailCard>
       );
     }
+    case "attributed_item":
+      return <AttributedDetail item={item} label={label} id={item.subject.id} viewerId={viewerId} at={at} />;
     case "capture":
       return (
         <DetailCard label={label} title={item.title}>
@@ -278,6 +283,36 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
         </DetailCard>
       );
   }
+}
+
+/**
+ * Phase O, M34: what someone's meeting note says of the viewer's, with only the words that fed it (rule 9), what it
+ * would save as theirs, and Confirm, Change (a promise) or That's not right. Nothing is saved until they confirm.
+ */
+async function AttributedDetail({ item, label, id, viewerId, at }: { item: InboxEntry; label: string; id: string; viewerId: string; at: Date }) {
+  const d = await describeAttributed(await getDb(), id, viewerId);
+  if (!d) return null;
+  const promise = d.record.kind === "commitment";
+  const from = [d.recorder, ...d.alsoFrom].join(" and ");
+  return (
+    <DetailCard label={label} title={item.title}>
+      <Pair>
+        <Box head={`From ${from}'s meeting note, ${clockTime(d.at)}`}>
+          <span className="type-caption text-fg-2">&ldquo;{d.quote}.&rdquo;</span>
+        </Box>
+        <Box head={promise ? "Your promise" : `On ${d.project.name}`}>
+          <span className="type-caption text-fg-2">{d.summary}</span>
+        </Box>
+      </Pair>
+      <Explain>
+        {promise
+          ? "Confirming saves it as your promise: only you see it, and Atlas checks in when it is due."
+          : `Confirming changes it as you; if it has changed since the meeting, you are told and nothing is written.`}{" "}
+        If it&rsquo;s not right, {d.recorder} is told.
+      </Explain>
+      <MeetingItemControls id={id} promise={promise} words={d.record.wording ?? d.record.draft.commitment?.what ?? ""} dueOn={d.dueOn} today={todayIn(at)} />
+    </DetailCard>
+  );
 }
 
 /** M37 (section 20, U5 and U7): only the words that fed it, what it would change, and Accept or Decline. */

@@ -66,8 +66,12 @@ export async function createOwnerAsks(tx: Tx, now: Date, capture: { id: string; 
 }
 
 /** The asked field as it is today; null for new work. */
-async function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
-  const target = r.target;
+function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
+  return fieldNow(tx, r.target);
+}
+
+/** A record's field as it is today, as an update compares it (phase O's M34 reads it too); null for none. */
+export async function fieldNow(tx: Tx, target: { type: string; id: string; field: string } | null): Promise<string | null> {
   if (!target) return null;
   switch (target.type) {
     case "work_item": {
@@ -83,6 +87,22 @@ async function currentValue(tx: Tx, r: OwnerAskRecord): Promise<string | null> {
       return row?.state ?? null;
     }
   }
+  return null;
+}
+
+/** Who owns a record today (a handover step is its leaver's); null when it is gone. Phase O's M34 reads it (rule 10). */
+export async function ownerNow(tx: Tx, target: { type: string; id: string }): Promise<string | null> {
+  switch (target.type) {
+    case "work_item":
+      return (await tx.select({ ownerId: t.workItems.ownerId }).from(t.workItems).where(eq(t.workItems.id, target.id)))[0]?.ownerId ?? null;
+    case "milestone":
+      return (await tx.select({ ownerId: t.milestones.ownerId }).from(t.milestones).where(eq(t.milestones.id, target.id)))[0]?.ownerId ?? null;
+    case "handover": {
+      const [row] = await tx.select({ ownerId: t.handovers.fromPersonId }).from(t.handoverSteps).innerJoin(t.handovers, eq(t.handovers.id, t.handoverSteps.handoverId)).where(eq(t.handoverSteps.id, target.id));
+      return row?.ownerId ?? null;
+    }
+  }
+  return null;
 }
 
 async function loadAsk(tx: Tx, askId: string) {

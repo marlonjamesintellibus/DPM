@@ -118,6 +118,17 @@ describe("guards", () => {
     expect(applyClarificationEvent(line, { type: "REVIEW_OPENED" }, base).outcome).toMatchObject({ ok: false, reason: "a reply that decides a line has no review card" });
   });
 
+  it("phase O, MT9: a call brief's question has no review card either: it closes on its timer, and says which project it is", () => {
+    const prep = at("asked", { about: "prep", extractionId: null, quote: "Prep me for the Sprouts call", options: [{ id: "forager", label: "Forager 2.0", projectId: "forager" }, { id: "insights", label: "Store Insights", projectId: "insights" }] });
+    expect(applyClarificationEvent(prep, { type: "REVIEW_OPENED" }, base).outcome).toMatchObject({ ok: false, reason: "a request for a call brief has no review card" });
+    expect(applyClarificationEvent(prep, { type: "EXPIRE" }, { ...base, now: later(120) }).record).toMatchObject({ state: "closed", endedBy: "timer" });
+    expect(applyClarificationEvent(prep, { type: "ANSWER", option: "forager" }, base).record).toMatchObject({ state: "resolved", chosen: "forager" });
+    expect(clarifyQuestion(prep)).toBe("Which project is the call about: Forager 2.0 or Store Insights?");
+    expect(clarifyOutcomeText({ ...prep, state: "resolved" }, "Forager 2.0")).toBe("Got it: Forager 2.0. Your brief follows.");
+    expect(clarifyOutcomeText({ ...prep, state: "closed", endedBy: "timer" }, null)).toBe("Nothing was done; ask again.");
+    expect(optionGoneText("prep")).toBe("You can't choose that one any more. Pick another, or ask me again.");
+  });
+
   it("CL6: the capture discarded or expired closes it; so does a correction withdrawing its item (CV10)", () => {
     expect(applyClarificationEvent(at("asked"), { type: "CLOSE" }, base).record).toMatchObject({ state: "closed", endedBy: "capture" });
     expect(applyClarificationEvent(at("asked"), { type: "CLOSE", because: "corrected" }, base).record).toMatchObject({ state: "closed", endedBy: "corrected" });

@@ -130,6 +130,24 @@ describe("capture processing arrows", () => {
     expect(stuck).toEqual([]);
   });
 
+  it("phase O, M33: a meeting note waits for its attendees before it is read, and ends with its meeting", () => {
+    expect(ev(fresh(), { type: "START" }, { meeting: "waiting" }).outcome).toMatchObject({ ok: false, reason: "a meeting note waits for its attendees" });
+    expect(ev(fresh("voice"), { type: "START" }, { meeting: "waiting" }).outcome.ok).toBe(false);
+    expect(ev(fresh(), { type: "START" }, { meeting: "ready" }).record.state).toBe("reading");
+    expect(ev(fresh(), { type: "EXPIRE" }, { meeting: "expired" }).record.state).toBe("expired");
+    // Only a meeting note that expired; any other message is read, never expired, from received
+    expect(ev(fresh(), { type: "EXPIRE" }, { meeting: "waiting" }).outcome.ok).toBe(false);
+    expect(ev(fresh(), { type: "EXPIRE" }).outcome.ok).toBe(false);
+    expect(ev(fresh(), { type: "START" }, { meeting: "expired" }).outcome.ok).toBe(false);
+  });
+
+  it("phase O, MT2: Save waits while an item of a meeting note needs who said it", () => {
+    const items = [startItem("a", draft())];
+    const r = ev(reviewing(), { type: "SAVE" }, { ...ACTIVE, items, held: 1 });
+    expect(r.outcome).toMatchObject({ ok: false, reason: "1 needs who said it before this is saved" });
+    expect(ev(reviewing(), { type: "SAVE" }, { ...ACTIVE, items, held: 0 }).record.state).toBe("saving");
+  });
+
   it("refuses arrows that are not drawn", () => {
     expect(ev(at("received"), { type: "SAVE" }, { ...ACTIVE, items: [] }).outcome).toMatchObject({ ok: false, reason: "no arrow from received on SAVE" });
     expect(ev(at("proposed"), { type: "SAVE" }, { ...ACTIVE, items: [] }).outcome.ok).toBe(false);

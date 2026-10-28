@@ -69,10 +69,10 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-wave4-e's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio; phase J standup; phase Q explain_project; phase E commitments; phase P catch_up); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-wave4-p2");
+  it("the topics come from domain/topics in read-17's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio; phase J standup; phase Q explain_project; phase E commitments; phase G draft; phase O's call brief in draft; phase P catch_up); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-17");
     expect(SYSTEM_PROMPT).toContain(
-      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), commitments (what they promised to do: their own open and due commitments), blocked (what is blocked or stuck), project_status (how a project stands), explain_project (what a project is, who it is for and where to start on it), updates (what is new or changed since they last asked), catch_up (catching up after time away: what changed since their leave began, and what was handed over), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), commitments (what they promised to do: their own open and due commitments), blocked (what is blocked or stuck), project_status (how a project stands), explain_project (what a project is, who it is for and where to start on it), updates (what is new or changed since they last asked), catch_up (catching up after time away: what changed since their leave began, and what was handed over), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), draft (only "Draft my standup", "Draft a client status for Forager", "Draft the weekly summary for Forager" or "Prep me for the Sprouts call": write a draft for them to edit and copy, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
     expect(questionSchema.shape.topic.options).toEqual([
       "needs_me",
@@ -96,10 +96,17 @@ describe("the request", () => {
       "correction",
       "undo",
       "standup",
+      "draft",
       "small_talk",
       "other",
       "unclear",
     ]);
+  });
+
+  it("phase G: a whole-message request for a draft is topic draft with the project it names; Start my standup is not a draft", () => {
+    expect(SYSTEM_PROMPT).toContain('"Draft the weekly summary for Forager", with nothing else said, is topic draft with items empty');
+    expect(SYSTEM_PROMPT).toContain('"Start my standup" is topic standup, not a draft.');
+    expect(questionSchema.safeParse({ asked: "Draft my standup", topic: "draft", projectId: null }).success).toBe(true);
   });
 
   it("phase N: who could pick up work, who hasn't updated (today only), decisions, risks this week and the portfolio", () => {
@@ -151,6 +158,24 @@ describe("the request", () => {
     const message = userMessage({ ...KEMAR_CONTEXT, commitments: [{ id: "cm-1", what: "Send Andre the export columns", dueOn: "2026-10-19", state: "due", linkId: "wi-208" }] });
     expect(message).toContain('"promise": "Send Andre the export columns"');
     expect(userMessage(KEMAR_CONTEXT)).toContain('"commitments": []');
+  });
+
+  it("phase O: a meeting note lists who was there; a promise says who made it, and the note asks nothing (M33, M34, MT2)", () => {
+    const section = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("Meeting notes\n"), SYSTEM_PROMPT.indexOf("\nEarlier messages"));
+    expect(section).toContain('is kind "commitment" with speakerId that person\'s id from the attendees, never the author\'s');
+    expect(section).toContain("speakerSure: false when the note does not say who made the promise");
+    expect(section).toContain("An attendee listed as not in DPM (a client contact) never has a commitment: their promise is a dependency");
+    expect(section).toContain("Who agreed is never an approval.");
+    expect(section).toContain("A meeting note asks you nothing: question is null and commands is empty");
+    const said = { kind: "commitment", projectId: null, routingReason: { basis: "personal", evidence: "Alicia", label: "Alicia" }, promise: "Send Kyle the buyer list", newValue: "promised", speakerId: "alicia", speakerSure: false, quote: "Alicia: I'll send it", confidence: "low", rationale: "x" };
+    expect(proposalSchema.safeParse(said).data).toMatchObject({ speakerId: "alicia", speakerSure: false });
+    const meeting = { projectId: "forager", mode: "meeting" as const, attendees: [{ personId: "alicia", name: "Alicia Campbell", inDpm: true }, { personId: "kyle", name: "Kyle", inDpm: false }] };
+    const message = userMessage({ ...KEMAR_CONTEXT, meeting });
+    expect(message).toContain("This update is a meeting note the author recorded. Attendees, as JSON:");
+    expect(message).toContain('"id": "kyle",\n  "name": "Kyle",\n  "inDpm": false');
+    // CD17: own notes name nobody else
+    expect(userMessage({ ...KEMAR_CONTEXT, meeting: { ...meeting, mode: "own" } })).toContain("This update is the author's own notes of a meeting. Only the author's own promises are commitments.");
+    expect(userMessage(KEMAR_CONTEXT)).not.toContain("meeting");
   });
 
   it("phase J: a standup's answers are read each with its question, quoting only the author's words (M28, SU4)", () => {

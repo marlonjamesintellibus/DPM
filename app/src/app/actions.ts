@@ -43,13 +43,15 @@ import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/comma
 import { answerClarification } from "@/commands/clarification";
 import { answerCommitment, type CheckInAnswer } from "@/commands/commitment";
 import { answerCover, askCover, dismissCover, type CoverAnswer } from "@/commands/cover";
+import { copyDraft, discardDraft, draftOfCapture, editDraft, refreshDraft, writeDraft } from "@/commands/draft";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
 import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { acceptOwnerAsk, declineOwnerAsk } from "@/commands/owner-ask";
+import { confirmAttendees, confirmAttributed, createMeetingNote, declineAttributed, editAttributed, fixSpeaker, readAsOwnNotes } from "@/commands/meeting";
 import { approveLeave, declineLeave } from "@/commands/leave";
-import { draftReasonFor, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { draftReasonFor, keepSetStatus, linkChange, saveReason, shareReasonWithClient, useCalculated } from "@/commands/status";
 import { acceptSignal, dismissSignal, setProjectPaused, stillGoing } from "@/commands/signals";
 import { tapStandup, type StandupTap } from "@/commands/standup";
 import { undoSave } from "@/commands/undo";
@@ -169,10 +171,22 @@ export async function cancelChatCommand(commandId: string): Promise<ActionResult
 /** A button under Atlas's question: the option is checked again now (CL5); a second tap says how it ended. */
 export async function answerClarificationAction(clarificationId: string, option: string): Promise<ActionResult> {
   let message = "";
+  let captureId: string | null = null;
   const r = await run(async (ctx) => {
-    message = (await answerClarification(ctx, clarificationId, option)).message;
+    const run_ = await answerClarification(ctx, clarificationId, option);
+    message = run_.message;
+    captureId = run_.record.captureId;
   });
+  // Phase O, MT9: the call brief asked for once they said which project, written as any draft is (M25)
+  if (r.ok && captureId) after(() => writeDraftOf(captureId!));
   return r.ok ? { ok: true, message } : r;
+}
+
+/** Writes the draft a message asked for, if it is still to be written; nothing otherwise. */
+async function writeDraftOf(captureId: string): Promise<void> {
+  const db = await getDb();
+  const id = await draftOfCapture(db, captureId);
+  if (id) await writeDraft(db, now, id, atlasFromEnv().drafter);
 }
 
 // ---- Commitments (phase E, M22) ----
@@ -238,6 +252,46 @@ export async function answerStandupAction(standupId: string, n: number, tap: Sta
     });
   }
   return r;
+}
+
+// ---- Drafts (phase G, M25) ----
+
+/** Their edits, kept with the draft so a reload shows them. */
+export async function editDraftAction(draftId: string, text: string): Promise<ActionResult> {
+  return run((ctx) => editDraft(ctx, draftId, text));
+}
+
+/**
+ * Copy, with the words on screen: the server checks it (a client status against the client view now, DR4) and
+ * gives back the text the browser puts on the clipboard. A refusal offers Refresh.
+ */
+export async function copyDraftAction(draftId: string, text: string): Promise<ActionResult & { text?: string }> {
+  let copied = "";
+  const r = await run(async (ctx) => {
+    copied = (await copyDraft(ctx, draftId, text)).text;
+  });
+  return r.ok ? { ...r, text: copied } : r;
+}
+
+/** DR5: Refresh drafts again from the facts now, their edits kept aside; Atlas writes it after the reply. */
+export async function refreshDraftAction(draftId: string, text: string): Promise<ActionResult> {
+  let ran: CommandCtx | null = null;
+  const r = await run(async (ctx) => {
+    await refreshDraft(ctx, draftId, text);
+    ran = ctx;
+  });
+  const done = ran as CommandCtx | null;
+  if (r.ok && done) {
+    const db = done.db;
+    after(async () => {
+      await writeDraft(db, now, draftId, atlasFromEnv().drafter);
+    });
+  }
+  return r;
+}
+
+export async function discardDraftAction(draftId: string): Promise<ActionResult> {
+  return run((ctx) => discardDraft(ctx, draftId));
 }
 
 // ---- Learning from use (phase S) ----
@@ -414,6 +468,84 @@ export async function declineAsk(askId: string, reason: string): Promise<ActionR
   return run((ctx) => declineOwnerAsk(ctx, askId, reason), "Declined. They are told why.");
 }
 
+// ---- Meetings (phase O, M33 and M34) ----
+
+/**
+ * A meeting note: the transcript or notes, marked with the project; it waits in the chat for who was there (M33).
+ * Nothing is read until the recorder confirms the attendees, or says it is their own notes.
+ */
+export async function sendMeetingNote(_: SendResult | null, form: FormData): Promise<SendResult> {
+  const text = String(form.get("text") ?? "").trim();
+  const projectId = String(form.get("projectId") ?? "");
+  if (!text) return { ok: false, message: "Paste the meeting's transcript or notes first." };
+  if (!projectId) return { ok: false, message: "Choose the project the meeting was about." };
+  const ctx = await as();
+  try {
+    const created = await createMeetingNote(ctx, { text, projectId, messageId: String(form.get("messageId") ?? "") || randomUUID(), conversationId: String(form.get("conversationId") ?? "") || null });
+    refresh();
+    return { ok: true, conversationId: created.conversationId ?? undefined };
+  } catch (e) {
+    if (e instanceof CommandRefused) return { ok: false, message: sentence(e.reason) };
+    throw e;
+  }
+}
+
+/** Atlas reads the note after the reply, as for any message (5.1). */
+function readAfter(captureId: string) {
+  after(async () => {
+    const atlas = atlasFromEnv();
+    const viewer = await currentViewer();
+    await readCapture({ db: await getDb(), now: now(), actorId: viewer.id }, captureId, atlas.extractor, { clock: now, drafter: atlas.drafter });
+  });
+}
+
+/** ATTENDEES_CONFIRMED: who was there, and that they knew it was recorded (MT4); merge: MT7's offer, taken. */
+export async function confirmMeetingAttendees(meetingId: string, attendees: string[], merge: boolean): Promise<ActionResult> {
+  let captureId: string | null = null;
+  const r = await run(async (ctx) => {
+    captureId = (await confirmAttendees(ctx, meetingId, { attendees, told: true, merge })).captureId;
+  }, "Reading it for everyone there.");
+  if (r.ok && captureId) readAfter(captureId);
+  return r;
+}
+
+/** OWN_NOTES_ONLY (CD17): they were not told it was recorded, so it is read as the recorder's own notes. */
+export async function readMeetingAsOwnNotes(meetingId: string): Promise<ActionResult> {
+  let captureId: string | null = null;
+  const r = await run(async (ctx) => {
+    captureId = (await readAsOwnNotes(ctx, meetingId)).captureId;
+  }, "Reading it as your own notes only.");
+  if (r.ok && captureId) readAfter(captureId);
+  return r;
+}
+
+/** MT2: the recorder says who said a held item. */
+export async function fixMeetingSpeaker(itemId: string, personId: string): Promise<ActionResult> {
+  return run((ctx) => fixSpeaker(ctx, itemId, personId), "Thanks. It goes where it belongs.");
+}
+
+/** A command that says what came of it, a repeat included ("You confirmed this already."). */
+async function says(work: (ctx: CommandCtx) => Promise<{ message: string }>): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await work(ctx)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
+/** M34: the person it is about confirms it, changes it first, or says it's not right. */
+export async function confirmMeetingItem(itemId: string): Promise<ActionResult> {
+  return says((ctx) => confirmAttributed(ctx, itemId));
+}
+
+export async function changeMeetingItem(itemId: string, value: string, dueOn: string | null): Promise<ActionResult> {
+  return says((ctx) => editAttributed(ctx, itemId, { value, dueOn }));
+}
+
+export async function declineMeetingItem(itemId: string, reason: string): Promise<ActionResult> {
+  return says((ctx) => declineAttributed(ctx, itemId, reason || null));
+}
+
 export async function keepEntryOpen(entryId: string): Promise<ActionResult> {
   return run((ctx) => keepOpen(ctx, entryId), "Kept open.");
 }
@@ -448,6 +580,11 @@ export async function dismissSignalAction(signalId: string, version: number, rea
 
 export async function stillGoingAction(workItemId: string): Promise<ActionResult> {
   return run((ctx) => stillGoing(ctx, workItemId), "Noted. Its clock starts again.");
+}
+
+/** Phase G: the PM shares the status and its reason with the client, so a client status may hold them. */
+export async function shareReasonAction(projectId: string, reasonId: string, shared: boolean): Promise<ActionResult> {
+  return run((ctx) => shareReasonWithClient(ctx, projectId, reasonId, shared), shared ? "Shared. A client status can now say the status and its reason." : "No longer shared with the client.");
 }
 
 export async function setPausedAction(projectId: string, paused: boolean): Promise<ActionResult> {

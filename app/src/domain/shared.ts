@@ -93,6 +93,12 @@ export type ExtractedItemDraft = {
   closeMatches?: { ids: string[]; chosen: "chat" | "review" | null };
   /** Phase E, M22: the author's own promise (act promise), or that a live one of theirs is done (act done, CM6). */
   commitment?: CommitmentDraft;
+  /**
+   * Phase O, a meeting note only: who made the promise, an attendee or the recorder, and whether Atlas was sure
+   * (MT2). personId is null when Atlas could not say. Someone else's promise is never the recorder's (CD5): it
+   * goes to them to confirm (M34), or is a dependency in the recorder's review (MT1).
+   */
+  speaker?: { personId: string | null; sure: boolean };
 };
 
 /**

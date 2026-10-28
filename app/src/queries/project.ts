@@ -333,6 +333,8 @@ export type ProjectView = {
     stale: boolean;
     /** "given when the plan said At risk", when stale. */
     staleNote: string | null;
+    /** Phase G: its PM marked it, and the status it explains, as shareable with the client. */
+    clientShareable: boolean;
     links: { entryId: string; title: string; kind: BraidKind; stateLabel: string; onLog: boolean }[];
   } | null;
   threads: ProjectThread[];
@@ -555,6 +557,7 @@ export async function getProject(conn: Conn, viewerId: string, projectId: string
           savedAt: reason.savedAt,
           stale: record.override === "reason_stale",
           staleNote: record.override === "reason_stale" ? `given when the plan said ${statusLabel(record.reasonGivenAt)}` : null,
+          clientShareable: reason.clientShareable,
           links: reasonLinks
             .filter((l) => log[l.braidEntryId])
             .map((l) => {

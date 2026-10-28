@@ -37,6 +37,7 @@ import { projectReader } from "../queries/project";
 import { retargetItemIn, routeItemIn } from "./capture";
 import { proposeLine, type WhichLines } from "./chat-command";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, type CommandCtx } from "./core";
+import { requestDraft } from "./draft";
 
 type Row = typeof t.clarifications.$inferSelect;
 type CaptureRow = typeof t.captures.$inferSelect;
@@ -180,11 +181,47 @@ export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "
 }
 
 /**
+ * Phase O, MT9: "Prep me for the Sprouts call" from someone whose own projects include 2 or 3 that fit (Sprouts is
+ * the customer of Forager 2.0 and of Store Insights). DPM asks which in their own chat (M21, asked in the read's
+ * transaction, once only by the capture's id); the brief is drafted once they say. This branch extends M21 to a
+ * question for the first time; the integrator joins it with wave 4's extension of M21 to questions (CD50).
+ */
+export async function askWhichProject(tx: Tx, now: Date, capture: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "channel" | "text">, projects: readonly { id: string; name: string }[]): Promise<ClarificationRecord | null> {
+  const draft = draftClarification({
+    id: `clr-${capture.id}`,
+    captureId: capture.id,
+    authorId: capture.authorId,
+    about: "prep",
+    extractionId: null,
+    command: null,
+    quote: capture.text,
+    options: projects.map((p) => ({ id: p.id, label: p.name, projectId: p.id })),
+    createdAt: now,
+  });
+  const [conversation] = capture.conversationId ? await tx.select({ atlasChatId: t.conversations.atlasChatId }).from(t.conversations).where(eq(t.conversations.id, capture.conversationId)) : [];
+  const r = applyClarificationEvent(draft, { type: "ASK" }, { actorId: capture.authorId, now, ownChat: isOwnChat(capture.channel, conversation?.atlasChatId) });
+  if (!r.outcome.ok) return null;
+  const inserted = await tx
+    .insert(t.clarifications)
+    .values({ id: r.record.id, captureId: capture.id, authorId: capture.authorId, conversationId: capture.conversationId, about: "prep", extractionId: null, quote: r.record.quote, options: r.record.options, state: r.record.state, createdAt: now, updatedAt: now })
+    .onConflictDoNothing()
+    .returning({ id: t.clarifications.id });
+  if (!inserted.length) return null;
+  await auditMove(tx, now, r.record, r.outcome, { actorType: "atlas", actorId: null });
+  return r.record;
+}
+
+/**
  * The choice, in a savepoint of the answer's transaction, through the item's own machines or as the M20 card
  * (rule 1: nothing else). A refusal there is an option no longer allowed (CL5), and nothing changes.
  */
 async function choose(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, r: ClarificationRecord, option: string): Promise<void> {
   const [capture] = await tx.select().from(t.captures).where(eq(t.captures.id, r.captureId));
+  // Phase O, MT9: the brief is asked for again on the project they chose, with the right checked now (DR3)
+  if (r.about === "prep") {
+    if (!(await requestDraft(tx, ctx.now, capture, "prep", option))) throw new CommandRefused("you can't draft a brief for that project");
+    return;
+  }
   if (r.about === "line") {
     const [answer] = await tx.select().from(t.captures).where(eq(t.captures.id, r.command!.answerCaptureId));
     const made = await proposeLine(tx, ctx.now, { id: r.captureId, authorId: r.authorId }, answer, { act: r.command!.act, line: Number(option), reason: r.command!.reason }, await projectReader(tx, r.authorId));

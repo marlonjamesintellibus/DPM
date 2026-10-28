@@ -2,10 +2,11 @@
 // The open conversation's screen (section 17): the thread, what is on its way, and the box. A message
 // shows the moment it is sent, with "Thinking…" under it, before the server has it; the box sends one
 // message at a time (MF2), and a refused one comes back to the box with the reason (MF1). Suggested
-// follow-ups under a reply send through the same path (MF9).
+// follow-ups under a reply send through the same path (MF9). Phase O: the box can send a meeting note, marked
+// with its project; who was there is asked under it (M33).
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { sendUpdate } from "@/app/actions";
+import { sendMeetingNote, sendUpdate } from "@/app/actions";
 import { ASK_ATLAS_INPUT } from "@/components/shell/ask-atlas";
 import { ActionNote } from "@/components/ui/controls";
 import { ThinkingLine } from "./thinking";
@@ -20,11 +21,25 @@ export function useChatSend(): (text: string) => void {
   return send;
 }
 
-export function ChatSession({ conversationId, focus, children }: { conversationId: string | null; focus: boolean; children: React.ReactNode }) {
+export function ChatSession({
+  conversationId,
+  focus,
+  meetingProjects = [],
+  children,
+}: {
+  conversationId: string | null;
+  focus: boolean;
+  /** Phase O: the projects a meeting note may be marked with, the viewer's own (P10). */
+  meetingProjects?: { id: string; name: string }[];
+  children: React.ReactNode;
+}) {
   const router = useRouter();
   const [pending, setPending] = useState<Pending[]>([]);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Phase O, M33: a meeting note is marked as one, with its project, before it is sent
+  const [meeting, setMeeting] = useState(false);
+  const [projectId, setProjectId] = useState("");
   const busy = pending.length > 0;
   const end = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -52,13 +67,18 @@ export function ChatSession({ conversationId, focus, children }: { conversationI
     form.set("text", words);
     form.set("messageId", id);
     if (conversationId) form.set("conversationId", conversationId);
-    void sendUpdate(null, form)
+    const asMeeting = meeting;
+    if (asMeeting) form.set("projectId", projectId);
+    void (asMeeting ? sendMeetingNote(null, form) : sendUpdate(null, form))
       .then((r) => {
         if (!r.ok) {
           // MF1: the words come back to the box, with the reason
           setDraft(words);
           setError(r.message ?? "That did not send. Try again.");
-        } else if (!conversationId && r.conversationId) router.replace(`/?view=chat&c=${r.conversationId}`);
+        } else {
+          if (asMeeting) setMeeting(false);
+          if (!conversationId && r.conversationId) router.replace(`/?view=chat&c=${r.conversationId}`);
+        }
       })
       .catch(() => {
         setDraft(words);
@@ -89,6 +109,24 @@ export function ChatSession({ conversationId, focus, children }: { conversationI
             send(draft);
           }}
         >
+          {meetingProjects.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 type-caption text-fg-2">
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={meeting} onChange={(e) => setMeeting(e.target.checked)} />
+                Meeting note
+              </label>
+              {meeting && (
+                <select aria-label="Meeting project" value={projectId} onChange={(e) => setProjectId(e.target.value)} className="rounded-control border border-line-strong bg-panel px-2 py-0.5 type-caption">
+                  <option value="">Which project was it about?</option>
+                  {meetingProjects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           <div className="flex items-end gap-2.5 rounded-panel border border-line-strong bg-panel px-3.5 py-3">
             <textarea
               id={ASK_ATLAS_INPUT}
@@ -98,7 +136,7 @@ export function ChatSession({ conversationId, focus, children }: { conversationI
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               aria-label="Message to Atlas"
-              placeholder={conversationId ? "Reply to Atlas, or tell it what changed…" : "Tell Atlas what you did, or ask what needs you…"}
+              placeholder={meeting ? "Paste the meeting's transcript or notes…" : conversationId ? "Reply to Atlas, or tell it what changed…" : "Tell Atlas what you did, or ask what needs you…"}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

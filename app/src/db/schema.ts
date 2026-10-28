@@ -25,12 +25,16 @@ import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandP
 import type { ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
 import type { CommitmentEnd, CommitmentLink, CommitmentState } from "../domain/machines/commitment";
 import type { CoverEnd, CoverHandover, CoverItem, CoverState } from "../domain/machines/cover-request";
+import type { DraftBy, DraftState } from "../domain/machines/draft";
+import type { DraftFacts, DraftKind } from "../domain/drafts";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { ConversationState } from "../domain/machines/conversation";
 import type { EvalCandidateDetail, EvalCandidateState, EvalCause } from "../domain/machines/eval-candidate";
 import type { KindRequestState } from "../domain/machines/kind-request";
+import type { MeetingMode, MeetingState } from "../domain/machines/meeting";
+import type { AlsoFrom, AttributedKind, AttributedState } from "../domain/machines/attributed-item";
 import type { OwnerAskKind, OwnerAskState } from "../domain/machines/owner-ask";
 import type { EarlierDismissal, SignalMemory, SignalStage, SignalState } from "../domain/machines/signal";
 import type { SignalFacts, SignalRule, SignalSubjectType } from "../domain/signals";
@@ -376,6 +380,11 @@ export const statusReasons = pgTable("status_reasons", {
   savedAt: instant("saved_at").notNull(),
   /** Set when the plan moved under the reason (reason_stale). */
   staleSince: instant("stale_since"),
+  /**
+   * Phase G: its PM marked this reason, and the status it explains, as shareable with the client, so a client
+   * status may hold them (section 9). A new reason starts unshared.
+   */
+  clientShareable: boolean("client_shareable").notNull().default(false),
 });
 
 export const statusReasonLinks = pgTable(
@@ -592,6 +601,40 @@ export const standups = pgTable(
     updatedAt: updated(),
   },
   (t) => [uniqueIndex("standups_person_day").on(t.personId, t.day), index("standups_open").on(t.state, t.conversationId), index("standups_capture").on(t.captureId)],
+);
+
+/**
+ * M25. A draft Atlas wrote for its asker from DPM's facts (conversational plan, phase G): a standup, a client
+ * status or a weekly summary. Once only by draft id, one per message that asked (rule 6, DR8). The facts are
+ * the ones read for the asker when the request (or Refresh) ran, never quotes (CD8).
+ */
+export const drafts = pgTable(
+  "drafts",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull().references(() => people.id),
+    kind: text("kind").$type<DraftKind>().notNull(),
+    projectId: text("project_id").references(() => projects.id),
+    /** The message that asked for it; unique, so a read delivered twice drafts once. */
+    captureId: text("capture_id").notNull().unique().references(() => captures.id),
+    state: text("state").$type<DraftState>().notNull(),
+    attempt: integer("attempt").notNull(),
+    /** The model timer counts from here. */
+    attemptAt: instant("attempt_at"),
+    facts: jsonb("facts").$type<DraftFacts>().notNull(),
+    text: text("text"),
+    by: text("by").$type<DraftBy>(),
+    edited: boolean("edited").notNull().default(false),
+    /** DR5: what they had written when they refreshed. */
+    aside: text("aside"),
+    /** The expiry timer counts from here. */
+    readyAt: instant("ready_at"),
+    endedAt: instant("ended_at"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("drafts_open").on(t.state), index("drafts_owner").on(t.ownerId, t.kind, t.state)],
 );
 
 /** M36. A candidate for the eval set; the text only while logged and while the person allows it (LF1, LF2). */
@@ -829,6 +872,65 @@ export const coverRequests = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("cover_requests_leave_state").on(t.leaveId, t.state), index("cover_requests_to_state").on(t.toId, t.state), uniqueIndex("cover_requests_ask_command").on(t.askCommandId)],
+);
+
+// ---- Meetings (phase O, M33 and M34) ----
+
+/**
+ * M33. A meeting note: the recorder's capture (private to them, M1), marked as a meeting with a project, and who
+ * was there. It is read only once the recorder confirmed the attendees and that they knew it was recorded, or
+ * said it is their own notes (CD17). One per capture.
+ */
+export const meetings = pgTable(
+  "meetings",
+  {
+    id: text("id").primaryKey(),
+    captureId: text("capture_id").notNull().unique().references(() => captures.id),
+    recorderId: text("recorder_id").notNull().references(() => people.id),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    attendees: text("attendees").array().notNull().default(sql`'{}'::text[]`),
+    mode: text("mode").$type<MeetingMode>(),
+    /** MT7, CD18: the earlier note of the same meeting it merged with. */
+    mergedWith: text("merged_with"),
+    state: text("state").$type<MeetingState>().notNull(),
+    receivedOn: day("received_on").notNull(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("meetings_project").on(t.projectId, t.state)],
+);
+
+/**
+ * M34. What a meeting note says about an attendee (their work, their promise), asked of them; it is saved as
+ * theirs only when they confirm it (rule 10). The person sees only the quote (rule 9). Once only by id: a second
+ * confirm changes nothing (rule 6).
+ */
+export const attributedItems = pgTable(
+  "attributed_items",
+  {
+    id: text("id").primaryKey(),
+    meetingId: text("meeting_id").notNull().references(() => meetings.id),
+    captureId: text("capture_id").notNull().references(() => captures.id),
+    recorderId: text("recorder_id").notNull().references(() => people.id),
+    personId: text("person_id").references(() => people.id),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    kind: text("kind").$type<AttributedKind>().notNull(),
+    draft: jsonb("draft").$type<ExtractedItemDraft>().notNull(),
+    quote: text("quote").notNull(),
+    state: text("state").$type<AttributedState>().notNull(),
+    wording: text("wording"),
+    dueOn: day("due_on"),
+    askedOn: day("asked_on"),
+    decidedOn: day("decided_on"),
+    reason: text("reason"),
+    /** MT7: later notes of the same meeting that said it too. */
+    alsoFrom: jsonb("also_from").$type<AlsoFrom[]>().notNull().default([]),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("attributed_items_person").on(t.personId, t.state), index("attributed_items_meeting").on(t.meetingId)],
 );
 
 // ---- Notices (D15) ----

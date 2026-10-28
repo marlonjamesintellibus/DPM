@@ -7,6 +7,7 @@
 // Phase D adds one recording: a vague update whose words fit two of Kemar's records, so the browser story
 // can answer Atlas's question (M21). Phase K adds one: the store feed blocker said again (S14). Phase E adds one:
 // Kemar's own promise, a commitment (M22). Phase P adds one: Kemar's leave next week, so the story can ask cover (M35).
+// Phase O adds one: a meeting note with Alicia's promise in it (M34).
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
 import { ruleCommands } from "../domain/acting";
@@ -87,7 +88,28 @@ const KEMAR_OFF_PROPOSALS: readonly RawProposal[] = [
   },
 ];
 
+/**
+ * Phase O's story step: Kemar's note of a Forager meeting with Alicia. Her promise is hers (rule 10): DPM asks her to
+ * confirm it (M34), and Kemar's own review has nothing of hers in it.
+ */
+export const MEETING_NOTE = "Forager sync with Alicia. Alicia: I'll send Kyle the buyer list Friday.";
+const MEETING_NOTE_PROPOSALS: readonly RawProposal[] = [
+  {
+    kind: "commitment",
+    projectId: null,
+    routingReason: { basis: "personal", evidence: "Alicia", label: "Alicia's promise" },
+    newValue: "promised",
+    promise: "Send Kyle the buyer list",
+    speakerId: "alicia",
+    speakerSure: true,
+    quote: "Alicia: I'll send Kyle the buyer list Friday",
+    confidence: "high",
+    rationale: "Alicia promised it in the meeting.",
+  },
+];
+
 const RECORDINGS = new Map<string, readonly RawProposal[]>([
+  [MEETING_NOTE, MEETING_NOTE_PROPOSALS],
   [KEMAR_NOTE, KEMAR_PROPOSALS],
   [VAGUE_FEED, VAGUE_FEED_PROPOSALS],
   [FEED_STILL_BLOCKED, FEED_STILL_BLOCKED_PROPOSALS],

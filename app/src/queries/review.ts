@@ -17,6 +17,7 @@ import type { CommitmentDraft, Confidence, ExtractedItemDraft, ItemKind, MatchSt
 import type { WorkItemState } from "../domain/status/rules";
 import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
 import { composedRead } from "./standup";
+import { heldForReview, type HeldItem } from "./meeting";
 
 export type ReviewMark = ReturnType<typeof displayMark>;
 
@@ -118,6 +119,8 @@ export type Review = {
   canSave: boolean;
   /** Phase L, M30: when the author undid this save; its items stay as they were saved, but nothing stands. */
   undoneAt: Date | null;
+  /** Phase O, MT2: a meeting note's items whose speaker Atlas was unsure of, for the recorder to say who. */
+  held: HeldItem[];
 };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -566,6 +569,8 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
 
   const { perProject: _perProject, personal: _personal, notFiled: _notFiled, ...counts } = countItems(items);
   const aside = await readSetAside(conn, capture, items);
+  // Phase O, MT2: a meeting note's items held until the recorder says who said each; Save waits for them
+  const held = await heldForReview(conn, capture.id, viewerId);
   return {
     found: true,
     capture: {
@@ -588,8 +593,9 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     footer: countsLine(counts, ". "),
     chatLine: `Got it. ${withSetAside(countsLine(counts, "; "), aside)}`,
     setAside: aside,
-    canSave: (capture.state === "proposed" || capture.state === "reviewing") && counts.needsOk === 0 && counts.needsProject === 0,
+    canSave: (capture.state === "proposed" || capture.state === "reviewing") && counts.needsOk === 0 && counts.needsProject === 0 && held.length === 0,
     undoneAt: await undoneAt(conn, capture.id),
+    held,
   };
 }
 

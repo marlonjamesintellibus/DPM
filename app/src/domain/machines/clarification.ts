@@ -11,7 +11,8 @@
 //   asked --ANSWER(option) [the author; an option still allowed now]--> resolved
 //   asked --REVIEW_OPENED [about an item]--> handed_to_review               CL3
 //   asked --EXPIRE [2 hours, about an item]--> handed_to_review
-//   asked --EXPIRE [2 hours, about a line]--> closed                       the model check's fix
+//   asked --EXPIRE [2 hours, about a line]--> closed                       the model check's fix; phase O's
+//                                                                           call brief closes so too (MT9)
 //   asked --CLOSE--> closed                                                 the capture is discarded or expires (CL6),
 //                                                                           or a correction withdrew its item (CV10)
 // The plan's "asked --ANSWERED(not an option)--> asked" is not an event: words that fit no option are not an
@@ -27,9 +28,13 @@ export type ClarificationState = (typeof CLARIFICATION_STATES)[number];
 /**
  * What it asks about. project: an item that is choose_project (M14). record: an update whose words fit 2 or
  * 3 records (a vague "Worked on the feed", plan phase J). line: a reply that decides a line of the open
- * answer and fits 2 or 3 of them (phase B, AC6, AC7).
+ * answer and fits 2 or 3 of them (phase B, AC6, AC7). prep: a request for a call brief whose words fit 2 or 3 of
+ * the asker's projects ("Prep me for the Sprouts call", phase O, MT9); like a line, it has no review card.
  */
-export type ClarifyAbout = "project" | "record" | "line";
+export type ClarifyAbout = "project" | "record" | "line" | "prep";
+
+/** What has no review card to hand its choice to: a reply's line, and phase O's call brief. */
+const NO_REVIEW: readonly ClarifyAbout[] = ["line", "prep"];
 
 /**
  * One button: a project id, a record id, or a line number as text, with the words the button shows and the
@@ -103,8 +108,8 @@ export function clarificationExpired(r: Pick<ClarificationRecord, "state" | "cre
 const authorGuard = (c: Ctx) => (c.actorId === c.record.authorId ? null : "only the person who sent the message can answer");
 
 // The model check's fix: a review card holds an item's choice; nothing holds a line's
-const hasReview = (c: Ctx) => (c.record.about === "line" ? "a reply that decides a line has no review card" : null);
-const noReview = (c: Ctx) => (c.record.about === "line" ? null : "an item's choice goes to its review");
+const hasReview = (c: Ctx) => (c.record.about === "line" ? "a reply that decides a line has no review card" : c.record.about === "prep" ? "a request for a call brief has no review card" : null);
+const noReview = (c: Ctx) => (NO_REVIEW.includes(c.record.about) ? null : "an item's choice goes to its review");
 const expired = (c: Ctx) => (clarificationExpired(c.record, c.now) ? null : `a question stays open ${config.clarifyExpiryHours} hours`);
 
 function answerGuard(c: Ctx, e: Extract<ClarificationEvent, { type: "ANSWER" }>): string | null {
@@ -184,6 +189,8 @@ export function clarifyQuestion(r: Pick<ClarificationRecord, "about" | "quote" |
       return `Which project is "${said(r.quote)}" for: ${either(labels)}?`;
     case "line":
       return `Did you mean ${either(labels.map((l) => `"${l}"`))}?`;
+    case "prep":
+      return `Which project is the call about: ${either(labels)}?`;
   }
 }
 
@@ -192,6 +199,7 @@ export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about
   switch (r.state) {
     case "resolved":
       if (r.about === "line") return label ? `Got it: "${label}".` : "Got it.";
+      if (r.about === "prep") return `Got it${label ? `: ${label}` : ""}. Your brief follows.`;
       return `Got it${label ? `: ${label}` : ""}. It's in your review, waiting for your OK.`;
     case "handed_to_review":
       // CL3: the review card holds the choice
@@ -208,7 +216,7 @@ export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about
  * on its review card; a line's has none, so it says to ask again.
  */
 export function optionGoneText(about: ClarifyAbout): string {
-  return `You can't choose that one any more. Pick another, or ${about === "line" ? "ask me again" : "choose it in the review"}.`;
+  return `You can't choose that one any more. Pick another, or ${NO_REVIEW.includes(about) ? "ask me again" : "choose it in the review"}.`;
 }
 
 // ---- A typed answer, read against the options only (CL2) ----

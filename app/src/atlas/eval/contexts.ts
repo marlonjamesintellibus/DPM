@@ -20,7 +20,17 @@ export function caseContext(c: EvalCase, contexts: Record<EvalAuthor, CheckConte
   const base = contexts[c.author ?? "kemar"];
   const projects = c.braid ? base.projects.map((p) => ({ ...p, braid: [...p.braid, ...c.braid!.filter((b) => b.projectId === p.id).map(({ projectId: _, ...e }) => e)] })) : base.projects;
   const leave = c.leave ? { ...base.leave, existing: c.leave } : base.leave;
-  return { ...base, projects, leave, text: c.text, ...(c.earlier ? { earlier: c.earlier } : {}), ...(c.answer ? { openAnswer: c.answer } : {}), ...(c.standup ? { standup: { quoteIn: answerSpans(c.text) } } : {}) };
+  return {
+    ...base,
+    projects,
+    leave,
+    text: c.text,
+    ...(c.earlier ? { earlier: c.earlier } : {}),
+    ...(c.answer ? { openAnswer: c.answer } : {}),
+    ...(c.standup ? { standup: { quoteIn: answerSpans(c.text) } } : {}),
+    // Phase O: a meeting note is read with who was there (M33)
+    ...(c.meeting ? { meeting: c.meeting } : {}),
+  };
 }
 
 /** Phase J: a standup case's answers, each line after its "Atlas:" question, as check 2 looks for quotes in them. */

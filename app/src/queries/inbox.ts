@@ -19,6 +19,7 @@ import { asksDrop } from "../domain/machines/commitment";
 import { weekday } from "../domain/dates";
 import { describeOwnerAsk } from "./owner-ask";
 import { describeCoverAsk, itemsSaid } from "./cover";
+import { describeAttributed } from "./meeting";
 import { signalsFor } from "./signals";
 import { OUTCOME_SAID } from "./review";
 import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, shortDate, STATUS_LABEL, statusLabel, todayIn } from "./project";
@@ -60,7 +61,9 @@ export type InboxCause =
   /** Phase E, CM11: the work the viewer's promise was about was cancelled; does it still stand? */
   | "commitment_stands"
   /** Phase P, M35: a teammate going on leave asks the viewer to cover some of their work (a notice in the chat too). */
-  | "cover_ask";
+  | "cover_ask"
+  /** Phase O, M34: a meeting note says something of the viewer's (their work, their promise); they confirm it or say it's not right. */
+  | "attributed";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -80,7 +83,9 @@ export type InboxSubject =
   /** Phase E: the viewer's own commitment; it belongs to no project (CD3). */
   | { type: "commitment"; id: string }
   /** Phase P: a request to cover a teammate's work while they are away. */
-  | { type: "cover_request"; id: string; projectId: string };
+  | { type: "cover_request"; id: string; projectId: string }
+  /** Phase O: what a meeting note says of the viewer's, on its project. */
+  | { type: "attributed_item"; id: string; projectId: string };
 
 export type InboxEntry = {
   id: string;
@@ -115,7 +120,7 @@ export type Inbox = {
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
 const WORK_CAUSES: readonly string[] = ["done_no_change", "blocked_without_blocker"];
 const PROMISE_CAUSES: readonly string[] = ["commitment_check", "commitment_stands"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, ...PROMISE_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change", "signals", "cover_ask"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, ...PROMISE_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change", "signals", "cover_ask", "attributed"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -372,7 +377,32 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
     });
   }
 
-  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask" && x.cause !== "signals" && x.cause !== "cover_ask" && !PROMISE_CAUSES.includes(x.cause))) {
+  // Phase O, M34: what a meeting note says of the viewer's, while it is asked of them and its project is theirs to
+  // read (P10); only the words that fed it are shown (rule 9)
+  for (const p of parsed.filter((x) => x.cause === "attributed")) {
+    const d = await describeAttributed(conn, p.subjectId, viewerId);
+    if (!d || d.record.state !== "proposed") continue;
+    const age = ageOf(d.at, now, true);
+    items.push({
+      id: p.row.id,
+      causeKey: p.row.causeKey,
+      cause: p.cause,
+      state: p.row.state,
+      title: `${d.recorder}'s meeting note: ${d.summary}`,
+      why: "it says this is yours, so nothing is saved until you confirm it; or say it's not right",
+      source: `${d.recorder}'s meeting note`,
+      age,
+      sourceLine: `${d.recorder}'s meeting note · ${age}`,
+      action: "Confirm",
+      group: "today",
+      groupLabel: GROUP_LABEL.today,
+      subject: { type: "attributed_item", id: d.record.id, projectId: d.project.id },
+      project: d.project,
+      createdAt: p.row.createdAt,
+    });
+  }
+
+  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask" && x.cause !== "signals" && x.cause !== "cover_ask" && x.cause !== "attributed" && !PROMISE_CAUSES.includes(x.cause))) {
     const projectId = projectOf(p);
     const project = projectId ? projects.get(projectId) : undefined;
     if (!project) continue; // not readable any more, or the subject is gone

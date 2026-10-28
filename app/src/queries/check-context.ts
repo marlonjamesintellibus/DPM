@@ -13,6 +13,7 @@ import type { AnswerCard } from "../domain/question";
 import type { Confidence } from "../domain/shared";
 import { projectReader } from "./project";
 import { composedRead } from "./standup";
+import { meetingContextOf } from "./meeting";
 
 export async function loadCheckContext(
   conn: Conn,
@@ -96,8 +97,10 @@ export async function loadCheckContext(
     .map((p) => ({ id: p.id, name: p.name }));
 
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, input.authorId));
-  const earlier = input.captureId ? await loadEarlierTurns(conn, input.captureId) : [];
-  const openAnswer = input.captureId ? await loadOpenAnswer(conn, input.captureId) : null;
+  // Phase O: a meeting note is read with who was there, and on its own: it follows up nothing and decides no line
+  const meeting = input.captureId ? await meetingContextOf(conn, input.captureId) : null;
+  const earlier = input.captureId && !meeting ? await loadEarlierTurns(conn, input.captureId) : [];
+  const openAnswer = input.captureId && !meeting ? await loadOpenAnswer(conn, input.captureId) : null;
   // Phase J: a standup's answers are quoted only from the answers, and the questions taps answered
   const standup = input.captureId ? await composedRead(conn, input.captureId) : null;
   // Phase E, CM5 and CM6: the author's own live commitments, each naming its record only on a project they file into
@@ -110,6 +113,7 @@ export async function loadCheckContext(
     ...(commitments.length ? { commitments } : {}),
     ...(openAnswer ? { openAnswer } : {}),
     ...(standup ? { standup: { quoteIn: standup.quoteIn } } : {}),
+    ...(meeting ? { meeting } : {}),
     text: input.text,
     messageAt: input.messageAt,
     transcriptConfidence: input.transcriptConfidence,

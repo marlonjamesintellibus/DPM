@@ -5,6 +5,8 @@ import { ruleQuestion } from "../../domain/question";
 import { EVAL_CASES } from "./cases";
 import { caseContext, evalContexts } from "./contexts";
 import { scoreCase } from "./score";
+import { DRAFT_EVAL_CASES, draftCaseFacts, scoreDraft } from "./drafts";
+import { draftTemplate } from "../../domain/drafts";
 
 describe("evaluation cases", () => {
   it("every id an expected item names is in its author's candidate data", async () => {
@@ -75,6 +77,22 @@ describe("evaluation cases", () => {
       const ctx = caseContext(c, contexts);
       const score = scoreCase(c, [], ctx, ruleQuestion(ctx));
       expect([score.missing, score.forbidden], c.id).toEqual([[], []]);
+    }
+  });
+
+  it("phase G: the rule (no model) reads each draft request, and each drafting case's plain template passes its own scoring", async () => {
+    const db = await seededDb({ kemarNote: false, aliciaSetsStatus: false });
+    const contexts = await evalContexts(db);
+    for (const c of EVAL_CASES.filter((x) => x.id.startsWith("g-draft-"))) {
+      const ctx = caseContext(c, contexts);
+      expect(scoreCase(c, [], ctx, ruleQuestion(ctx)).missing, c.id).toEqual([]);
+    }
+    expect(DRAFT_EVAL_CASES.length).toBeGreaterThanOrEqual(4);
+    for (const c of DRAFT_EVAL_CASES) {
+      const { facts, known } = await draftCaseFacts(db, c);
+      expect(scoreDraft(c, facts, known, draftTemplate(facts)), c.id).toEqual({ pass: true, problem: null, forbidden: [] });
+      // A made-up date fails, as the machine would refuse it (DR2)
+      expect(scoreDraft(c, facts, known, `${draftTemplate(facts)}\nNext update on Monday 9 Nov.`).pass, c.id).toBe(false);
     }
   });
 

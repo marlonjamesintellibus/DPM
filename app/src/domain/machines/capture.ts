@@ -72,6 +72,13 @@ export type CaptureContext = {
   elapsed?: { workingHours: number; days: number };
   /** Minutes since the capture last moved, for the stale timer (D19). */
   idleMinutes?: number;
+  /**
+   * Phase O, M33: a meeting note waits for its attendees before it is read, and ends with its meeting when they
+   * are never confirmed. Missing for any other capture.
+   */
+  meeting?: "waiting" | "expired" | "ready";
+  /** Phase O, MT2: items whose speaker the recorder has not said yet; Save waits for them (M34 held). */
+  held?: number;
 };
 
 type Ctx = CaptureContext & { record: CaptureRecord };
@@ -100,12 +107,14 @@ function plural(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-function saveGuard({ authorActive, items, isMember }: Ctx): string | null {
+function saveGuard({ authorActive, items, isMember, held }: Ctx): string | null {
   if (authorActive !== true) return "the author can no longer save this capture";
   if (!items || !isMember) return "the items and memberships are needed to check Save";
   const { needsOk, needsProject } = saveBlockers(items);
   if (needsOk) return `${plural(needsOk, "needs", "need")} your OK before this is saved`;
   if (needsProject) return `${plural(needsProject, "needs", "need")} a project before this is saved`;
+  // Phase O, the model's holdUnsure: say who said each held item first (MT2)
+  if (held) return `${plural(held, "needs", "need")} who said it before this is saved`;
   const lost = lostProjects(items, isMember);
   if (lost.length) return `no longer a member of ${lost.join(", ")}; withdraw those items first`;
   return null;
@@ -115,8 +124,11 @@ export const captureMachine = defineMachine<CaptureState, CaptureEvent, Ctx>({
   name: "capture",
   states: CAPTURE_STATES,
   arrows: [
-    { from: ["received"], on: "START", to: "transcribing", guard: ({ record }) => (record.kind === "voice" ? null : "text needs no transcript") },
-    { from: ["received"], on: "START", to: "reading" },
+    // Phase O, M33: a meeting note is read only once its recorder confirmed the attendees, or said it is their own notes
+    { from: ["received"], on: "START", to: "transcribing", guard: (c) => meetingWaits(c) ?? (c.record.kind === "voice" ? null : "text needs no transcript") },
+    { from: ["received"], on: "START", to: "reading", guard: meetingWaits },
+    // M33 received --EXPIRE--> expired: its attendees were never confirmed, so the note is never read
+    { from: ["received"], on: "EXPIRE", to: "expired", guard: ({ meeting }) => (meeting === "expired" ? null : "only a meeting note whose attendees were never confirmed") },
     { from: ["transcribing"], on: "TRANSCRIBED", to: "reading" },
     // D1: a voice note that cannot be transcribed is tried again, then fails and asks for a new one
     { from: ["transcribing"], on: "TRANSCRIBE_FAILED", to: "transcribe_wait" },
@@ -164,6 +176,10 @@ export const captureMachine = defineMachine<CaptureState, CaptureEvent, Ctx>({
     },
   ],
 });
+
+function meetingWaits({ meeting }: Ctx): string | null {
+  return meeting === "waiting" || meeting === "expired" ? "a meeting note waits for its attendees" : null;
+}
 
 function triesLeft({ record }: Ctx): string | null {
   return record.tries < config.captureMaxTries ? null : `tried ${record.tries} times`;

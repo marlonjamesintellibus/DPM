@@ -20,7 +20,9 @@
 // correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
 // unsure (phase D, M21): what DPM asks the author which of, after the checks: "records:<id>,<id>" for an
 //   update whose words fit 2 or 3 records. A case without it must leave no record unsure.
-import type { EarlierTurn, ExistingLeave, OpenAnswer } from "../../domain/atlas-checks/types";
+//   promise-by:<person|unsure>@<date>  phase O, a meeting note: a promise someone else made there (M34), or
+//                                      one Atlas could not tell who made (MT2)
+import type { EarlierTurn, ExistingLeave, MeetingContext, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
 import type { Correction } from "../../domain/topics/correction";
@@ -67,6 +69,19 @@ export type EvalCase = {
   standup?: true;
   /** Phase P: the author's live leave for this case only, in place of the seed's (LV6: back early from leave they are on). */
   leave?: ExistingLeave[];
+  /** Phase O: the text is a meeting note its author recorded, with who was there (M33). */
+  meeting?: MeetingContext;
+};
+
+// Phase O: Kemar's Forager meetings. Alicia and Jodian are in DPM; Kyle (Sprouts IT) is not
+const FORAGER_MEETING: MeetingContext = {
+  projectId: "forager",
+  mode: "meeting",
+  attendees: [
+    { personId: "alicia", name: "Alicia Campbell", inDpm: true },
+    { personId: "jodian", name: "Jodian Taylor", inDpm: true },
+    { personId: "kyle", name: "Kyle", inDpm: false },
+  ],
 };
 
 // Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
@@ -1374,4 +1389,83 @@ export const EVAL_CASES: EvalCase[] = [
     forbid: ["*"],
     ask: { topic: "commitments", projectId: null },
   },
+  // Conversational plan phase G: a request for a draft is the asker's own command, with the project it names (M25).
+  // Which draft it is comes from the words; Atlas has only to say a draft was asked for. Atlas's drafting itself
+  // is scored by the draft cases (eval/drafts.ts)
+  { id: "g-draft-standup", about: "M25 'Draft my standup' is a draft, nothing proposed", text: "Draft my standup", expect: [], forbid: ["*"], ask: { topic: "draft", projectId: null } },
+  {
+    id: "g-draft-client",
+    author: "alicia",
+    about: "M25 a client status for a project she leads",
+    text: "Can you draft a client status for Forager?",
+    expect: [],
+    forbid: ["*"],
+    ask: { topic: "draft", projectId: "forager" },
+  },
+  { id: "g-draft-weekly", author: "alicia", about: "M25 the weekly summary for GQ", text: "Draft the weekly summary for GQ", expect: [], forbid: ["*"], ask: { topic: "draft", projectId: "gq" } },
+  {
+    id: "g-drafted-update",
+    about: "a message that mentions a draft it already sent is an update, not a request",
+    text: "Sent the client the status draft yesterday. #145 is done.",
+    expect: ["upd:wi-145.state=done"],
+  },
+  // Conversational plan phase O: Kemar's notes of Forager meetings. Someone else's promise is theirs (rule 10): a
+  // commitment with their speakerId, which DPM asks them to confirm (M34); Kyle, not in DPM, has a dependency (MT1).
+  // A decision agreed there is only proposed, and a meeting note asks Atlas nothing
+  {
+    id: "o-meeting-promises",
+    about: "M34: Alicia's promise is hers; Kemar finishing his own work by Monday is its forecast (CM3)",
+    text: "Forager sync. Alicia: I'll send Kyle the buyer list Friday. Kemar: I'll have the store feed connector done by Monday.",
+    meeting: FORAGER_MEETING,
+    expect: ["promise-by:alicia@2026-10-23", "upd:wi-152.forecast=2026-10-26"],
+    allow: ["upd:wi-152.state*"],
+    forbid: ["new:dependency*", "promise:*", "same-promise:*"],
+  },
+  {
+    id: "o-meeting-kyle",
+    about: "MT1: Kyle is not in DPM, so his promise is a dependency, never a commitment",
+    text: "Kyle said Sprouts IT will send the store feed access on Thursday.",
+    meeting: FORAGER_MEETING,
+    expect: [["new:dependency:forager@2026-10-22", "same:br-feed-dependency"]],
+    allow: ["same:br-feed-blocker"],
+    forbid: ["promise-by:*", "promise:*"],
+  },
+  {
+    id: "o-meeting-unsure",
+    about: "MT2: a transcript that does not say who promised: speakerSure false, held for the recorder",
+    text: "Someone said they would update the runbook tomorrow.",
+    meeting: FORAGER_MEETING,
+    expect: ["promise-by:unsure@2026-10-21"],
+    allow: ["upd:ho-runbook*"],
+    forbid: ["promise:*", "promise-by:alicia*", "promise-by:jodian*"],
+  },
+  {
+    id: "o-meeting-decision",
+    about: "M15: a decision agreed in the meeting is proposed; Jodian's work is asked of her (U5, M34)",
+    text: "On Forager we agreed to pause the TikTok scrape after the pilot. Jodian finished the feature store backfill.",
+    meeting: FORAGER_MEETING,
+    expect: ["new:decision:forager", "ask:wi-160.state=done"],
+    forbid: ["promise-by:*", "promise:*"],
+  },
+  {
+    id: "o-meeting-asks-nothing",
+    about: "a question asked in the meeting is not asked of Atlas; the update in it is read",
+    text: "Alicia asked what is blocked on Forager. I told her the store sales feed access is still blocked.",
+    meeting: FORAGER_MEETING,
+    expect: [],
+    allow: ["same:br-feed-blocker", "upd:wi-151.state=blocked", "upd:wi-151.blocked_note*"],
+    forbid: ["promise-by:*", "promise:*"],
+  },
+  {
+    id: "o-own-notes",
+    about: "CD17: the recorder's own notes; Alicia's promise is never a commitment for her or for Kemar",
+    text: "Alicia said she'll send Kyle the buyer list Friday.",
+    meeting: { ...FORAGER_MEETING, mode: "own", attendees: [] },
+    expect: [],
+    allow: ["new:dependency*"],
+    forbid: ["promise-by:*", "promise:*"],
+  },
+  // Phase O: "Prep me for the Sprouts call" asks for a call brief (M25's prep); DPM finds which project
+  { id: "o-prep-sprouts", about: "a call brief: a draft, with the project left to DPM (MT9)", text: "Prep me for the Sprouts call", expect: [], forbid: ["*"], ask: { topic: "draft", projectId: null } },
+  { id: "o-prep-named", author: "alicia", about: "a call brief that names its project", text: "Can you brief me before the Forager meeting?", expect: [], forbid: ["*"], ask: { topic: "draft", projectId: "forager" } },
 ];

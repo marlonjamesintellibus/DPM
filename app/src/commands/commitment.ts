@@ -140,6 +140,19 @@ export async function applyCommitmentsAtSave(tx: Tx, now: Date, capture: { id: s
 }
 
 /**
+ * Phase O, M34 CONFIRM: a promise a meeting note says someone made opens their commitment once they confirm it,
+ * as theirs (rule 10): saved by them, private to them (CD3). It names no message of theirs, so the recorder's
+ * undo never drops it, and its link is kept only on a project they can read now (CM9). Returns its id.
+ */
+export async function openFromMeeting(tx: Tx, now: Date, p: { attributedId: string; ownerId: string; what: string; dueOn: IsoDate; link: CommitmentLink | null }): Promise<string> {
+  const world = await loadWorld(tx);
+  const link = p.link && isCandidate(p.ownerId, await orgTagsOf(tx, p.ownerId), p.link.projectId, world) ? p.link : null;
+  const record = openCommitment({ id: `cm-${p.attributedId}`, ownerId: p.ownerId, captureId: null, extractionId: null, what: p.what, dueOn: p.dueOn, link, savedOn: todayOf(now) });
+  await write(tx, now, null, record, { event: "SAVE", from: null, to: "open" }, { actorType: "person", actorId: p.ownerId }, { link: link?.id ?? null, meetingItem: p.attributedId });
+  return record.id;
+}
+
+/**
  * Phase L with phase E, as CD34: undoing a save drops the commitments it opened that are still open and were never
  * moved, through M22's own DROP as their owner. One moved, due or ended since is the owner's later doing, and stays.
  */

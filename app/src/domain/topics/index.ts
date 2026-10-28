@@ -5,6 +5,7 @@ import { blocked } from "./blocked";
 import { catchUp } from "./catch-up";
 import { commitments } from "./commitments";
 import { correction } from "./correction";
+import { draft } from "./draft";
 import { due } from "./due";
 import { explainProject } from "./explain-project";
 import { mentions } from "./mentions";
@@ -27,7 +28,7 @@ import { whyFiled } from "./why-filed";
 import { whoFree } from "./who-free";
 
 /** In the order Atlas is shown them: the tool's topic enum and the prompt's topic list. */
-export const TOPICS = [needsMe, myWork, due, commitments, blocked, projectStatus, explainProject, updates, catchUp, mentions, people, whoFree, notUpdated, myDecisions, atRiskWeek, portfolio, why, whyFiled, correction, undo, standup, smallTalk, other, unclear] as const;
+export const TOPICS = [needsMe, myWork, due, commitments, blocked, projectStatus, explainProject, updates, catchUp, mentions, people, whoFree, notUpdated, myDecisions, atRiskWeek, portfolio, why, whyFiled, correction, undo, standup, draft, smallTalk, other, unclear] as const;
 
 /**
  * In the order the rule tries their words; the first that matches wins ("anything blocked today?" is
@@ -36,7 +37,7 @@ export const TOPICS = [needsMe, myWork, due, commitments, blocked, projectStatus
  * updates leaves to needs me what asks for their review or OK (QA1). Phase L: why_filed goes first, so "Why did
  * you file the blocker?" is not blocked, nor a why about the work. Phase C: why goes next, so "Why is Forager at
  * risk?" is not how it stands and "What's holding up #151?" is not blocked. Undo and corrections are
- * whole-message commands, read by ruleQuestion, and so is phase J's "Start my standup". Phase H: people goes
+ * whole-message commands, read by ruleQuestion, and so are phase J's "Start my standup" and phase G's "Draft my standup". Phase H: people goes
  * before blocked and my_work, so "Who owns the feed blocker?" and "What is Kemar working on?" are about a person;
  * after mentions, so "Who has mentioned me?" stays the asker's own. Phase N: its topics go after mentions too;
  * not_updated and my_decisions before updates and needs me, whose "updates" and "need" would take them;

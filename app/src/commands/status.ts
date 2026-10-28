@@ -2,7 +2,7 @@
 // stored status (A4.3): each command moves it through the set status machine against the plan
 // calculated now, audits the move and runs evaluate, which keeps the owner's inbox in step.
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import type { Conn, Tx } from "../db/conn";
 import { loadBraidLog, loadPlanRows, loadProject, membersOf, persistSetStatus, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
@@ -149,6 +149,27 @@ export async function saveReasonIn(
     edited: input.edited,
   }, opts.captureId ?? null);
   return { ...result, reasonId };
+}
+
+// ---- Sharing the status with the client (phase G) ----
+
+/**
+ * Phase G, section 9: the project's PM marks the reason on show, and the status it explains, as shareable with
+ * the client, or takes that back. A client status holds them only while this is on (DR4); a new reason starts
+ * unshared. Only the reason the project shows now can be shared (rule 4: what the PM saw is checked again).
+ */
+export function shareReasonWithClient(ctx: CommandCtx, projectId: string, reasonId: string, shared: boolean): Promise<void> {
+  return runCommand(ctx, async (tx) => {
+    const project = await loadProject(tx, projectId);
+    if (!project) throw new CommandRefused(`no project ${projectId}`, "not_found");
+    if ((await membersOf(tx, projectId)).find((m) => m.id === ctx.actorId)?.role !== "pm") throw new CommandRefused("only the project's PM shares its status with the client", "not_allowed");
+    const [latest] = await tx.select().from(t.statusReasons).where(eq(t.statusReasons.projectId, projectId)).orderBy(desc(t.statusReasons.savedAt)).limit(1);
+    const showing = project.setOverride === "explained" || project.setOverride === "reason_stale";
+    if (!showing || latest?.id !== reasonId) throw new CommandRefused("that reason is no longer the one the project shows; reload and try again");
+    if (latest.clientShareable === shared) throw new CommandRefused(shared ? "it is already shared with the client" : "it is not shared with the client");
+    await tx.update(t.statusReasons).set({ clientShareable: shared }).where(eq(t.statusReasons.id, reasonId));
+    await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: shared ? "SHARE_WITH_CLIENT" : "UNSHARE_WITH_CLIENT", subjectType: "project", subjectId: projectId, detail: { reasonId } });
+  });
 }
 
 // ---- Reason draft (M11) ----
