@@ -13,7 +13,7 @@ export function Button({ variant = "primary", className = "", ...rest }: ButtonP
         ? "border border-line-strong bg-panel text-fg-1 hover:bg-hover"
         : "text-accent hover:underline";
   const shape = variant === "link" ? "" : "rounded-control px-2.5 py-1";
-  return <button type="button" className={`inline-flex shrink-0 items-center gap-1.5 type-label whitespace-nowrap disabled:opacity-50 ${shape} ${look} ${className}`} {...rest} />;
+  return <button type="button" className={`inline-flex shrink-0 items-center justify-center gap-1.5 type-label whitespace-nowrap disabled:opacity-50 ${shape} ${look} ${className}`} {...rest} />;
 }
 
 /** "BRAID · Risk": a neutral label, never coloured (A4.1). */
