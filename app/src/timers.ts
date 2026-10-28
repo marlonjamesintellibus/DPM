@@ -10,8 +10,10 @@
 // stale work goes on to PM and Leads, unanswered signals expire, new trouble is raised), and a standup
 // question left config.standupIdleMinutes composes what was answered, read at once, or abandons it (phase J,
 // M28), and a promise is due at the end of its day, checked in on from config.commitmentCheckInTime on a
-// working day its owner is in, and lapses unanswered (phase E, M22). Each timer is one command and safe to run
-// again; a reminder never decides anything.
+// working day its owner is in, and lapses unanswered (phase E, M22), and a draft whose model has not answered
+// after config.draftModelSeconds fails that try and is written again, or nobody used for
+// config.draftExpiryHours expires (phase G, M25). Each timer is one command and safe to run again; a
+// reminder never decides anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
 import type { Extractor } from "./atlas/extractor";
@@ -22,6 +24,7 @@ import { runCaptureTimers } from "./commands/capture";
 import { runChatCommandTimers } from "./commands/chat-command";
 import { runClarificationTimers } from "./commands/clarification";
 import { runCommitmentTimers } from "./commands/commitment";
+import { runDraftTimers, writeDraft } from "./commands/draft";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
@@ -58,6 +61,15 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   } catch (error) {
     run.failed.push(runStandupTimers.name);
     console.error("timer runStandupTimers failed", error);
+  }
+  // Phase G, M25: a try the model left unanswered fails on its timer, and the next try is written now (rule 5)
+  try {
+    const drafts = await runDraftTimers({ db, now: now() });
+    const drafter = opts.extractor ? null : atlasFromEnv().drafter;
+    for (const id of drafts.retry) await writeDraft(db, now, id, drafter);
+  } catch (error) {
+    run.failed.push(runDraftTimers.name);
+    console.error("timer runDraftTimers failed", error);
   }
   // D19: a read that went stale waits for another try; so does a note the server never started on
   const due = await capturesToRead(db);

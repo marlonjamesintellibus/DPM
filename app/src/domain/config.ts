@@ -91,6 +91,12 @@ export const config = {
   signalExpiryDays: 14,
   // The model check's fix: stale work goes to its owner first, and to PM and Leads after this many working days
   ownerAnswerDays: 2,
+
+  // Phase G, M25 (conversational plan, section 23): a draft nobody copies, discards or refreshes expires after
+  // this many hours; and the model check's timer on requested: a model that has not answered after this many
+  // seconds counts as DRAFT_FAILED, so a draft always reaches ready (the plain template at worst)
+  draftExpiryHours: 24,
+  draftModelSeconds: 30,
 } as const;
 
 export type Config = typeof config;

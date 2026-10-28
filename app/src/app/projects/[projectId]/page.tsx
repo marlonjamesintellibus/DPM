@@ -11,6 +11,7 @@ import { BraidTable } from "@/components/project/braid-table";
 import { MilestoneCard } from "@/components/project/milestone-card";
 import { PauseControl } from "@/components/project/pause-control";
 import { PlanCard } from "@/components/project/plan-card";
+import { ShareStatusControl } from "@/components/project/share-control";
 import { getDb } from "@/db/client";
 import { dateInZone } from "@/domain/dates";
 import { getProject } from "@/queries/project";
@@ -43,6 +44,8 @@ async function Project({ params, searchParams }: { params: PageProps<"/projects/
         <HeadStatus status={view.displayed.status} label={view.displayed.label} because={because} />
         {view.displayed.from === "set" && <span className="shrink-0 type-caption whitespace-nowrap text-fg-3">set by {view.setStatus?.setBy?.name.split(" ")[0]}; the plan says {view.calculated.label}</span>}
         <div className="flex-1" />
+        {/* Phase G: a client status says the status and its reason only once the PM shares them */}
+        {view.viewerRole === "pm" && view.displayed.from === "set" && view.reason && <ShareStatusControl projectId={view.project.id} reasonId={view.reason.id} shared={view.reason.clientShareable} />}
         {view.viewerRole === "pm" && <PauseControl projectId={view.project.id} paused={view.project.paused} />}
         <ViewSwitch
           active={table ? "table" : "dashboard"}

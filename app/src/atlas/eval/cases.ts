@@ -1332,4 +1332,24 @@ export const EVAL_CASES: EvalCase[] = [
     forbid: ["*"],
     ask: { topic: "commitments", projectId: null },
   },
+  // Conversational plan phase G: a request for a draft is the asker's own command, with the project it names (M25).
+  // Which draft it is comes from the words; Atlas has only to say a draft was asked for. Atlas's drafting itself
+  // is scored by the draft cases (eval/drafts.ts)
+  { id: "g-draft-standup", about: "M25 'Draft my standup' is a draft, nothing proposed", text: "Draft my standup", expect: [], forbid: ["*"], ask: { topic: "draft", projectId: null } },
+  {
+    id: "g-draft-client",
+    author: "alicia",
+    about: "M25 a client status for a project she leads",
+    text: "Can you draft a client status for Forager?",
+    expect: [],
+    forbid: ["*"],
+    ask: { topic: "draft", projectId: "forager" },
+  },
+  { id: "g-draft-weekly", author: "alicia", about: "M25 the weekly summary for GQ", text: "Draft the weekly summary for GQ", expect: [], forbid: ["*"], ask: { topic: "draft", projectId: "gq" } },
+  {
+    id: "g-drafted-update",
+    about: "a message that mentions a draft it already sent is an update, not a request",
+    text: "Sent the client the status draft yesterday. #145 is done.",
+    expect: ["upd:wi-145.state=done"],
+  },
 ];

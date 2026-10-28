@@ -69,10 +69,10 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-wave4-e's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio; phase J standup; phase Q explain_project; phase E commitments); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-wave4-e");
+  it("the topics come from domain/topics in read-wave4-o's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio; phase J standup; phase Q explain_project; phase E commitments; phase G draft); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-wave4-o");
     expect(SYSTEM_PROMPT).toContain(
-      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), commitments (what they promised to do: their own open and due commitments), blocked (what is blocked or stuck), project_status (how a project stands), explain_project (what a project is, who it is for and where to start on it), updates (what is new or changed since they last asked), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), commitments (what they promised to do: their own open and due commitments), blocked (what is blocked or stuck), project_status (how a project stands), explain_project (what a project is, who it is for and where to start on it), updates (what is new or changed since they last asked), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), draft (only "Draft my standup", "Draft a client status for Forager" or "Draft the weekly summary for Forager": write a draft for them to edit and copy, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
     expect(questionSchema.shape.topic.options).toEqual([
       "needs_me",
@@ -95,10 +95,17 @@ describe("the request", () => {
       "correction",
       "undo",
       "standup",
+      "draft",
       "small_talk",
       "other",
       "unclear",
     ]);
+  });
+
+  it("phase G: a whole-message request for a draft is topic draft with the project it names; Start my standup is not a draft", () => {
+    expect(SYSTEM_PROMPT).toContain('"Draft the weekly summary for Forager", with nothing else said, is topic draft with items empty');
+    expect(SYSTEM_PROMPT).toContain('"Start my standup" is topic standup, not a draft.');
+    expect(questionSchema.safeParse({ asked: "Draft my standup", topic: "draft", projectId: null }).success).toBe(true);
   });
 
   it("phase N: who could pick up work, who hasn't updated (today only), decisions, risks this week and the portfolio", () => {

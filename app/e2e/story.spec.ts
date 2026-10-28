@@ -231,6 +231,48 @@ test("Phase C. Alicia asks why Forager is Off track; Kemar asks when the refresh
   await expect(page.getByRole("link", { name: /Move the daily refresh to 6am/ })).toHaveAttribute("href", "/projects/insights?view=table&log=decision");
 });
 
+test("Phase G. Kemar drafts his standup from what he saved and copies it; a client status is the PM's, and holds only what the client view shows", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Draft my standup");
+  await box.press("Enter");
+  // "since yesterday", or since the last working day when the story runs on a Monday
+  await expect(page.getByText(/^Here's a draft of your standup, from what you saved since .+ and your open work\. Edit it, then copy it\.$/)).toBeVisible();
+  // No model on the fixture: DPM's plain list of the facts (DR6), his saved changes told as review tells them, never his words (CD8)
+  const standup = page.getByRole("textbox", { name: "Your standup" });
+  await expect(standup).toHaveValue(/#145 Google Trends connector: In progress to Done/);
+  await expect(standup).not.toHaveValue(/waiting on Kyle/);
+  await expect(page.getByText("· the facts as a plain list")).toBeVisible();
+  await standup.fill("Yesterday I finished #145 Google Trends connector.");
+  await page.getByRole("group", { name: "Draft standup" }).getByRole("button", { name: "Copy", exact: true }).click();
+  await expect(page.getByText("Copied. Paste it where you need it.")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Your standup" })).toHaveCount(0);
+
+  // DR3: a member gets no client status
+  await box.fill("Draft a client status for Forager");
+  await box.press("Enter");
+  await expect(page.getByText("Only a PM or Lead of Forager 2.0 can draft a client status.")).toBeVisible();
+
+  // Alicia gets one: the releases only, until she shares the status and its reason with the client (DR4)
+  await viewAs("alicia", "/?view=chat&c=new&ask=1");
+  await box.fill("Draft a client status for Forager");
+  await box.press("Enter");
+  const client = page.getByRole("textbox", { name: "Your client status" });
+  await expect(client).toHaveValue(/Buyer pilot · Release 1: planned Fri 30 Oct/);
+  await expect(client).not.toHaveValue(/Trend model|Off track|#151/);
+  await page.getByRole("group", { name: "Draft client status for Forager 2.0" }).getByRole("button", { name: "Discard" }).click();
+  await expect(page.getByText("Discarded. Nothing was sent.")).toBeVisible();
+  await viewAs("kemar", "/projects/forager");
+  await expect(page.getByRole("button", { name: "Share status with client" })).toHaveCount(0); // only the PM shares it
+  await viewAs("alicia", "/projects/forager");
+  await page.getByRole("button", { name: "Share status with client" }).click();
+  await expect(page.getByText("Status shared with the client")).toBeVisible();
+  await viewAs("alicia", "/?view=chat&c=new&ask=1");
+  await box.fill("Draft a client status for Forager");
+  await box.press("Enter");
+  await expect(page.getByRole("textbox", { name: "Your client status" })).toHaveValue(/Status:\n- Off track: /);
+});
+
 test("Phase H. Alicia asks what Kemar is working on and who owns the store feed; Andre asks about Jodian, whom he shares no project with", async () => {
   await viewAs("alicia", "/projects");
   await page.getByRole("link", { name: "Ask Atlas" }).first().click();

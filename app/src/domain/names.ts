@@ -53,3 +53,19 @@ export function whereNamed(words: string, name: string, firstNameShared: boolean
   const at = firstNameShared ? null : firstNameAt(words, first);
   return at === null ? null : { at, full: false };
 }
+
+/**
+ * Phase G (DR2, DR4): whether these words name a record (a milestone, work item, BRAID entry or project) by
+ * its name, by the same rule (CD30). A name with a digit, a # or a capital past its first letter ("Release 1",
+ * "#151", "Google Trends connector") is a name in any case. A name of everyday words with only its first
+ * capital ("Data sources", "Trend model") is the record only when written with that capital: "the data
+ * sources are in" names nothing.
+ */
+export function namesRecord(words: string, name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  const proper = /[\d#]/.test(n) || /\p{Lu}/u.test(n.slice(1));
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${escaped(n).replace(/\s+/g, "\\s+")}(?![\\p{L}\\p{N}])`, "giu");
+  for (const m of words.matchAll(re)) if (proper || m[0][0] === n[0]) return true;
+  return false;
+}

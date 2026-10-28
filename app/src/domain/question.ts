@@ -4,6 +4,7 @@
 // asker is in, and words that are in the message. The answer itself is never written by Atlas; it is
 // read from the asker's own data (queries/answer.ts).
 import { namesProject, numbersOf } from "./atlas-checks/checks";
+import { draftKindOf, type DraftKind } from "./drafts";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
@@ -33,6 +34,8 @@ export type AskedQuestion = {
   correction?: Correction;
   /** Phase L: what the asker's command made while their message was read (the undo job of "Undo that"). */
   made?: string[];
+  /** Phase G: which draft a whole-message request asks for, read from the words by DPM (draftKindOf). */
+  draft?: DraftKind;
 };
 
 /**
@@ -44,6 +47,15 @@ export function checkQuestion(
   ctx: Pick<CheckContext, "text" | "projects" | "earlier"> & Partial<Pick<CheckContext, "author">>,
 ): AskedQuestion | null {
   if (!raw) return null;
+  // Phase G: a whole message that asks for a draft is that request, whatever topic Atlas read, and the words
+  // say which draft; Atlas saying draft for anything else is dropped, as for "Start my standup"
+  const kind = draftKindOf(ctx.text);
+  if (raw.topic === "draft" && !kind) return null;
+  if (kind) {
+    const asked = ctx.text.trim();
+    const named = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : (namedProject(asked, ctx.projects)?.id ?? null);
+    return { asked, topic: "draft", projectId: named, draft: kind };
+  }
   const said = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
   if (said === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
   // Phase L: "Undo that" is the asker's command only as the whole message, whatever Atlas read
@@ -106,7 +118,7 @@ export function followUpRest(words: string, places: readonly string[]): string |
  * as the rule skips them.
  */
 function followed(text: string, asked: string, topic: QuestionTopic, earlier: readonly EarlierTurn[]): string[] {
-  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "standup" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
+  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "standup" || topic === "draft" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
   const words: string[] = [];
   for (const turn of [...earlier].reverse()) {
     if (!turn.asked || turn.asked.topic === "small_talk") continue;
@@ -156,6 +168,9 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   // Phase L: "Undo that" and a correction are whole-message commands; phase J: so is "Start my standup"
   if (undo.rule.test(text.toLowerCase())) return { asked: text, topic: "undo", projectId: null };
   if (standup.rule.test(text.toLowerCase())) return { asked: text, topic: "standup", projectId: null };
+  // Phase G: and so is "Draft my standup", whose words say which draft and for which project
+  const kind = draftKindOf(text);
+  if (kind) return { asked: text, topic: "draft", projectId: namedProject(text, ctx.projects)?.id ?? null, draft: kind };
   const correction = ruleCorrection(ctx);
   if (correction) return { asked: text, topic: "correction", projectId: correction.projectId, correction };
   // CV8, CV9: "and on Store Insights?" takes its topic from the question before it in this conversation
