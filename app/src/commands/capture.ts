@@ -65,6 +65,7 @@ import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 import { createOwnerAsks } from "./owner-ask";
 import { answerStandupInWords, startStandup } from "./standup";
+import { requestDraft } from "./draft";
 import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
 import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
 
@@ -566,13 +567,18 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
  * Phase L. "Undo that" (M30) runs the undo job on the asker's last save; its id goes with the question, so
  * the answer says what it did. A correction (M31) proposes each change it names to that project's PM or
  * Lead; one that cannot be proposed is left out, and the answer says how each part stands. Phase J: "Start
- * my standup" starts today's standup (M28 START); its id goes with the question when it started.
+ * my standup" starts today's standup (M28 START); its id goes with the question when it started. Phase G:
+ * "Draft my standup" asks for the draft (M25 REQUEST, the right checked now); Atlas writes it once this commits.
  */
 async function actOn(tx: Tx, now: Date, capture: CaptureRow, asked: AskedQuestion): Promise<AskedQuestion> {
   const { authorId, id: captureId } = capture;
   if (asked.topic === "standup") {
     const r = await startStandup(tx, now, capture);
     return { ...asked, made: r.started ? [r.record.id] : [] };
+  }
+  if (asked.topic === "draft" && asked.draft) {
+    const id = await requestDraft(tx, now, capture, asked.draft, asked.projectId);
+    return { ...asked, made: id ? [id] : [] };
   }
   if (asked.topic === "undo") {
     const r = await undoInTx(tx, now, authorId, { commandId: `undo-${captureId}` });

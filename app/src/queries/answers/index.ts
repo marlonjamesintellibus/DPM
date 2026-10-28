@@ -4,6 +4,7 @@ import type { QuestionTopic } from "../../domain/question";
 import { atRiskWeek } from "./at-risk-week";
 import { blocked } from "./blocked";
 import { correction } from "./correction";
+import { draft } from "./draft";
 import { due } from "./due";
 import { explainProject } from "./explain-project";
 import { mentions } from "./mentions";
@@ -45,6 +46,7 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   correction,
   undo,
   standup,
+  draft,
   small_talk: smallTalk,
   other,
   unclear,

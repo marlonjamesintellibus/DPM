@@ -23,6 +23,8 @@ import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome, 
 import type { CaptureState } from "../domain/machines/capture";
 import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy, WordAct } from "../domain/machines/chat-command";
 import type { ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
+import type { DraftBy, DraftState } from "../domain/machines/draft";
+import type { DraftFacts, DraftKind } from "../domain/drafts";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
@@ -374,6 +376,11 @@ export const statusReasons = pgTable("status_reasons", {
   savedAt: instant("saved_at").notNull(),
   /** Set when the plan moved under the reason (reason_stale). */
   staleSince: instant("stale_since"),
+  /**
+   * Phase G: its PM marked this reason, and the status it explains, as shareable with the client, so a client
+   * status may hold them (section 9). A new reason starts unshared.
+   */
+  clientShareable: boolean("client_shareable").notNull().default(false),
 });
 
 export const statusReasonLinks = pgTable(
@@ -590,6 +597,40 @@ export const standups = pgTable(
     updatedAt: updated(),
   },
   (t) => [uniqueIndex("standups_person_day").on(t.personId, t.day), index("standups_open").on(t.state, t.conversationId), index("standups_capture").on(t.captureId)],
+);
+
+/**
+ * M25. A draft Atlas wrote for its asker from DPM's facts (conversational plan, phase G): a standup, a client
+ * status or a weekly summary. Once only by draft id, one per message that asked (rule 6, DR8). The facts are
+ * the ones read for the asker when the request (or Refresh) ran, never quotes (CD8).
+ */
+export const drafts = pgTable(
+  "drafts",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull().references(() => people.id),
+    kind: text("kind").$type<DraftKind>().notNull(),
+    projectId: text("project_id").references(() => projects.id),
+    /** The message that asked for it; unique, so a read delivered twice drafts once. */
+    captureId: text("capture_id").notNull().unique().references(() => captures.id),
+    state: text("state").$type<DraftState>().notNull(),
+    attempt: integer("attempt").notNull(),
+    /** The model timer counts from here. */
+    attemptAt: instant("attempt_at"),
+    facts: jsonb("facts").$type<DraftFacts>().notNull(),
+    text: text("text"),
+    by: text("by").$type<DraftBy>(),
+    edited: boolean("edited").notNull().default(false),
+    /** DR5: what they had written when they refreshed. */
+    aside: text("aside"),
+    /** The expiry timer counts from here. */
+    readyAt: instant("ready_at"),
+    endedAt: instant("ended_at"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("drafts_open").on(t.state), index("drafts_owner").on(t.ownerId, t.kind, t.state)],
 );
 
 /** M36. A candidate for the eval set; the text only while logged and while the person allows it (LF1, LF2). */

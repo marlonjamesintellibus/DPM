@@ -14,6 +14,7 @@ import { config } from "../domain/config";
 import type { Confidence } from "../domain/shared";
 import { atlasProposals, type StandupRead } from "../domain/standup";
 import { composedRead } from "../queries/standup";
+import { draftOfCapture, writeDraft } from "./draft";
 import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, readAsAnswer, readAsStandupAnswer, ReadSuperseded, type Proposed } from "./capture";
 import { audit, runCommand, type CommandCtx } from "./core";
 
@@ -106,6 +107,10 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
         wordWithAtlas: !!drafter,
       });
       if (drafter && proposed.answer?.wording === "pending") await wordCaptureAnswer(at(), captureId, drafter);
+      // Phase G, M25: a draft the message asked for is written now, outside the read's transaction; with no
+      // model it is the plain template at once (DR6)
+      const draftId = proposed.answer?.topic === "draft" ? await draftOfCapture(ctx.db, captureId) : null;
+      if (draftId) await writeDraft(ctx.db, () => at().now, draftId, drafter);
       return { outcome: "proposed", ...proposed, model: extraction.model };
     }
   } catch (e) {

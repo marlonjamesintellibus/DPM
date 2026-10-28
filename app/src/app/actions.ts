@@ -41,13 +41,14 @@ import {
 } from "@/commands/capture";
 import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
 import { answerClarification } from "@/commands/clarification";
+import { copyDraft, discardDraft, editDraft, refreshDraft, writeDraft } from "@/commands/draft";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
 import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { acceptOwnerAsk, declineOwnerAsk } from "@/commands/owner-ask";
 import { approveLeave, declineLeave } from "@/commands/leave";
-import { draftReasonFor, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { draftReasonFor, keepSetStatus, linkChange, saveReason, shareReasonWithClient, useCalculated } from "@/commands/status";
 import { acceptSignal, dismissSignal, setProjectPaused, stillGoing } from "@/commands/signals";
 import { tapStandup, type StandupTap } from "@/commands/standup";
 import { undoSave } from "@/commands/undo";
@@ -193,6 +194,46 @@ export async function answerStandupAction(standupId: string, n: number, tap: Sta
     });
   }
   return r;
+}
+
+// ---- Drafts (phase G, M25) ----
+
+/** Their edits, kept with the draft so a reload shows them. */
+export async function editDraftAction(draftId: string, text: string): Promise<ActionResult> {
+  return run((ctx) => editDraft(ctx, draftId, text));
+}
+
+/**
+ * Copy, with the words on screen: the server checks it (a client status against the client view now, DR4) and
+ * gives back the text the browser puts on the clipboard. A refusal offers Refresh.
+ */
+export async function copyDraftAction(draftId: string, text: string): Promise<ActionResult & { text?: string }> {
+  let copied = "";
+  const r = await run(async (ctx) => {
+    copied = (await copyDraft(ctx, draftId, text)).text;
+  });
+  return r.ok ? { ...r, text: copied } : r;
+}
+
+/** DR5: Refresh drafts again from the facts now, their edits kept aside; Atlas writes it after the reply. */
+export async function refreshDraftAction(draftId: string, text: string): Promise<ActionResult> {
+  let ran: CommandCtx | null = null;
+  const r = await run(async (ctx) => {
+    await refreshDraft(ctx, draftId, text);
+    ran = ctx;
+  });
+  const done = ran as CommandCtx | null;
+  if (r.ok && done) {
+    const db = done.db;
+    after(async () => {
+      await writeDraft(db, now, draftId, atlasFromEnv().drafter);
+    });
+  }
+  return r;
+}
+
+export async function discardDraftAction(draftId: string): Promise<ActionResult> {
+  return run((ctx) => discardDraft(ctx, draftId));
 }
 
 // ---- Learning from use (phase S) ----
@@ -403,6 +444,11 @@ export async function dismissSignalAction(signalId: string, version: number, rea
 
 export async function stillGoingAction(workItemId: string): Promise<ActionResult> {
   return run((ctx) => stillGoing(ctx, workItemId), "Noted. Its clock starts again.");
+}
+
+/** Phase G: the PM shares the status and its reason with the client, so a client status may hold them. */
+export async function shareReasonAction(projectId: string, reasonId: string, shared: boolean): Promise<ActionResult> {
+  return run((ctx) => shareReasonWithClient(ctx, projectId, reasonId, shared), shared ? "Shared. A client status can now say the status and its reason." : "No longer shared with the client.");
 }
 
 export async function setPausedAction(projectId: string, paused: boolean): Promise<ActionResult> {
