@@ -1,7 +1,8 @@
 "use client";
 // Asking when unsure (conversational plan, phase D, M21). Under Atlas's question, one button per option (at
-// most three), each a project or record the author can see. The server checks the option again when it is
-// tapped (CL5), so a tap can still be refused; the others then still work. Typing the answer works too (CL2).
+// most three), each a project, record, line or person the author can see (CD50). The server checks the
+// option again when it is tapped (CL5), so a tap can still be refused; the others then still work. Typing
+// the answer works too (CL2).
 import { useState, useTransition } from "react";
 import { answerClarificationAction, type ActionResult } from "@/app/actions";
 import { ActionNote, Button } from "@/components/ui/controls";

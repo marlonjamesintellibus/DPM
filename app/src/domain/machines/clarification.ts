@@ -5,14 +5,16 @@
 // to, closes on its timer (CommandTimerCloses: "Nothing was done; ask again"). When Atlas is unsure which
 // project or record an item of an update means, or which line of the open answer a reply decides (AC6,
 // AC7), DPM asks in the chat with the options as buttons. Answering only chooses: the item is routed or
-// matched and still waits in the review, and a line becomes the M20 card the author confirms. Nothing here
-// changes a record (rule 1).
+// matched and still waits in the review, and a line becomes the M20 card the author confirms. Wave 4
+// (CD50): a question whose words fit 2 or 3 of the asker's projects or people (EX5, PP2) is asked the same
+// way, and choosing one answers it as if it had named that one; like a line's, it has no review card, so its
+// timer closes it. Nothing here changes a record (rule 1).
 //   (none) --ASK [own chat, 2 or 3 options]--> asked                        CHECKS_DONE
 //   asked --ANSWER(option) [the author; an option still allowed now]--> resolved
 //   asked --REVIEW_OPENED [about an item]--> handed_to_review               CL3
 //   asked --EXPIRE [2 hours, about an item]--> handed_to_review
-//   asked --EXPIRE [2 hours, about a line]--> closed                       the model check's fix; phase O's
-//                                                                           call brief closes so too (MT9)
+//   asked --EXPIRE [2 hours, about a line or a question]--> closed         the model check's fix; phase O's
+//                                                                           call brief is a question so (MT9)
 //   asked --CLOSE--> closed                                                 the capture is discarded or expires (CL6),
 //                                                                           or a correction withdrew its item (CV10)
 // The plan's "asked --ANSWERED(not an option)--> asked" is not an event: words that fit no option are not an
@@ -20,6 +22,7 @@
 // longer allowed (CL5) is a refused ANSWER, which leaves it asked too.
 import { config } from "../config";
 import { defineMachine, transition, type Outcome } from "../machine";
+import type { AskedQuestion } from "../question";
 import type { WordAct } from "./chat-command";
 
 export const CLARIFICATION_STATES = ["none", "asked", "resolved", "handed_to_review", "closed"] as const;
@@ -28,19 +31,21 @@ export type ClarificationState = (typeof CLARIFICATION_STATES)[number];
 /**
  * What it asks about. project: an item that is choose_project (M14). record: an update whose words fit 2 or
  * 3 records (a vague "Worked on the feed", plan phase J). line: a reply that decides a line of the open
- * answer and fits 2 or 3 of them (phase B, AC6, AC7). prep: a request for a call brief whose words fit 2 or 3 of
- * the asker's projects ("Prep me for the Sprouts call", phase O, MT9); like a line, it has no review card.
+ * answer and fits 2 or 3 of them (phase B, AC6, AC7). question: a question whose subject fits 2 or 3 of the
+ * asker's own projects or people (CD50: EX5, PP2), and phase O's request for a call brief whose words fit 2 or 3
+ * of their projects ("Prep me for the Sprouts call", MT9), asked as a question about projects.
  */
-export type ClarifyAbout = "project" | "record" | "line" | "prep";
+export type ClarifyAbout = "project" | "record" | "line" | "question";
 
-/** What has no review card to hand its choice to: a reply's line, and phase O's call brief. */
-const NO_REVIEW: readonly ClarifyAbout[] = ["line", "prep"];
+/** CD50: what a question's options are: projects the asker may ask about (EX5), or people they share one with (PP2). */
+export type QuestionFits = "project" | "person";
 
 /**
- * One button: a project id, a record id, or a line number as text, with the words the button shows and the
- * project it is in, so the chat shows only the options the author may still read (P10).
+ * One button: a project id, a record id, a line number as text, or a person's id, with the words the button
+ * shows and the project it is in, so the chat shows only the options the author may still read (P10). A
+ * question's options are in no one project (null): each is shown while it still fits what the asker reads.
  */
-export type ClarifyOption = { id: string; label: string; projectId: string };
+export type ClarifyOption = { id: string; label: string; projectId: string | null };
 
 /** At most three options (section 6); with more, the review card asks (ProjectCap). */
 export const MAX_OPTIONS = 3;
@@ -61,6 +66,8 @@ export type ClarificationRecord = {
   extractionId: string | null;
   /** line: the answer whose lines it offers, the act the reply said and its reason. */
   command: { answerCaptureId: string; act: WordAct; reason: string | null } | null;
+  /** question: what was asked, as the checks kept it, and what its options are; answered again with the one chosen. */
+  question: { asked: AskedQuestion; fits: QuestionFits } | null;
   /** The words it asks about, as the author said them. */
   quote: string;
   options: ClarifyOption[];
@@ -107,9 +114,10 @@ export function clarificationExpired(r: Pick<ClarificationRecord, "state" | "cre
 /** Rule 10: the question is the author's own, answered only by them. */
 const authorGuard = (c: Ctx) => (c.actorId === c.record.authorId ? null : "only the person who sent the message can answer");
 
-// The model check's fix: a review card holds an item's choice; nothing holds a line's
-const hasReview = (c: Ctx) => (c.record.about === "line" ? "a reply that decides a line has no review card" : c.record.about === "prep" ? "a request for a call brief has no review card" : null);
-const noReview = (c: Ctx) => (NO_REVIEW.includes(c.record.about) ? null : "an item's choice goes to its review");
+// The model check's fix: a review card holds an item's choice; nothing holds a line's, nor a question's (CD50)
+const NO_REVIEW: Partial<Record<ClarifyAbout, string>> = { line: "a reply that decides a line has no review card", question: "a question has no review card" };
+const hasReview = (c: Ctx) => NO_REVIEW[c.record.about] ?? null;
+const noReview = (c: Ctx) => (NO_REVIEW[c.record.about] ? null : "an item's choice goes to its review");
 const expired = (c: Ctx) => (clarificationExpired(c.record, c.now) ? null : `a question stays open ${config.clarifyExpiryHours} hours`);
 
 function answerGuard(c: Ctx, e: Extract<ClarificationEvent, { type: "ANSWER" }>): string | null {
@@ -159,8 +167,8 @@ export function applyClarificationEvent(record: ClarificationRecord, event: Clar
 }
 
 /** A question about to be asked; nothing is stored unless ASK moves it. */
-export function draftClarification(fields: Omit<ClarificationRecord, "state" | "chosen" | "answeredBy" | "endedBy" | "decidedAt">): ClarificationRecord {
-  return { ...fields, state: "none", chosen: null, answeredBy: null, endedBy: null, decidedAt: null };
+export function draftClarification(fields: Omit<ClarificationRecord, "state" | "chosen" | "answeredBy" | "endedBy" | "decidedAt" | "question"> & Partial<Pick<ClarificationRecord, "question">>): ClarificationRecord {
+  return { question: null, ...fields, state: "none", chosen: null, answeredBy: null, endedBy: null, decidedAt: null };
 }
 
 // ---- What the chat says ----
@@ -176,36 +184,44 @@ function said(quote: string): string {
   return q.length > 60 ? `${q.slice(0, q.lastIndexOf(" ", 60) > 20 ? q.lastIndexOf(" ", 60) : 60)}…` : q;
 }
 
+/** Phase O, MT9: a question asking which project a call brief is for ("Prep me for the Sprouts call"). */
+const callBrief = (r: Pick<ClarificationRecord, "question">) => r.question?.asked.topic === "draft" && r.question.asked.draft === "prep";
+
 /**
  * The question, in plain words: "For "Worked on the store feed", do you mean #151 Store sales feed access
  * or #152 Store feed connector?" Only the options it was asked with, which the author could read then.
  */
-export function clarifyQuestion(r: Pick<ClarificationRecord, "about" | "quote" | "options">): string {
+export function clarifyQuestion(r: Pick<ClarificationRecord, "about" | "quote" | "options" | "question">): string {
   const labels = r.options.map((o) => o.label);
   switch (r.about) {
+    case "question":
+      // CD50: the question is on screen just above; only which one is asked. Phase O, MT9: a call brief says so
+      if (callBrief(r)) return `Which project is the call about: ${either(labels)}?`;
+      return r.question?.fits === "person" ? `Who do you mean: ${either(labels)}?` : `Which project do you mean: ${either(labels)}?`;
     case "record":
       return `For "${said(r.quote)}", do you mean ${either(labels)}?`;
     case "project":
       return `Which project is "${said(r.quote)}" for: ${either(labels)}?`;
     case "line":
       return `Did you mean ${either(labels.map((l) => `"${l}"`))}?`;
-    case "prep":
-      return `Which project is the call about: ${either(labels)}?`;
   }
 }
 
 /** What the chat shows once it is no longer asked. `label` is the chosen option's, when the author may still read it. */
-export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about" | "endedBy">, label: string | null): string | null {
+export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about" | "endedBy" | "question">, label: string | null): string | null {
   switch (r.state) {
     case "resolved":
       if (r.about === "line") return label ? `Got it: "${label}".` : "Got it.";
-      if (r.about === "prep") return `Got it${label ? `: ${label}` : ""}. Your brief follows.`;
+      // CD50: the answer follows, as if the question had named it; phase O's call brief is drafted (MT9)
+      if (r.about === "question") return label ? `Got it: ${label}.${callBrief(r) ? " Your brief follows." : ""}` : "Got it.";
       return `Got it${label ? `: ${label}` : ""}. It's in your review, waiting for your OK.`;
     case "handed_to_review":
       // CL3: the review card holds the choice
       return r.endedBy === "review" ? "Chosen in review." : "I left this for your review: choose it there.";
     case "closed":
-      return r.endedBy === "timer" ? "Nothing was done; ask again." : r.endedBy === "corrected" ? "You corrected this in a later message." : "Closed with the update.";
+      // CD50: a question's timer closes it quietly, with nothing done and nobody told
+      if (r.endedBy === "timer") return r.about === "question" ? "Nothing was chosen; ask me again." : "Nothing was done; ask again.";
+      return r.endedBy === "corrected" ? "You corrected this in a later message." : "Closed with the update.";
     default:
       return null;
   }
@@ -213,10 +229,10 @@ export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about
 
 /**
  * CL5: an option no longer allowed is refused, naming nothing (P10). An item's question can also be answered
- * on its review card; a line's has none, so it says to ask again.
+ * on its review card; a line's and a question's have none, so it says to ask again.
  */
 export function optionGoneText(about: ClarifyAbout): string {
-  return `You can't choose that one any more. Pick another, or ${NO_REVIEW.includes(about) ? "ask me again" : "choose it in the review"}.`;
+  return `You can't choose that one any more. Pick another, or ${NO_REVIEW[about] ? "ask me again" : "choose it in the review"}.`;
 }
 
 // ---- A typed answer, read against the options only (CL2) ----

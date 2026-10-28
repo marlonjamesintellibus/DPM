@@ -2,11 +2,14 @@
 // read; its id is in question.made). The draft itself follows under the reply as a card, written by Atlas while
 // the chat shows it drafting. With no draft, the reply says why: which project (a client status and a weekly
 // summary are about one), only a PM or Lead may ask for those (DR3, checked when it ran), or it was asked for
-// outside their own chat. Only projects the asker can read are ever named (P10).
+// outside their own chat. A call brief whose words fit 2 or 3 of their projects says which, for M21 to ask in
+// their own chat (phase O, MT9, through CD50). Only projects the asker can read are ever named (P10).
 import { and, eq } from "drizzle-orm";
 import * as t from "../../db/schema";
-import { DRAFT_LABEL, type DraftKind } from "../../domain/drafts";
-import { mayDraft } from "../drafts";
+import { DRAFT_LABEL, prepWho, type DraftKind } from "../../domain/drafts";
+import { askable } from "../../domain/machines/clarification";
+import type { Which } from "../../domain/question";
+import { mayDraft, prepProjects } from "../drafts";
 import { readableProjects } from "../project";
 import type { AnswerBuilder } from "./shared";
 
@@ -15,6 +18,8 @@ const ASK_FOR: Record<Exclude<DraftKind, "standup">, (project: string) => string
   weekly: (p) => `Draft the weekly summary for ${p}`,
   prep: (p) => `Prep me for the ${p} call`,
 };
+
+const either = (names: readonly string[]) => (names.length > 1 ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : (names[0] ?? ""));
 
 export const draft: AnswerBuilder = async (conn, viewerId, question) => {
   const say = (text: string) => ({ text, cards: [], more: null });
@@ -36,8 +41,14 @@ export const draft: AnswerBuilder = async (conn, viewerId, question) => {
       `Here's a draft client status for ${project?.name}. It holds only what the client view shows: the releases${shared ? " and the status you shared" : ""}. Edit it, then copy it.${shared ? "" : " The status goes in only once its reason is shared with the client, from the project page."}`,
     );
   }
-  // Phase O, MT9: the call could be about 2 or 3 of their projects, and DPM asked which (M21)
-  if (kind === "prep" && id?.startsWith("clr-")) return say("I'll write the brief once you say which project the call is about.");
+  // Phase O, MT9: the call could be about 2 or 3 of their projects; in their own chat DPM asks which (M21, CD50),
+  // and these words, which name them, are said only where it cannot ask
+  const who = kind === "prep" && !question.projectId ? prepWho(question.asked) : null;
+  const fits = who ? await prepProjects(conn, viewerId, who) : [];
+  if (askable(fits.length)) {
+    const which: Which = { fits: "project", options: fits.map((p) => ({ id: p.id, label: p.name })) };
+    return { ...say(`Which project is the call about: ${either(fits.map((p) => p.name))}? Say it again with its name, for example "${ASK_FOR.prep(fits[0].name)}".`), which };
+  }
   if (kind === "prep" && !question.projectId) {
     const [first] = (await readableProjects(conn, viewerId)).sort();
     const [named] = first ? await conn.select({ name: t.projects.name }).from(t.projects).where(eq(t.projects.id, first)) : [];

@@ -7,6 +7,7 @@ import { namesProject, numbersOf } from "./atlas-checks/checks";
 import { draftKindOf, type DraftKind } from "./drafts";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
+import type { QuestionFits } from "./machines/clarification";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
 import { aboutAsker, aboutOther, aboutProject } from "./topics/people";
@@ -36,7 +37,38 @@ export type AskedQuestion = {
   made?: string[];
   /** Phase G: which draft a whole-message request asks for, read from the words by DPM (draftKindOf). */
   draft?: DraftKind;
+  /**
+   * CD50: the project or person the asker chose when the words fit 2 or 3 (M21). The topic that asked reads it
+   * as if the words had named that one, and only while it still fits what the asker reads (P10).
+   */
+  chosen?: { fits: QuestionFits; id: string };
+  /**
+   * CD50, CV8: the newest question this one follows that Atlas asked which about, and the one chosen there;
+   * `at` is its place in `follows`. Read in place of that question's words, so "and on GQ?" after choosing
+   * one of two Kemars is about that one, however the choice was said.
+   */
+  followsChosen?: { at: number; fits: QuestionFits; id: string };
 };
+
+/**
+ * CD50: the words fit 2 or 3 of the asker's own projects (EX5) or people (PP2). M21 asks which in their own
+ * chat, and the answer's text, which says the name again, is said only where it cannot ask.
+ */
+export type Which = { fits: QuestionFits; options: { id: string; label: string }[] };
+
+/** CD50: the question as if it had named the one chosen. */
+export function chosenQuestion(q: AskedQuestion, fits: QuestionFits, id: string): AskedQuestion {
+  return { ...q, chosen: { fits, id } };
+}
+
+/**
+ * CD50: the one chosen for the words at place `at` of [asked, ...follows], when Atlas asked which there and
+ * it was of this kind: 0 is the question itself, 1 on are the questions it follows, newest first.
+ */
+export function chosenAt(q: AskedQuestion, fits: QuestionFits, at: number): string | null {
+  if (at === 0) return q.chosen?.fits === fits ? q.chosen.id : null;
+  return q.followsChosen?.fits === fits && q.followsChosen.at === at - 1 ? q.followsChosen.id : null;
+}
 
 /**
  * QA3, QA6: only the asker's own projects; QA5: an unknown topic is "other"; the words must be theirs.
@@ -68,11 +100,11 @@ export function checkQuestion(
   const named = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
   const { topic, projectId } = ctx.author ? aboutWhom(said, asked, named, ctx.author, ctx.projects) : { topic: said, projectId: named };
-  const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
+  const { words: follows, chosen } = followed(ctx.text, asked, topic, ctx.earlier ?? []);
   // Phase C, WY1: a subject outside the asker's lists is no subject, never a sign that it exists
   const subject = topic === "why" ? subjectById(raw.subjectId, ctx.projects) : null;
   const correction = topic === "correction" ? checkCorrection(raw.correction, ctx) : null;
-  return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(subject ? { subject } : {}), ...(correction ? { correction } : {}) };
+  return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(chosen ? { followsChosen: chosen } : {}), ...(subject ? { subject } : {}), ...(correction ? { correction } : {}) };
 }
 
 /**
@@ -120,15 +152,19 @@ export function followUpRest(words: string, places: readonly string[]): string |
  * the run goes back while the questions keep that topic. Small talk and updates in between are skipped,
  * as the rule skips them.
  */
-function followed(text: string, asked: string, topic: QuestionTopic, earlier: readonly EarlierTurn[]): string[] {
-  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "standup" || topic === "draft" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
+function followed(text: string, asked: string, topic: QuestionTopic, earlier: readonly EarlierTurn[]): { words: string[]; chosen: AskedQuestion["followsChosen"] | null } {
+  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "standup" || topic === "draft" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return { words: [], chosen: null };
   const words: string[] = [];
+  let chosen: AskedQuestion["followsChosen"] | null = null;
   for (const turn of [...earlier].reverse()) {
     if (!turn.asked || turn.asked.topic === "small_talk") continue;
     if (turn.asked.topic !== topic) break;
+    // CD50: the newest question Atlas asked which about keeps the one chosen, by id; its words stay too, for
+    // what they ask ("Why is Kemar behind?" still asks why)
+    if (turn.chosen && !chosen) chosen = { at: words.length, ...turn.chosen };
     words.push(turn.text);
   }
-  return words;
+  return { words, chosen };
 }
 
 // Phase R: "wah bout GQ?" and "how bout Forager?" follow up too

@@ -155,6 +155,9 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
       // Phase J, P10: a standup's answers without the questions about a project the author has since left
       text: (await composedRead(conn, r.id))?.shown.text ?? r.text,
       asked: r.question ? { topic: r.question.topic, projectId: r.question.projectId } : null,
+      // CD50, CV8: the one chosen when Atlas asked which, kept with the message that holds its answer: the
+      // question's own for a button, the reply's for typed words ("the second one", CL2)
+      ...(r.question?.chosen ? { chosen: r.question.chosen } : {}),
       openItems: items.map((i) => ({
         id: i.id,
         summary: i.draft.target

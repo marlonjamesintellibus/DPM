@@ -38,12 +38,20 @@ const rate = (n: number, of: number) => (of ? n / of : 0);
 
 export type AnswerNumbers = {
   asked: number;
-  /** Answered from DPM's facts: neither "I can't answer that yet" nor "I'm not sure what you mean". Null when either of those is not shown (LF8). */
+  /**
+   * Answered from DPM's facts: neither "I can't answer that yet" nor "I'm not sure what you mean", nor asked
+   * which one was meant with nothing chosen. Null when any of those is not shown (LF8).
+   */
   answerRate: number | null;
   /** "I can't answer that yet" (topic other); null when that topic is not shown on its own (LF8). */
   cantAnswerRate: number | null;
   /** "I'm not sure what you mean" (topic unclear); null when that topic is not shown on its own (LF8). */
   unclearRate: number | null;
+  /**
+   * CD50: Atlas asked which project or person was meant (M21) and nothing was chosen, so there is no answer
+   * yet, or its timer closed it. Null when those come from fewer than the minimum people (LF8).
+   */
+  unchosenRate: number | null;
   thumbsUp: number;
   thumbsDown: number;
 };
@@ -121,6 +129,16 @@ export async function usageNumbers(
       .from(t.captures)
       .where(gte(t.captures.receivedAt, since))
   ).filter((c) => within.has(c.authorId));
+  // CD50: a question Atlas asked which about is one question. Typed, the reply that chose holds its answer
+  // and counts in its place (CL2); with nothing chosen, the asking message counts, as not answered
+  const asking = captures.length
+    ? await conn
+        .select({ captureId: t.clarifications.captureId, state: t.clarifications.state, answeredBy: t.clarifications.answeredBy })
+        .from(t.clarifications)
+        .where(and(eq(t.clarifications.about, "question"), inArray(t.clarifications.captureId, captures.map((c) => c.id))))
+    : [];
+  const answeredInReply = new Set(asking.filter((q) => q.answeredBy).map((q) => q.captureId));
+  const unchosenIds = new Set(asking.filter((q) => q.state !== "resolved").map((q) => q.captureId));
   const ids = captures.map((c) => c.id);
   const feedback = ids.length ? await conn.select().from(t.answerFeedback).where(inArray(t.answerFeedback.captureId, ids)) : [];
   const items = ids.length ? await conn.select({ id: t.extractions.id, captureId: t.extractions.captureId, draft: t.extractions.draft }).from(t.extractions).where(inArray(t.extractions.captureId, ids)) : [];
@@ -136,7 +154,7 @@ export async function usageNumbers(
   for (let w = 0; w < weeks; w++) {
     const week = addDays(first, 7 * w);
     // LF6: an answer belongs to the week of its "as of"; an update to the week it came in
-    const asked = captures.filter((c) => c.question && weekOf(c.answer ? new Date(c.answer.asOf) : c.receivedAt) === week);
+    const asked = captures.filter((c) => c.question && !answeredInReply.has(c.id) && weekOf(c.answer ? new Date(c.answer.asOf) : c.receivedAt) === week);
     type Asked = typeof asked;
     const thumbs = (of: Asked, rating: "up" | "down") => feedback.filter((f) => f.rating === rating && of.some((c) => c.id === f.captureId && c.authorId === f.personId)).length;
     const askers = (of: Asked) => new Set(of.map((c) => c.authorId));
@@ -149,11 +167,15 @@ export async function usageNumbers(
     const n = asked.length;
     const cant = on("other").length;
     const unclear = on("unclear").length;
+    // LF8: like a topic's, from nobody or from enough people, so the answer rate never gives it by subtraction
+    const unchosen = asked.filter((c) => unchosenIds.has(c.id));
+    const unchosenKnown = askers(unchosen).size === 0 || askers(unchosen).size >= min;
     const answers = shown(askers(asked), {
       asked: n,
-      answerRate: known("other") && known("unclear") ? rate(n - cant - unclear, n) : null,
+      answerRate: known("other") && known("unclear") && unchosenKnown ? rate(n - cant - unclear - unchosen.length, n) : null,
       cantAnswerRate: known("other") ? rate(cant, n) : null,
       unclearRate: known("unclear") ? rate(unclear, n) : null,
+      unchosenRate: unchosenKnown ? rate(unchosen.length, n) : null,
       thumbsUp: thumbs(asked, "up"),
       thumbsDown: thumbs(asked, "down"),
     }, min);

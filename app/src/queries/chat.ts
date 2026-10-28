@@ -8,10 +8,11 @@ import * as t from "../db/schema";
 import type { Answer } from "../domain/question";
 import type { CaptureState } from "../domain/machines/capture";
 import { commandButton, commandOutcomeText, commandQuestion, type ChatCommandState, type CommandAct } from "../domain/machines/chat-command";
-import { clarifyOutcomeText, clarifyQuestion, type ClarificationState } from "../domain/machines/clarification";
+import { clarifyOutcomeText, clarifyQuestion, type ClarificationState, type ClarifyAbout } from "../domain/machines/clarification";
 import { asksDrop, LIVE_COMMITMENT } from "../domain/machines/commitment";
 import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, projectReader, shortDate, todayIn, type NotYours } from "./project";
+import { optionsShown } from "./clarification";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 import { undoReply } from "./answers/undo";
 import { draftViewOf, type DraftView } from "./drafts";
@@ -83,6 +84,8 @@ export type ChatCapture = {
  */
 export type ClarifyView = {
   id: string;
+  /** CD50: a question's is asked before its answer, which comes once one is chosen. */
+  about: ClarifyAbout;
   state: ClarificationState;
   question: string;
   options: { id: string; label: string }[];
@@ -442,7 +445,8 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
 /**
  * Phase D: the question asked about this message, and what came of one this message answered by its words
  * (CL2); only the author's own. An option, or a chosen one, on a project they can no longer read is not named.
- * A reply that answered by making its own card (CL1) shows that card, so it does not say "Got it" too.
+ * A reply that answered by making its own card (CL1) shows that card, so it does not say "Got it" too; nor
+ * does a reply that chose for a question, whose answer it shows (CD50).
  */
 async function clarificationsOf(conn: Conn, capture: typeof t.captures.$inferSelect, ownCards: boolean): Promise<Pick<ChatCapture, "clarification" | "answered">> {
   const rows = await conn
@@ -450,19 +454,20 @@ async function clarificationsOf(conn: Conn, capture: typeof t.captures.$inferSel
     .from(t.clarifications)
     .where(and(eq(t.clarifications.authorId, capture.authorId), or(eq(t.clarifications.captureId, capture.id), eq(t.clarifications.answeredBy, capture.id))));
   if (!rows.length) return { clarification: null, answered: null };
-  const reader = await projectReader(conn, capture.authorId);
-  const view = (r: (typeof rows)[number]) => {
-    const options = r.options.filter((o) => reader.mayRead(o.projectId));
+  const view = async (r: (typeof rows)[number]) => {
+    const options = await optionsShown(conn, capture.authorId, { ...r, question: r.question ?? null });
     const chosen = options.find((o) => o.id === r.chosen)?.label ?? null;
     return { options, outcome: clarifyOutcomeText(r, chosen) };
   };
   const asked = rows.find((r) => r.captureId === capture.id);
   const answering = rows.find((r) => r.answeredBy === capture.id);
+  const shown = asked ? await view(asked) : null;
   return {
-    clarification: asked
-      ? { id: asked.id, state: asked.state, question: clarifyQuestion({ ...asked, options: view(asked).options }), options: view(asked).options.map((o) => ({ id: o.id, label: o.label })), outcome: view(asked).outcome }
-      : null,
-    answered: answering && !ownCards ? view(answering).outcome : null,
+    clarification:
+      asked && shown
+        ? { id: asked.id, about: asked.about, state: asked.state, question: clarifyQuestion({ ...asked, options: shown.options }), options: shown.options.map((o) => ({ id: o.id, label: o.label })), outcome: shown.outcome }
+        : null,
+    answered: answering && !ownCards && !(answering.about === "question" && capture.answer) ? (await view(answering)).outcome : null,
   };
 }
 

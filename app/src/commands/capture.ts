@@ -52,14 +52,14 @@ import { checkCommands, type RawCommand } from "../domain/acting";
 import { topicById } from "../domain/topics";
 import type { Confidence, ExtractedItemDraft, MatchState } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
-import { answerFor } from "../queries/answer";
+import { answerOrWhich } from "../queries/answer";
 import { correctionParts } from "../queries/answers/correction";
 import { loadCheckContext } from "../queries/check-context";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
-import { answeredByCards, answerInWords, askIfUnsure, closeWithCapture, closeWithItem, handToReview } from "./clarification";
+import { answeredByCards, answerInWords, askIfUnsure, askWhich, closeWithCapture, closeWithItem, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
 import { coverOnLeave, offerIn } from "./cover";
 import { syncLeaveImpact } from "./leave";
@@ -402,12 +402,13 @@ export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" 
 /**
  * Phase D, CL2: a reply whose words answer Atlas's open question in this conversation (M21) ends its read
  * here, before any model is asked: nothing to propose, and it was answered. False when the words are not an
- * answer; they are then read as a new message and the question stays (CL1).
+ * answer; they are then read as a new message and the question stays (CL1). CD50: a question's answer is
+ * kept with this reply, waiting to be worded when Atlas is connected.
  */
-export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number): Promise<boolean> {
+export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number, words: { wordWithAtlas?: boolean } = {}): Promise<boolean> {
   return runCommand(ctx, async (tx) => {
     const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
-    const clarified = await answerInWords(tx, ctx.now, row);
+    const clarified = await answerInWords(tx, ctx.now, row, words);
     // Phase E: or a short reply to the check-in on their promise that waits on them ("done", "move it to Friday")
     const promised = clarified ? null : await answerCheckInInWords(tx, ctx.now, row);
     const answered = clarified ?? promised;
@@ -545,7 +546,11 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     // Phase L: "Undo that" and a correction are the asker's own commands; they run now, as the asker
     const question = asked ? await actOn(tx, ctx.now, row, asked) : null;
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
-    const found = question ? await answerFor(tx, row.authorId, question, ctx.now) : null;
+    const read = question ? await answerOrWhich(tx, row.authorId, question, ctx.now) : null;
+    // CD50: words that fit 2 or 3 of the asker's projects or people are asked about in their own chat (M21),
+    // unless the message already asks about an item or a line (CD23); the answer comes once they choose
+    const which = read?.which && !clarified ? await askWhich(tx, ctx.now, row, question!, read.which) : null;
+    const found = which ? null : (read?.answer ?? null);
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
     const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
     if (question) await tx.update(t.captures).set({ question, answer }).where(eq(t.captures.id, captureId));
@@ -592,10 +597,9 @@ async function actOn(tx: Tx, now: Date, capture: CaptureRow, asked: AskedQuestio
     return { ...asked, made: r.started ? [r.record.id] : [] };
   }
   if (asked.topic === "draft" && asked.draft) {
+    // Phase O, MT9: a call brief that could be about 2 or 3 of their projects makes none yet; its answer says which (CD50)
     const id = await requestDraft(tx, now, capture, asked.draft, asked.projectId);
-    // Phase O, MT9: or the question asking which project a call brief is for (M21), so the reply says it waits on that
-    const [which] = id ? [] : await tx.select({ id: t.clarifications.id }).from(t.clarifications).where(and(eq(t.clarifications.captureId, capture.id), eq(t.clarifications.about, "prep")));
-    return { ...asked, made: id ? [id] : which ? [which.id] : [] };
+    return { ...asked, made: id ? [id] : [] };
   }
   if (asked.topic === "undo") {
     const r = await undoInTx(tx, now, authorId, { commandId: `undo-${captureId}` });

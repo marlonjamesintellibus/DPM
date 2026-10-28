@@ -13,6 +13,7 @@ import { at, seededDb } from "../test/seeded-db";
 import { readCapture } from "./atlas";
 import { createCapture, openReview, proposeItems, routeExtraction } from "./capture";
 import { CommandRefused } from "./core";
+import { answerClarification, runClarificationTimers } from "./clarification";
 import { acceptCandidate, dismissCandidate, giveFeedback, runEvalCandidateTimers, setHelpImproveAtlas } from "./learning";
 
 let db: Db;
@@ -339,7 +340,7 @@ describe("usage numbers (LF7, LF8)", () => {
     for (const who of people) await giveFeedback(as(who), await ask(who, "What's due?", "due"), { rating: who === "p1" ? "down" : "up" });
     for (const who of people) await ask(who, "Can you book my flight?", "other");
     const [week] = await intellibus();
-    expect(week.answers).toEqual({ shown: true, people: 5, asked: 10, answerRate: 0.5, cantAnswerRate: 0.5, unclearRate: 0, thumbsUp: 4, thumbsDown: 1 });
+    expect(week.answers).toEqual({ shown: true, people: 5, asked: 10, answerRate: 0.5, cantAnswerRate: 0.5, unclearRate: 0, unchosenRate: 0, thumbsUp: 4, thumbsDown: 1 });
     expect(week.topics.find((t) => t.topic === "due")!.numbers).toEqual({ shown: true, people: 5, asked: 5, thumbsUp: 4, thumbsDown: 1 });
     expect(week.topics.find((t) => t.topic === "other")!.numbers).toEqual({ shown: true, people: 5, asked: 5, thumbsUp: 0, thumbsDown: 0 });
     expect(week.rest).toEqual({ shown: false }); // nothing left out
@@ -352,9 +353,30 @@ describe("usage numbers (LF7, LF8)", () => {
     const [executive] = await intellibus();
     expect(executive.answers).toEqual({ shown: false });
     const [week] = await intellibus(1, "maintainer");
-    expect(week.answers).toEqual({ shown: true, people: 2, asked: 2, answerRate: 0.5, cantAnswerRate: 0.5, unclearRate: 0, thumbsUp: 0, thumbsDown: 1 });
+    expect(week.answers).toEqual({ shown: true, people: 2, asked: 2, answerRate: 0.5, cantAnswerRate: 0.5, unclearRate: 0, unchosenRate: 0, thumbsUp: 0, thumbsDown: 1 });
     expect(week.topics.find((t) => t.topic === "due")!.numbers).toEqual({ shown: true, people: 1, asked: 1, thumbsUp: 0, thumbsDown: 1 });
     expect(week.rest).toEqual({ shown: false }); // every topic asked is shown on its own
+  });
+
+  it("CD50: a question Atlas asked which about counts once, answered once chosen; one never chosen is not answered", async () => {
+    // A second Kemar on Forager, so Alicia's question asks who (M21)
+    await db.insert(t.people).values({ id: "kemar-s", name: "Kemar Smith", initials: "KS", orgRole: "employee" });
+    await db.insert(t.projectMemberships).values({ projectId: "forager", personId: "kemar-s", role: "member", state: "member" });
+    const typed = await ask("alicia", "What is Kemar working on?", "people", 30);
+    const [{ conversationId }] = await db.select().from(t.captures).where(eq(t.captures.id, typed));
+    await ask("alicia", "the second one", "other", 31, conversationId!);
+    const tapped = await ask("alicia", "What is Kemar working on today?", "people", 32);
+    await answerClarification(as("alicia", 33), `clr-${tapped}`, "kemar");
+    await ask("alicia", "What is Kemar doing?", "people", 34);
+    await runClarificationTimers({ db, now: at(60 * 3) });
+    const [week] = await intellibus(1, "maintainer");
+    expect(week.answers).toEqual({ shown: true, people: 1, asked: 3, answerRate: 2 / 3, cantAnswerRate: 0, unclearRate: 0, unchosenRate: 1 / 3, thumbsUp: 0, thumbsDown: 0 });
+    expect(week.topics.find((t) => t.topic === "people")!.numbers).toMatchObject({ asked: 3 });
+    // LF8: for an executive, one person's question never chosen is not shown, nor given by the answer rate
+    await addPeople(4);
+    for (const who of ["kemar", "p1", "p2", "p3", "p4"]) await ask(who, "What's due?", "due");
+    const [executive] = await intellibus();
+    expect(executive.answers).toMatchObject({ shown: true, people: 6, asked: 8, answerRate: null, unchosenRate: null });
   });
 
   it("LF8: one person's question cannot be worked out by subtraction from the numbers shown with it", async () => {
@@ -363,7 +385,7 @@ describe("usage numbers (LF7, LF8)", () => {
     await ask("p2", "Can you book my flight?", "other");
     const [week] = await intellibus();
     // The week's total is shown, so "due" joins "other" rather than leave it as the total less "due"
-    expect(week.answers).toEqual({ shown: true, people: 5, asked: 6, answerRate: null, cantAnswerRate: null, unclearRate: 0, thumbsUp: 4, thumbsDown: 1 });
+    expect(week.answers).toEqual({ shown: true, people: 5, asked: 6, answerRate: null, cantAnswerRate: null, unclearRate: 0, unchosenRate: 0, thumbsUp: 4, thumbsDown: 1 });
     expect(week.topics.filter((t) => t.numbers.shown)).toEqual([]);
     expect(week.rest).toEqual({ shown: true, people: 5, asked: 6, thumbsUp: 4, thumbsDown: 1 });
   });

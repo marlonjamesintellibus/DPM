@@ -1,6 +1,7 @@
 // Use case 1 in a real browser (use-cases/01-update-to-plan.md, "The story", steps 1 to 8), then the
 // kind switch of section 13. The world is the seeded 20 Oct snapshot: Kemar's 8:58 voice note has
-// arrived and Atlas has proposed its 11 items (steps 1 and 2); Alicia set Off track at 9:02 (step 3).
+// arrived and Atlas has proposed its 11 items (steps 1 and 2); Alicia set Off track at 9:02 (step 3). The
+// story's own data adds a second Kemar on GQ & Academy (db/seed/e2e.ts, CD50).
 // Each step acts as one person through the screens, switching with View as, as the prototype does.
 import { expect, test, type Page } from "@playwright/test";
 
@@ -273,12 +274,19 @@ test("Phase G. Kemar drafts his standup from what he saved and copies it; a clie
   await expect(page.getByRole("textbox", { name: "Your client status" })).toHaveValue(/Status:\n- Off track: /);
 });
 
-test("Phase H. Alicia asks what Kemar is working on and who owns the store feed; Andre asks about Jodian, whom he shares no project with", async () => {
+test("Phase H. Alicia asks what Kemar is working on, taps which Kemar, and asks who owns the store feed; Andre asks about Jodian, whom he shares no project with", async () => {
   await viewAs("alicia", "/projects");
   await page.getByRole("link", { name: "Ask Atlas" }).first().click();
   const box = page.getByRole("textbox", { name: "Message to Atlas" });
   await box.fill("What is Kemar working on?");
   await box.press("Enter");
+  // CD50, PP2: the story's own data puts Kemar Lee on GQ & Academy (db/seed/e2e.ts), so Atlas asks who (M21)
+  await expect(page.getByText("Who do you mean: Kemar Brown or Kemar Lee?")).toBeVisible();
+  const options = page.getByRole("group", { name: "Choose one" });
+  await expect(options.getByRole("button")).toHaveCount(2);
+  await options.getByRole("button", { name: "Kemar Brown" }).click();
+  await expect(page.getByText("Got it: Kemar Brown.").first()).toBeVisible();
+  await expect(page.getByRole("group", { name: "Choose one" })).toHaveCount(0);
   // Only what they share (CD9): his Forager work, never his Store Insights export
   await expect(page.getByText(/^Kemar Brown has \d+ open work items?.* on projects you share; /)).toBeVisible();
   await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveAttribute("href", "/projects/forager");

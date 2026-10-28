@@ -4,14 +4,15 @@
 // Who owns something: the owner of each record or entry on the asker's projects that the words match
 // (PP5). What someone said: never (PP8). Who is meant is read among the people the asker shares a project
 // with, so a name outside them gets the same words as a name nobody has (PP1); a first name two of them
-// share is asked about, listing only them (PP2). The asker's own name is my_work (PP4). In a follow-up the
-// newest words decide (CV8): "and Andre?" is about Andre, never the person asked about before.
+// share is asked about, listing only them (PP2; through M21 in their own chat, CD50). The asker's own name
+// is my_work (PP4). In a follow-up the newest words decide (CV8): "and Andre?" is about Andre, never the
+// person asked about before.
 import { eq, inArray } from "drizzle-orm";
 import type { Conn } from "../../db/conn";
 import * as t from "../../db/schema";
-import { followUpRest, type AskedQuestion } from "../../domain/question";
+import { chosenAt, followUpRest, type AskedQuestion } from "../../domain/question";
 import { asThing, ownedMatches, ownedPhrase, peopleAsked, whoIsMeant, type Meant, type Nameable } from "../../domain/topics/people";
-import { leaveShownTo, ownedOn, personSeenBy, sharedPeople, type PersonSeen } from "../people";
+import { leaveShownTo, ownedOn, personSeenBy, sharedPeople, type PersonSeen, type SharedPerson } from "../people";
 import { readableProjects, todayIn, type PersonRef } from "../project";
 import { myWork, workOrder } from "./my-work";
 import { capped, counted, dayDate, forecastText, listed, projectsAsked, workTitle, type AnswerBuilder, type Body, type DraftCard } from "./shared";
@@ -50,9 +51,13 @@ export async function placesOf(conn: Conn, viewerId: string): Promise<string[]> 
  * CV8: who the words ask about, newest first. Words that name someone decide ("and Jodian?"); words that
  * only follow up and say where ("and on GQ?", "and GQ?") keep the one asked about before; any other words
  * mean whoever they name, so "and Andre?" and "and Zed?" mean nobody, never the person before (PP1).
+ * CD50: a question Atlas asked who about means the one chosen there, by id, while the asker still shares a
+ * project with them (P10); someone they no longer do is nobody, never the words read again.
  */
-function whoIsAsked(words: readonly string[], shared: readonly Nameable[], places: readonly string[]): Meant {
-  for (const w of words) {
+function whoIsAsked(question: AskedQuestion, shared: readonly Nameable[], places: readonly string[]): Meant {
+  for (const [at, w] of wordsOf(question).entries()) {
+    const chosen = chosenAt(question, "person", at);
+    if (chosen) return shared.some((p) => p.id === chosen) ? { kind: "one", id: chosen, also: [] } : { kind: "nobody" };
     const meant = whoIsMeant(w, shared);
     if (meant.kind !== "nobody") return meant;
     const rest = followUpRest(w, places);
@@ -62,19 +67,38 @@ function whoIsAsked(words: readonly string[], shared: readonly Nameable[], place
 }
 
 /**
+ * CD50: the buttons of a question that asked who, as the asker may see them now: only the people they still
+ * share a project with, by name; two shown with the same full name also say the projects the asker shares
+ * with each now. Built each time they are shown, never kept, so a project the asker has left since is never
+ * named (P10, PP2).
+ */
+export async function whoShown<O extends { id: string; label: string }>(conn: Conn, viewerId: string, options: readonly O[]): Promise<O[]> {
+  const shared = await sharedPeople(conn, viewerId);
+  const fits = options.flatMap((o) => shared.filter((p) => p.id === o.id).map((p) => ({ o, p })));
+  const twice = (p: SharedPerson) => fits.filter((x) => x.p.name === p.name).length > 1;
+  const ids = [...new Set(fits.filter((x) => twice(x.p)).flatMap((x) => x.p.projectIds))];
+  const names = ids.length ? await conn.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).where(inArray(t.projects.id, ids)) : [];
+  const on = (p: SharedPerson) => p.projectIds.map((id) => names.find((n) => n.id === id)?.name ?? id).join(" and ");
+  return fits.map(({ o, p }) => ({ ...o, label: twice(p) ? `${p.name} (${on(p)})` : p.name }));
+}
+
+/**
  * What the person the words mean has, or null when they mean nobody the asker shares a project with.
  * Phase C's WY8 hands a why about a person here, with `lead` said first.
  */
 export async function aboutSomeone(conn: Conn, viewerId: string, question: AskedQuestion, now: Date, lead = ""): Promise<Body | null> {
   const shared = await sharedPeople(conn, viewerId);
-  const meant = whoIsAsked(wordsOf(question), shared, await placesOf(conn, viewerId));
+  // CD50: the person chosen when M21 asked who, here or in a question this one follows (whoIsAsked)
+  const meant = whoIsAsked(question, shared, await placesOf(conn, viewerId));
   if (meant.kind === "nobody") return null;
   const nameOf = (id: string) => shared.find((p) => p.id === id)!.name;
   if (meant.kind === "which") {
-    // PP2: only people the asker shares a project with are listed. A reply by full name as a follow-up
-    // ("and Kemar Smith?") is read as one; phase D will ask this as a clarification
+    // PP2: only people the asker shares a project with are listed. M21 asks who in their own chat, with a
+    // button each (CD50), kept by name only: whoShown tells two of one name apart when shown; elsewhere a
+    // reply by full name as a follow-up ("and Kemar Smith?") is read as one
     const names = meant.ids.map(nameOf);
-    return none(`${lead}Did you mean ${either(names, "or")}? Ask again with their full name, for example "and ${names.at(-1)}?"`);
+    const body = none(`${lead}Did you mean ${either(names, "or")}? Ask again with their full name, for example "and ${names.at(-1)}?"`);
+    return { ...body, which: { fits: "person", options: meant.ids.map((id) => ({ id, label: nameOf(id) })) } };
   }
   // PP6: one person at a time, the first named other than the asker; the answer says who was left out
   const named = [meant.id, ...meant.also];

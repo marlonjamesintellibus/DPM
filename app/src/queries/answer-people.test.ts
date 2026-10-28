@@ -11,6 +11,7 @@ import { createCapture } from "../commands/capture";
 import type { Db } from "../db/client";
 import * as t from "../db/schema";
 import { at, seededDb } from "../test/seeded-db";
+import { answerFor } from "./answer";
 import { NOBODY, NOT_SAID } from "./answers/people";
 import { NOT_WHY } from "./answers/why";
 import { leaveShownTo, personSeenBy, sharedPeople } from "./people";
@@ -132,7 +133,12 @@ describe("PP2: a first name two shared people have", () => {
     await addPerson("kemar-s", "Kemar Smith", "forager");
     // Another Jodian, on a project Alicia is not in, makes no difference to her
     await addPerson("jodian-g", "Jodian Grant", "insights");
-    expect((await ask("alicia", "What is Kemar working on?")).answer.text).toBe('Did you mean Kemar Brown or Kemar Smith? Ask again with their full name, for example "and Kemar Smith?"');
+    // CD50: M21 asks who in her own chat, a button each (commands/clarification.test.ts); where it cannot, the answer asks
+    const { row } = await ask("alicia", "What is Kemar working on?");
+    expect(row.answer).toBeNull();
+    const [asked] = await db.select().from(t.clarifications).where(eq(t.clarifications.captureId, row.id));
+    expect(asked).toMatchObject({ about: "question", question: { fits: "person" }, options: [{ id: "kemar", label: "Kemar Brown" }, { id: "kemar-s", label: "Kemar Smith" }] });
+    expect((await answerFor(db, "alicia", row.question!, at(30))).text).toBe('Did you mean Kemar Brown or Kemar Smith? Ask again with their full name, for example "and Kemar Smith?"');
     expect((await ask("alicia", "What is Kemar Smith working on?")).answer.text).toBe("Kemar Smith has nothing open on Forager 2.0.");
     expect((await ask("alicia", "What is Jodian working on?")).answer.text).toBe("Jodian Taylor has 1 open work item on Forager 2.0; none is past due.");
     // Andre shares a project with Kemar Brown and Jodian Grant only

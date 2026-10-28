@@ -17,10 +17,9 @@ import * as t from "../db/schema";
 import { config } from "../domain/config";
 import { CLIENT_SAFE, clientCopyProblem, plainDraft, prepWho, type DraftKind } from "../domain/drafts";
 import type { Moved } from "../domain/machine";
-import { askable, isOwnChat } from "../domain/machines/clarification";
+import { isOwnChat } from "../domain/machines/clarification";
 import { applyDraftEvent, DRAFT_FINAL, draftEndText, newDraft, type DraftEvent, type DraftRecord, type DraftState } from "../domain/machines/draft";
 import { clientSafeNow, draftClosed, draftFacts, draftOf, knownNames, mayDraft, prepProjects } from "../queries/drafts";
-import { askWhichProject } from "./clarification";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, type CommandCtx } from "./core";
 
 type Row = typeof t.drafts.$inferSelect;
@@ -73,15 +72,12 @@ export async function requestDraft(tx: Tx, now: Date, capture: { id: string; aut
   if (!isOwnChat(capture.channel, conversation?.atlasChatId)) return null;
   let projectId = named;
   // Phase O, MT9: a call brief finds its project from who the call is with; with 2 or 3 of the asker's own that
-  // fit, DPM asks which (M21) and drafts once they say
+  // fit, the answer says which, DPM asks it as a question (M21, CD50), and the brief is drafted once they choose
   if (kind === "prep" && !projectId) {
     const who = prepWho(capture.text);
     const fits = who ? await prepProjects(tx, capture.authorId, who) : [];
-    if (fits.length === 1) projectId = fits[0].id;
-    else {
-      if (askable(fits.length)) await askWhichProject(tx, now, capture, fits);
-      return null;
-    }
+    if (fits.length !== 1) return null;
+    projectId = fits[0].id;
   }
   if (kind !== "standup" && !projectId) return null;
   const right = await mayDraft(tx, capture.authorId, kind, projectId);

@@ -77,9 +77,11 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
       if (!standup && !meeting) {
         // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them. First, so
         // a standup asking in the same chat does not take "#152" as its own answer (SU4)
-        if (await readAsAnswer(at(), captureId, readAttempt)) {
-          // Phase O, MT9: "Forager" said to "Which project is the call about?" asks for that brief; it is written now
-          const [brief] = await ctx.db.select({ captureId: t.clarifications.captureId }).from(t.clarifications).where(and(eq(t.clarifications.answeredBy, captureId), eq(t.clarifications.about, "prep")));
+        if (await readAsAnswer(at(), captureId, readAttempt, { wordWithAtlas: !!drafter })) {
+          // CD50: a chosen question's answer is kept with this reply; Atlas words it as any other
+          if (drafter) await wordCaptureAnswer(at(), captureId, drafter);
+          // Phase O, MT9: "Forager" said to "Which project is the call about?" asked for that brief; it is written now
+          const [brief] = await ctx.db.select({ captureId: t.clarifications.captureId }).from(t.clarifications).where(and(eq(t.clarifications.answeredBy, captureId), eq(t.clarifications.about, "question")));
           const briefId = brief ? await draftOfCapture(ctx.db, brief.captureId) : null;
           if (briefId) await writeDraft(ctx.db, () => at().now, briefId, drafter);
           return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };

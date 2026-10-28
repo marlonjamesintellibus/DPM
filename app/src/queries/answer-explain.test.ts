@@ -105,7 +105,13 @@ describe("what a project is", () => {
   });
 
   it("asked with no project: their only one is explained; with several it asks which, naming only theirs", async () => {
-    const { answer } = await ask("kemar", "Where do I start?");
+    // CD50: with 2 or 3, M21 asks which in his own chat, a button each, and the answer waits for his choice
+    const { row } = await ask("kemar", "Where do I start?");
+    expect(row.answer).toBeNull();
+    const [asked] = await db.select().from(t.clarifications).where(eq(t.clarifications.captureId, row.id));
+    expect(asked).toMatchObject({ about: "question", question: { fits: "project" }, options: [{ id: "forager" }, { id: "gq" }, { id: "insights" }] });
+    // Where it cannot ask, the answer names them
+    const answer = await answerFor(db, "kemar", row.question!, at(30));
     expect(answer.text).toBe("Which project? You are on Forager 2.0, GQ & Academy and Store Insights. Ask about one by its name.");
     expect(shown(answer)).toEqual([
       ["Forager 2.0", null, "Project"],
@@ -278,9 +284,12 @@ describe("edge cases", () => {
     expect(answer.text).toMatch(/^Store Insights is for Sprouts/);
 
     await db.update(t.projects).set({ aliases: ["Forager", "Forager Insights"] }).where(eq(t.projects.id, "forager"));
+    // CD50: asked in his own chat (commands/clarification.test.ts); where it cannot be, the answer says it
     const two = await ask("kemar", "Explain Insights", 31);
-    expect(two.answer.text).toBe('Did you mean "Forager 2.0" or "Store Insights"? Say it again with its name.');
-    expect(shown(two.answer)).toEqual([
+    expect(two.row.answer).toBeNull();
+    const said = await answerFor(db, "kemar", two.row.question!, at(31));
+    expect(said.text).toBe('Did you mean "Forager 2.0" or "Store Insights"? Say it again with its name.');
+    expect(shown(said)).toEqual([
       ["Forager 2.0", null, "Project"],
       ["Store Insights", null, "Project"],
     ]);

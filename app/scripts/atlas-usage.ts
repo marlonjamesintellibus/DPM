@@ -27,7 +27,7 @@ const cell = <T extends object>(s: Shown<T>, f: (n: T & { people: number }) => s
 function printWeek(w: UsageWeek) {
   console.log(`\nWeek of ${w.week}`);
   console.log(
-    `  Questions: ${cell(w.answers, (a) => `${a.asked} from ${a.people} people; answered ${pct(a.answerRate)}, can't answer ${pct(a.cantAnswerRate)}, unclear ${pct(a.unclearRate)}; thumbs up ${a.thumbsUp}, down ${a.thumbsDown}`)}`,
+    `  Questions: ${cell(w.answers, (a) => `${a.asked} from ${a.people} people; answered ${pct(a.answerRate)}, can't answer ${pct(a.cantAnswerRate)}, unclear ${pct(a.unclearRate)}, asked which with nothing chosen ${pct(a.unchosenRate)}; thumbs up ${a.thumbsUp}, down ${a.thumbsDown}`)}`,
   );
   for (const { topic, numbers } of w.topics) {
     if (numbers.shown) console.log(`    ${topic.padEnd(15)} ${numbers.asked} asked, up ${numbers.thumbsUp}, down ${numbers.thumbsDown}`);
