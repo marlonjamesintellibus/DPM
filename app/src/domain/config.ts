@@ -52,6 +52,10 @@ export const config = {
   // Phase S, LF8 and CD28: a usage number is shown only for a group of at least this many people
   metricMinimumCount: 5,
 
+  // Phase J, CD27 (conversational plan, section 23): the standup time, in the org time zone. Phase N reads it
+  // too: "Who hasn't updated today?" asked before it says "It's early" (LD3)
+  standupTime: "09:00",
+
   // Phase L, M30 (conversational plan, section 23): "Undo that" reverses the author's last save for this long
   undoMinutes: 15,
   // Phase L, M31: a vocabulary change nobody approves or declines is reminded (S18), then expires after this many days

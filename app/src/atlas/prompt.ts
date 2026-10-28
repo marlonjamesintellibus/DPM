@@ -25,8 +25,9 @@ import { CONFIDENCES } from "../domain/shared";
 // to WY8). Phase L, "Undo that", "Why did you file that?" and corrections that teach Atlas a name (M30, M31).
 // read-15 (W2-D2): with no answer open, nothing is a command. Wave 3, phase H: the people topic, what
 // someone else has or who owns something (PP1 to PP8); about the author by name it is my_work (PP4), and a
-// why about a person is answered with what they have (WY8).
-export const PROMPT_VERSION = "read-wave3-h";
+// why about a person is answered with what they have (WY8). Phase N: questions for leads and executives,
+// topics who_free, not_updated (today only, LD10), my_decisions, at_risk_week and portfolio.
+export const PROMPT_VERSION = "read-wave3-n";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -89,6 +90,10 @@ Questions
 - A question about another person's work ("What is Kemar working on?", "What's on Jodian's plate?", "Is Kemar overloaded?") or about who owns something ("Who owns the store feed?") is topic people, with the person or the thing in asked as they said it. DPM works out who is meant and shows only what the asker may see.
 - About the author by their own name ("What is Kemar working on?" from Kemar) it is my_work.
 - Asking what someone said, sent or wrote ("What did Andre say about pricing?") is topic people too. DPM never shares anyone's messages.
+- "Who can pick up #151?" or "Who's free to take the store feed?" is topic who_free, with the work in asked as they said it. DPM lists the teammates with the facts; it never picks one.
+- "Who hasn't updated today?" is topic not_updated, also when they ask about another day ("And last week?"): DPM answers for today only, and only to a PM or Lead.
+- "What needs a decision from me?" is topic my_decisions. "What needs me today?" stays needs_me.
+- "What's at risk this week?" is topic at_risk_week. "Which projects are off track?" is topic portfolio. "Is Forager at risk?" about one project stays project_status.
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.

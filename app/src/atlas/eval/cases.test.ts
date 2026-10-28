@@ -50,6 +50,17 @@ describe("evaluation cases", () => {
     }
   });
 
+  it("phase N: the rule (no model) reads each lead question as it should, LD10's follow-up included", async () => {
+    const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
+    const leads = EVAL_CASES.filter((c) => c.id.startsWith("n-"));
+    expect(leads.length).toBeGreaterThanOrEqual(9);
+    for (const c of leads) {
+      const ctx = caseContext(c, contexts);
+      const score = scoreCase(c, [], ctx, ruleQuestion(ctx));
+      expect([score.missing, score.forbidden], c.id).toEqual([[], []]);
+    }
+  });
+
   it("Andre's data has nothing of Forager's, and Alicia's has her two projects", async () => {
     const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
     expect(contexts.andre.projects.map((p) => p.id)).toEqual(["insights"]);

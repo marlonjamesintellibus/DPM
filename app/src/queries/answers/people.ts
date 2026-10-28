@@ -39,7 +39,7 @@ export const people: AnswerBuilder = async (conn, viewerId, question, now) => {
 };
 
 /** The names and aliases of the projects the viewer reads: the places a follow-up can name ("and on GQ?"). */
-async function placesOf(conn: Conn, viewerId: string): Promise<string[]> {
+export async function placesOf(conn: Conn, viewerId: string): Promise<string[]> {
   const ids = await readableProjects(conn, viewerId);
   if (!ids.length) return [];
   const rows = await conn.select({ name: t.projects.name, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids));

@@ -235,6 +235,27 @@ test("Phase H. Alicia asks what Kemar is working on and who owns the store feed;
   await expect(page.getByText("I can't tell you about them. Ask about someone you share a project with, by their name.")).toBeVisible();
 });
 
+test("Phase N. Alicia asks who hasn't updated and who can pick up #160; Kemar, a member, is told only PMs and Leads can see it", async () => {
+  await viewAs("alicia", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Who hasn't updated today?");
+  await box.press("Enter");
+  // Names only, per project she leads; Kemar's 8:58 note was about Forager
+  await expect(page.getByText(/not sent an update today on Forager 2\.0: Jodian Taylor\./)).toBeVisible();
+  await box.fill("Who can pick up #160?");
+  await box.press("Enter");
+  await expect(page.getByText(/^#160 Feature store backfill on Forager 2\.0 is Jodian Taylor's\./)).toBeVisible();
+  await expect(page.getByRole("link", { name: /Kemar Brown/ }).last()).toHaveAttribute("href", "/projects/forager");
+
+  // LD1: nothing about anyone
+  await viewAs("kemar", "/projects");
+  await page.getByRole("link", { name: "Ask Atlas" }).first().click();
+  await box.fill("Who hasn't updated today?");
+  await box.press("Enter");
+  await expect(page.getByText("Only PMs and Leads can see that.")).toBeVisible();
+});
+
 test("8. Each person sees only their part of Kemar's note", async () => {
   // Alicia sees the Forager quotes, never the Store Insights sentence
   await viewAs("alicia", "/projects/forager?view=table");

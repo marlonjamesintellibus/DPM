@@ -69,10 +69,10 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-wave3-h's words and order (phase C added why; phase L why_filed, correction and undo; phase H people); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-wave3-h");
+  it("the topics come from domain/topics in read-wave3-n's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-wave3-n");
     expect(SYSTEM_PROMPT).toContain(
-      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
     expect(questionSchema.shape.topic.options).toEqual([
       "needs_me",
@@ -83,6 +83,11 @@ describe("the request", () => {
       "updates",
       "mentions",
       "people",
+      "who_free",
+      "not_updated",
+      "my_decisions",
+      "at_risk_week",
+      "portfolio",
       "why",
       "why_filed",
       "correction",
@@ -91,6 +96,14 @@ describe("the request", () => {
       "other",
       "unclear",
     ]);
+  });
+
+  it("phase N: who could pick up work, who hasn't updated (today only), decisions, risks this week and the portfolio", () => {
+    expect(SYSTEM_PROMPT).toContain('"Who can pick up #151?" or "Who\'s free to take the store feed?" is topic who_free');
+    expect(SYSTEM_PROMPT).toContain("DPM answers for today only, and only to a PM or Lead.");
+    expect(SYSTEM_PROMPT).toContain('"What needs a decision from me?" is topic my_decisions.');
+    expect(SYSTEM_PROMPT).toContain('"Which projects are off track?" is topic portfolio.');
+    expect(questionSchema.safeParse({ asked: "Who hasn\'t updated today?", topic: "not_updated", projectId: null }).success).toBe(true);
   });
 
   it("phase C: a why question names its subject by a listed id, null for a person (WY1, WY8)", () => {
