@@ -11,7 +11,7 @@ import { loadBraidLog, loadItems } from "../db/records";
 import * as t from "../db/schema";
 import type { RawCommand } from "../domain/acting";
 import type { RawProposal } from "../domain/atlas-checks/types";
-import { OPTION_GONE_TEXT } from "../domain/machines/clarification";
+import { optionGoneText } from "../domain/machines/clarification";
 import { getThread } from "../queries/chat";
 import { loadCheckContext } from "../queries/check-context";
 import { getReview } from "../queries/review";
@@ -70,6 +70,11 @@ const unsureRisk = (options: string[] = ["forager", "insights"], quote = "Waitin
   rationale: "You said the vendor may be late.",
 });
 
+/** "Worked on the store feed today": an update Atlas could only guess is #151, when it may be #152. */
+const vagueFeed: RawProposal = { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "store feed", label: "#151" }, targetId: "wi-151", targetOptions: ["wi-151", "wi-152"], field: "state", newValue: "in_progress", quote: "Worked on the store feed today", confidence: "medium", rationale: "" };
+/** A sure update to one record's state. */
+const sure = (targetId: string, newValue: string, quote: string, replacesItemId: string | null = null): RawProposal => ({ kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: quote, label: quote }, targetId, field: "state", newValue, quote, confidence: "high", rationale: "", replacesItemId });
+
 beforeEach(async () => {
   db = await seededDb({ kemarNote: false, aliciaSetsStatus: false });
 }, 30_000);
@@ -112,9 +117,8 @@ describe("CHECKS_DONE: asked in the author's own chat", () => {
 
   it("CD23: one question per capture, about the first unsure item in the message", async () => {
     const text = "Waiting on the vendor's data, it may be late. Worked on the store feed today.";
-    const feed: RawProposal = { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "store feed", label: "#151" }, targetId: "wi-151", targetOptions: ["wi-151", "wi-152"], field: "state", newValue: "in_progress", quote: "Worked on the store feed today", confidence: "medium", rationale: "" };
     // Atlas lists the feed first; the message says the risk first
-    const { captureId } = await say("kemar", text, 0, null, reads([feed, unsureRisk()]));
+    const { captureId } = await say("kemar", text, 0, null, reads([vagueFeed, unsureRisk()]));
     expect(await db.select().from(t.clarifications)).toHaveLength(1);
     expect(await question(captureId)).toMatchObject({ about: "project", extractionId: `${captureId}-2` });
   });
@@ -137,6 +141,32 @@ describe("CHECKS_DONE: asked in the author's own chat", () => {
     const update = { ...risk, id: "other", draft: { ...risk.draft, kind: "update" as const, braid: undefined, target: { type: "work_item" as const, id: "wi-151", field: "state", oldValue: "in_progress", newValue: "done" }, options: ["forager", "insights", "gq"] } };
     const asked = await db.transaction((tx) => askIfUnsure(tx, at(1), { ...row, id: "cap-other" }, [update], null, ctx));
     expect(asked).toBeNull();
+  });
+
+  it("section 6: never a record another item of the message already changes: beside '#152 is done' only #151 is left, so nothing is asked and the update saves", async () => {
+    const text = "Worked on the store feed today. #152 is done.";
+    const { captureId } = await say("kemar", text, 0, null, reads([vagueFeed, sure("wi-152", "done", "#152 is done")]));
+    expect(await question(captureId)).toBeUndefined();
+    const [feed, done] = await items(captureId);
+    // #151 is in progress already, so with no other record to mean the first item changes nothing
+    expect([feed.draft.target?.id, feed.draft.closeMatches, feed.state, done.draft.target?.id]).toEqual(["wi-151", undefined, "no_change", "wi-152"]);
+    await openReview(as("kemar", 1), captureId);
+    await decideExtraction(as("kemar", 2), done.id, { type: "accept" });
+    expect((await saveCapture(as("kemar", 3), captureId)).outcome).toBe("saved");
+    expect((await work("wi-152")).state).toBe("done");
+  });
+
+  it("rules 3 and 8: a message from any Atlas chat but the direct one (a project group, phase I) is never asked about", async () => {
+    const ctx = as("kemar");
+    const inGroup = await createCapture(ctx, { channel: "atlas", messageId: "grp-1", kind: "text", text: VAGUE_FEED, messageAt: at(0), receivedAt: at(0), atlasChatId: "grp-forager" });
+    await readCapture(ctx, inGroup.captureId, createFixtureExtractor(), { retryDelayMs: () => 0 });
+    // The review card still asks, as it does with four options
+    expect((await items(inGroup.captureId))[0]).toMatchObject({ state: "needs_ok", draft: { closeMatches: { ids: ["wi-151", "wi-152"], chosen: null } } });
+    expect(await question(inGroup.captureId)).toBeUndefined();
+    // The same words in his direct chat with Atlas are asked about there
+    const direct = await createCapture(ctx, { channel: "atlas", messageId: "dm-1", kind: "text", text: VAGUE_FEED, messageAt: at(1), receivedAt: at(1) });
+    await readCapture(ctx, direct.captureId, createFixtureExtractor(), { retryDelayMs: () => 0 });
+    expect(await question(direct.captureId)).toMatchObject({ state: "asked" });
   });
 
   it("CL7: a voice note is asked about in text, after its transcript", async () => {
@@ -185,7 +215,7 @@ describe("ANSWER by a button", () => {
   it("CL5: an option cancelled since is refused when tapped, and the other still works", async () => {
     const { captureId } = await say("kemar", VAGUE_FEED);
     await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-152"));
-    await expect(answerClarification(as("kemar", 1), `clr-${captureId}`, "wi-152")).rejects.toMatchObject({ reason: OPTION_GONE_TEXT });
+    await expect(answerClarification(as("kemar", 1), `clr-${captureId}`, "wi-152")).rejects.toMatchObject({ reason: optionGoneText("record") });
     expect(await question(captureId)).toMatchObject({ state: "asked", chosen: null });
     expect((await items(captureId))[0].draft.target?.id).toBe("wi-151");
     expect((await answerClarification(as("kemar", 2), `clr-${captureId}`, "wi-151")).message).toContain("#151 Store sales feed access");
@@ -197,9 +227,23 @@ describe("ANSWER by a button", () => {
     const shown = (await turn("kemar", conversationId, captureId, 1)).clarification!;
     expect(shown.options).toEqual([{ id: "forager", label: "Forager 2.0" }]);
     expect(shown.question).not.toContain("Store Insights");
-    await expect(answerClarification(as("kemar", 1), `clr-${captureId}`, "insights")).rejects.toMatchObject({ reason: OPTION_GONE_TEXT });
+    await expect(answerClarification(as("kemar", 1), `clr-${captureId}`, "insights")).rejects.toMatchObject({ reason: optionGoneText("project") });
     await answerClarification(as("kemar", 2), `clr-${captureId}`, "forager");
     expect((await items(captureId))[0].draft.projectId).toBe("forager");
+  });
+
+  it("section 6: a record another item of the update has taken since is refused, and the review no longer offers it", async () => {
+    const text = "Worked on the store feed today. Trend connector work too.";
+    const trend: RawProposal = { ...vagueFeed, routingReason: { basis: "target", evidence: "trend connector", label: "#145" }, targetId: "wi-145", targetOptions: ["wi-145", "wi-152"], quote: "Trend connector work too" };
+    const { captureId } = await say("kemar", text, 0, null, reads([vagueFeed, trend]));
+    expect(await question(captureId)).toMatchObject({ extractionId: `${captureId}-1`, options: [{ id: "wi-151" }, { id: "wi-152" }] });
+    await answerClarification(as("kemar", 1), `clr-${captureId}`, "wi-152");
+    await openReview(as("kemar", 2), captureId);
+    const review = await getReview(db, "kemar", captureId);
+    expect(review.found && review.items.find((i) => i.id === `${captureId}-2`)?.closeMatches).toEqual({ others: [], chosen: null });
+    // Two items on #152's state could never both save
+    await expect(pickRecordExtraction(as("kemar", 3), `${captureId}-2`, "wi-152")).rejects.toMatchObject({ reason: "another part of this update already changes that one" });
+    expect((await items(captureId)).map((i) => i.draft.target?.id)).toEqual(["wi-152", "wi-145"]);
   });
 
   it("rule 10: only the author answers; anyone else's tap reads as not found, and an option it never offered is refused", async () => {
@@ -250,6 +294,16 @@ describe("ANSWER in words, read against the options only", () => {
     expect((await question(older.captureId)).chosen).toBe("wi-152");
   });
 
+  it("CL5, P10: 'the second one' counts over the options he can still see", async () => {
+    const first = await say("kemar", "Waiting on the vendor's data, it may be late.", 0, null, reads([unsureRisk(["forager", "insights", "gq"])]));
+    expect((await question(first.captureId)).options.map((o) => o.id)).toEqual(["forager", "insights", "gq"]);
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    // The chat shows Forager 2.0 and GQ & Academy: the second of those is GQ
+    await say("kemar", "the second one", 1, first.conversationId, noModel);
+    expect(await question(first.captureId)).toMatchObject({ state: "resolved", chosen: "gq" });
+    expect((await items(first.captureId))[0].draft.projectId).toBe("gq");
+  });
+
   it("a question in another conversation is never answered by words here", async () => {
     const first = await say("kemar", VAGUE_FEED);
     const other = await say("kemar", "#152", 1, null, reads([]));
@@ -261,7 +315,7 @@ describe("ANSWER in words, read against the options only", () => {
     const first = await say("kemar", VAGUE_FEED);
     await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-152"));
     const reply = await say("kemar", "#152", 1, first.conversationId, noModel);
-    expect(await capture(reply.captureId)).toMatchObject({ state: "answered", commandNote: OPTION_GONE_TEXT });
+    expect(await capture(reply.captureId)).toMatchObject({ state: "answered", commandNote: optionGoneText("record") });
     expect((await question(first.captureId)).state).toBe("asked");
   });
 });
@@ -311,6 +365,17 @@ describe("handed to the review, or closed", () => {
     expect((await capture(b.captureId)).state).toBe("expired");
     expect(await question(b.captureId)).toMatchObject({ state: "closed", endedBy: "capture" });
   });
+
+  it("CV10, rule 5: a correction that withdraws the item closes its question, whose buttons could never work again", async () => {
+    const first = await say("kemar", VAGUE_FEED);
+    const fix = sure("wi-152", "in_progress", "That was #152, not #151", `${first.captureId}-1`);
+    await say("kemar", "That was #152, not #151. It is in progress now.", 1, first.conversationId, reads([fix]));
+    expect((await items(first.captureId))[0].state).toBe("withdrawn");
+    expect(await question(first.captureId)).toMatchObject({ state: "closed", endedBy: "corrected" });
+    expect((await turn("kemar", first.conversationId, first.captureId, 1)).clarification).toMatchObject({ state: "closed", outcome: "You corrected this in a later message." });
+    // Its timer has nothing left to hand to the review
+    expect((await runClarificationTimers({ db, now: at(130) })).expired).toEqual([]);
+  });
 });
 
 describe("a reply that could mean 2 or 3 lines of the open answer (phase B, AC6 and AC7)", () => {
@@ -324,6 +389,8 @@ describe("a reply that could mean 2 or 3 lines of the open answer (phase B, AC6 
 
   it("AC7: words that fit two lines ask which; the answer makes the M20 card for that line, which she confirms", async () => {
     const { a, b, conversationId, lineOf } = await twoRisks();
+    // The fixture is DPM with no model connected: its own rule read the reply (CL8 asks about no item then,
+    // but a reply that decides lines is asked about as with a model; see askIfUnsure)
     const reply = await say("alicia", "Approve the trend model risk", 2, conversationId);
     expect(await capture(reply.captureId)).toMatchObject({ state: "answered", commandNote: null });
     const q = await question(reply.captureId);
@@ -339,6 +406,42 @@ describe("a reply that could mean 2 or 3 lines of the open answer (phase B, AC6 
     expect((await loadBraidLog(db, "forager")).log[b].state).toBe("proposed");
     await confirmCommand(as("alicia", 4), card.id);
     expect([(await loadBraidLog(db, "forager")).log[a].state, (await loadBraidLog(db, "forager")).log[b].state]).toEqual(["proposed", "open"]);
+  });
+
+  it("section 6: words that fit two lines, neither offering the act, ask nothing; the chat says neither can take it", async () => {
+    const { conversationId } = await twoRisks();
+    // Both risks offer Approve and Decline; neither offers Resolve, so every option would be refused
+    const reply = await say("alicia", "Resolve the trend model risk", 2, conversationId);
+    expect(await question(reply.captureId)).toBeUndefined();
+    expect((await capture(reply.captureId)).commandNote).toMatch(/^You can't resolve "Kemar raised a risk: Trend model may [^"]+" or "Kemar raised a risk: Trend model may [^"]+" here\.$/);
+  });
+
+  it("the model check's item 1: a reply that also holds an update is still asked which line; the review does not take that question", async () => {
+    const { a, b, conversationId, lineOf } = await twoRisks();
+    const approve: RawCommand = { act: "approve", lines: [lineOf(a), lineOf(b)], reason: null, by: "author" };
+    const reply = await say("alicia", "Approve the trend model risk, and #145 is done.", 2, conversationId, reads([sure("wi-145", "done", "#145 is done")], [approve]));
+    expect(await capture(reply.captureId)).toMatchObject({ state: "proposed", commandNote: null });
+    expect(await question(reply.captureId)).toMatchObject({ about: "line", state: "asked" });
+    await openReview(as("alicia", 3), reply.captureId);
+    expect((await question(reply.captureId)).state).toBe("asked");
+    await answerClarification(as("alicia", 4), `clr-${reply.captureId}`, String(lineOf(b)));
+    expect(await db.select().from(t.chatCommands).where(eq(t.chatCommands.captureId, reply.captureId))).toMatchObject([{ act: "approve", subjectId: b }]);
+  });
+
+  it("CL1: passed over, a line's question is answered by a later reply that makes the card for one of its lines; it never says nothing was done", async () => {
+    const { a, conversationId, lineOf } = await twoRisks();
+    const reply = await say("alicia", "Approve the trend model risk", 2, conversationId);
+    const clearer = await say("alicia", "Approve the slip risk", 3, conversationId);
+    const cards = await db.select().from(t.chatCommands).where(eq(t.chatCommands.captureId, clearer.captureId));
+    expect(cards).toMatchObject([{ act: "approve", subjectId: a, state: "proposed" }]);
+    expect(await question(reply.captureId)).toMatchObject({ state: "resolved", chosen: String(lineOf(a)), answeredBy: clearer.captureId });
+    // No second card from the question, and its timer has nothing to close
+    expect(await db.select().from(t.chatCommands).where(eq(t.chatCommands.captureId, reply.captureId))).toEqual([]);
+    expect((await runClarificationTimers({ db, now: at(122) })).expired).toEqual([]);
+    expect((await turn("alicia", conversationId, reply.captureId, 122)).clarification?.outcome).toBe('Got it: "Kemar raised a risk: Trend model may slip to 24 Oct".');
+    // The clearer reply shows its own card, not a second "Got it"
+    const shown = await turn("alicia", conversationId, clearer.captureId, 3);
+    expect([shown.commands.length, shown.answered]).toEqual([1, null]);
   });
 
   it("AC6: words that fit no line ask over the lines that offer the act", async () => {
@@ -370,7 +473,7 @@ describe("a reply that could mean 2 or 3 lines of the open answer (phase B, AC6 
     expect(q.options.map((o) => o.id)).toContain(onGq);
     await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "gq"), eq(t.projectMemberships.personId, "alicia")));
     expect((await turn("alicia", asked.conversationId, reply.captureId, 3)).clarification?.options.map((o) => o.label)).toEqual(["Kemar raised a risk: Trend model may slip to 24 Oct"]);
-    await expect(answerClarification(as("alicia", 3), q.id, onGq)).rejects.toMatchObject({ reason: OPTION_GONE_TEXT });
+    await expect(answerClarification(as("alicia", 3), q.id, onGq)).rejects.toMatchObject({ reason: optionGoneText("line") });
     const other = q.options.find((o) => o.id !== onGq)!;
     await answerClarification(as("alicia", 4), q.id, other.id);
     expect(await db.select().from(t.chatCommands).where(eq(t.chatCommands.captureId, reply.captureId))).toHaveLength(1);

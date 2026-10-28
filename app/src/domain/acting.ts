@@ -2,8 +2,9 @@
 // answer's lines and says what it decides ("Approve the Kyle risk"): an act and the lines it could mean.
 // What Atlas says is untrusted, like a question (section 15): checkCommands keeps a command only for one
 // line of the open answer that offers that act to the asker (AC6, AC9), one card per line (AC8, CD1),
-// and never guesses between lines (AC7): DPM asks which, over the lines it could mean (phase D, M21). A change to a record said in words ("Mark the second one
-// done") is never a command here: it is an update in items, reviewed as any other.
+// and never guesses between lines (AC7): DPM asks which, over the lines it could mean that offer the act
+// (phase D, M21). A change to a record said in words ("Mark the second one done") is never a command here:
+// it is an update in items, reviewed as any other.
 import type { CheckContext, OpenAnswer } from "./atlas-checks/types";
 import { WORD_ACTS, type WordAct } from "./machines/chat-command";
 
@@ -23,8 +24,8 @@ export type CommandNote =
   | { kind: "no_answer" }
   /** AC6, AC7: no line fits, or more than one could; `lines` are the ones it could mean, `act` and `reason` what it said. */
   | { kind: "which"; lines: readonly number[]; act: WordAct; reason: string | null }
-  /** The line offers no such act to the asker ("Approve #145"). */
-  | { kind: "not_offered"; act: WordAct; line: number }
+  /** The lines it could mean offer no such act to the asker ("Approve #145"). */
+  | { kind: "not_offered"; act: WordAct; lines: readonly number[] }
   /** The model check's fix lines_now: the only lines it could mean are on projects the asker can no longer read. */
   | { kind: "out_of_date" };
 
@@ -54,16 +55,17 @@ export function checkCommands(raw: readonly RawCommand[] | null | undefined, ope
     // Words that fit two lines of which only one offers the act ("Resolve the feed blocker" beside the
     // blocked #151) mean that one; two that both offer it are never guessed (AC7)
     const offering = named.filter((n) => open.lines.some((l) => l.line === n && l.acts.includes(act)));
-    const lines = offering.length ? offering : named;
-    if (lines.length !== 1) {
-      note ??= { kind: "which", lines, act, reason: c.reason?.trim() || null };
+    // Lines it names of which none offers the act ("Resolve the trend model risk" over two risks to approve):
+    // no line can take it, so phase D never asks which (section 6: never an option the checks would refuse)
+    if (named.length && !offering.length) {
+      note ??= { kind: "not_offered", act, lines: named };
       continue;
     }
-    const line = open.lines.find((l) => l.line === lines[0])!;
-    if (!line.acts.includes(act)) {
-      note ??= { kind: "not_offered", act, line: line.line };
+    if (offering.length !== 1) {
+      note ??= { kind: "which", lines: offering, act, reason: c.reason?.trim() || null };
       continue;
     }
+    const line = open.lines.find((l) => l.line === offering[0])!;
     // Once only (rule 6): the same act on the same line twice in a message is one card
     if (kept.some((k) => k.act === act && k.line === line.line)) continue;
     kept.push({ act, line: line.line, reason: c.reason?.trim() || null });

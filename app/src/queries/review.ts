@@ -4,6 +4,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
+import { fieldTaken } from "../domain/capture-save";
 import { weekday } from "../domain/dates";
 import * as t from "../db/schema";
 import { saveBlockers } from "../domain/machines/capture";
@@ -473,7 +474,11 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
               .map((e) => ({ id: e.id, title: e.title, stateLabel: e.state.replace("_", " ") }))
           : [],
       closeMatches: d.closeMatches
-        ? { others: d.closeMatches.ids.filter((id) => id !== d.target?.id).flatMap((id) => (closeLabels.has(id) ? [{ id, label: closeLabels.get(id)! }] : [])), chosen: d.closeMatches.chosen }
+        ? {
+            // Section 6: never one another item of the update already changes, which could not be chosen
+            others: d.closeMatches.ids.filter((id) => id !== d.target?.id && !fieldTaken(items, item, id)).flatMap((id) => (closeLabels.has(id) ? [{ id, label: closeLabels.get(id)! }] : [])),
+            chosen: d.closeMatches.chosen,
+          }
         : null,
       // A same-as report or a resolution belongs to its entry's log, like an update to its record
       canMove: d.scope === "project" && (d.kind === "braid_new" || d.kind === "new_work" || (d.kind === "update" && !d.target)),

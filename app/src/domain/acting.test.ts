@@ -77,8 +77,14 @@ describe("checkCommands", () => {
 
   it("AC9: a line that does not exist, or a line that offers no such act, is no command", () => {
     expect(checkCommands([{ act: "approve", lines: [9] }], OPEN).kept).toEqual([]);
-    expect(checkCommands([{ act: "approve", lines: [4] }], OPEN)).toEqual({ kept: [], note: { kind: "not_offered", act: "approve", line: 4 } });
-    expect(checkCommands([{ act: "resolve", lines: [1] }], OPEN).note).toEqual({ kind: "not_offered", act: "resolve", line: 1 });
+    expect(checkCommands([{ act: "approve", lines: [4] }], OPEN)).toEqual({ kept: [], note: { kind: "not_offered", act: "approve", lines: [4] } });
+    expect(checkCommands([{ act: "resolve", lines: [1] }], OPEN).note).toEqual({ kind: "not_offered", act: "resolve", lines: [1] });
+  });
+
+  it("section 6: two lines it could mean, neither offering the act, are no question of which: neither can take it", () => {
+    // "Resolve the trend model risk" over two risks to approve or decline
+    expect(checkCommands([{ act: "resolve", lines: [1, 2] }], OPEN)).toEqual({ kept: [], note: { kind: "not_offered", act: "resolve", lines: [1, 2] } });
+    expect(commandNoteText({ kind: "not_offered", act: "resolve", lines: [1, 2] }, ["A", "B"])).toBe(`You can't resolve "A" or "B" here.`);
   });
 });
 
@@ -91,8 +97,8 @@ describe("what the chat says when a reply made no card", () => {
     [{ kind: "which", lines: [1, 2, 3], act: "approve", reason: null }, ["A", "B", "C"], 'Did you mean "A", "B" or "C"? Say it again with its name.'],
     // P10: a line the asker can no longer read is not named; one name left is not a choice
     [{ kind: "which", lines: [1, 2], act: "approve", reason: null }, ["A"], "I'm not sure which one you mean. Say it again with its name."],
-    [{ kind: "not_offered", act: "approve", line: 4 }, ["#152 Store feed connector"], 'You can\'t approve "#152 Store feed connector" here.'],
-    [{ kind: "not_offered", act: "approve", line: 4 }, [], "That answer is out of date. Ask again."],
+    [{ kind: "not_offered", act: "approve", lines: [4] }, ["#152 Store feed connector"], 'You can\'t approve "#152 Store feed connector" here.'],
+    [{ kind: "not_offered", act: "approve", lines: [4] }, [], "That answer is out of date. Ask again."],
     [{ kind: "out_of_date" }, [], "That answer is out of date. Ask again."],
   ] as const)("%o", (note, names, text) => {
     expect(commandNoteText(note, names)).toBe(text);

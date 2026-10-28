@@ -12,7 +12,8 @@
 //   asked --REVIEW_OPENED [about an item]--> handed_to_review               CL3
 //   asked --EXPIRE [2 hours, about an item]--> handed_to_review
 //   asked --EXPIRE [2 hours, about a line]--> closed                       the model check's fix
-//   asked --CLOSE--> closed                                                 the capture is discarded or expires (CL6)
+//   asked --CLOSE--> closed                                                 the capture is discarded or expires (CL6),
+//                                                                           or a correction withdrew its item (CV10)
 // The plan's "asked --ANSWERED(not an option)--> asked" is not an event: words that fit no option are not an
 // answer, so they are read as a new message and the question stays as it is (CL1, CL2). An option that is no
 // longer allowed (CL5) is a refused ANSWER, which leaves it asked too.
@@ -39,8 +40,11 @@ export type ClarifyOption = { id: string; label: string; projectId: string };
 /** At most three options (section 6); with more, the review card asks (ProjectCap). */
 export const MAX_OPTIONS = 3;
 
-/** How it left asked when it was not answered: the review was opened, its timer fired, or the capture ended. */
-export type EndedBy = "review" | "timer" | "capture";
+/**
+ * How it left asked when it was not answered: the review was opened, its timer fired, the capture ended, or a
+ * later correction withdrew the item it asks about (CV10).
+ */
+export type EndedBy = "review" | "timer" | "capture" | "corrected";
 
 export type ClarificationRecord = {
   id: string;
@@ -74,8 +78,8 @@ export type ClarificationEvent =
   | { type: "REVIEW_OPENED" }
   /** Timer clarify_expiry: config.clarifyExpiryHours after it was asked (CD2). */
   | { type: "EXPIRE" }
-  /** The capture is discarded or expires (CL6). */
-  | { type: "CLOSE" };
+  /** The capture is discarded or expires (CL6), or a correction withdrew its item (CV10, rule 5). */
+  | { type: "CLOSE"; because?: "capture" | "corrected" };
 
 type Ctx = {
   record: ClarificationRecord;
@@ -143,7 +147,7 @@ export function applyClarificationEvent(record: ClarificationRecord, event: Clar
     case "EXPIRE":
       return { outcome, record: { ...next, endedBy: "timer", decidedAt: ctx.now } };
     case "CLOSE":
-      return { outcome, record: { ...next, endedBy: "capture", decidedAt: ctx.now } };
+      return { outcome, record: { ...next, endedBy: event.because ?? "capture", decidedAt: ctx.now } };
     default:
       return { outcome, record: next };
   }
@@ -193,14 +197,19 @@ export function clarifyOutcomeText(r: Pick<ClarificationRecord, "state" | "about
       // CL3: the review card holds the choice
       return r.endedBy === "review" ? "Chosen in review." : "I left this for your review: choose it there.";
     case "closed":
-      return r.endedBy === "timer" ? "Nothing was done; ask again." : "Closed with the update.";
+      return r.endedBy === "timer" ? "Nothing was done; ask again." : r.endedBy === "corrected" ? "You corrected this in a later message." : "Closed with the update.";
     default:
       return null;
   }
 }
 
-/** CL5: an option no longer allowed is refused, naming nothing (P10). */
-export const OPTION_GONE_TEXT = "You can't choose that one any more. Pick another, or choose it in the review.";
+/**
+ * CL5: an option no longer allowed is refused, naming nothing (P10). An item's question can also be answered
+ * on its review card; a line's has none, so it says to ask again.
+ */
+export function optionGoneText(about: ClarifyAbout): string {
+  return `You can't choose that one any more. Pick another, or ${about === "line" ? "ask me again" : "choose it in the review"}.`;
+}
 
 // ---- A typed answer, read against the options only (CL2) ----
 
@@ -214,7 +223,8 @@ const wordsOf = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}#]+/u).filter(
 /**
  * CL2: a typed reply answers the question only when it is short and every word that names something is in
  * exactly one option ("the connector one", "#152", "Store Insights"), or it names a place ("the second
- * one"). Anything else is a new message (CL1), read as usual, and the question stays open.
+ * one"). Anything else is a new message (CL1), read as usual, and the question stays open. `options` are the
+ * ones the chat shows, those the author may still read (P10), so "the second one" counts as they see them.
  */
 export function readTypedAnswer(text: string, options: readonly ClarifyOption[], aliases: Readonly<Record<string, readonly string[]>> = {}): string | null {
   const t = text.trim();
@@ -233,7 +243,11 @@ export function readTypedAnswer(text: string, options: readonly ClarifyOption[],
   return fits.length === 1 ? fits[0].id : null;
 }
 
-/** Rules 3 and 8: the author's own chat. DPM's chat and the Atlas app's direct chat are; a group (phase I) is not. */
-export function isOwnChat(channel: string): boolean {
-  return channel === "app" || channel === "atlas";
+/**
+ * Rules 3 and 8: the author's own chat. DPM's chat is, and in the Atlas app only the direct chat ("dm", the
+ * conversation's atlasChatId); any other Atlas chat, a project group once phase I is built, is not. A message
+ * from Atlas with no conversation to say which chat is not either.
+ */
+export function isOwnChat(channel: string, atlasChatId: string | null | undefined): boolean {
+  return channel === "app" || (channel === "atlas" && atlasChatId === "dm");
 }

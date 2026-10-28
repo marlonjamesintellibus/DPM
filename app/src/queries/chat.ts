@@ -314,6 +314,7 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
       ...counts.perProject.get(id)!,
     }))
     .sort((a, b) => order.indexOf(a.projectId) - order.indexOf(b.projectId));
+  const commands = await commandsOf(conn, capture);
 
   return {
     id: capture.id,
@@ -335,17 +336,18 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     line: chatLine(capture.state, capture.failedStep, await summaryOf(conn, capture, items, countsLine(counts, "; "))),
     answer: answerOf(capture.answer),
     feedback,
-    ...(await commandsOf(conn, capture)),
+    ...commands,
     undo: capture.state === "saved" ? await undoOf(conn, capture, now) : null,
-    ...(await clarificationsOf(conn, capture)),
+    ...(await clarificationsOf(conn, capture, commands.commands.length > 0)),
   };
 }
 
 /**
  * Phase D: the question asked about this message, and what came of one this message answered by its words
  * (CL2); only the author's own. An option, or a chosen one, on a project they can no longer read is not named.
+ * A reply that answered by making its own card (CL1) shows that card, so it does not say "Got it" too.
  */
-async function clarificationsOf(conn: Conn, capture: typeof t.captures.$inferSelect): Promise<Pick<ChatCapture, "clarification" | "answered">> {
+async function clarificationsOf(conn: Conn, capture: typeof t.captures.$inferSelect, ownCards: boolean): Promise<Pick<ChatCapture, "clarification" | "answered">> {
   const rows = await conn
     .select()
     .from(t.clarifications)
@@ -363,7 +365,7 @@ async function clarificationsOf(conn: Conn, capture: typeof t.captures.$inferSel
     clarification: asked
       ? { id: asked.id, state: asked.state, question: clarifyQuestion({ ...asked, options: view(asked).options }), options: view(asked).options.map((o) => ({ id: o.id, label: o.label })), outcome: view(asked).outcome }
       : null,
-    answered: answering ? view(answering).outcome : null,
+    answered: answering && !ownCards ? view(answering).outcome : null,
   };
 }
 

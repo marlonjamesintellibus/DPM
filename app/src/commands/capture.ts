@@ -10,7 +10,7 @@ import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, load
 import * as t from "../db/schema";
 import { retarget, runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
-import { planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
+import { fieldTaken, planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
 import type { Moved } from "../domain/machine";
@@ -59,7 +59,7 @@ import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, today
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
-import { answerInWords, askIfUnsure, closeWithCapture, handToReview } from "./clarification";
+import { answeredByCards, answerInWords, askIfUnsure, closeWithCapture, closeWithItem, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
@@ -491,11 +491,15 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
         extractionId: replaced,
         detail: { because: "replaced", by: item.id },
       });
+      // Rule 5: a question Atlas asked about the withdrawn item could never be answered now (M21)
+      await closeWithItem(tx, ctx.now, replaced);
     }
     // Phase B: one card per line it decides, each only on a line the asker may still read (AC6 to AC9)
     const decided = decides ? await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer) : null;
+    // Phase D, CL1: a card made for one of an open line question's options answers that question
+    if (decided?.made.length) await answeredByCards(tx, ctx.now, { id: captureId, authorId: row.authorId }, decided.made);
     // Phase D, M21 CHECKS_DONE: unsure which project, record or line it means, DPM asks in the author's own chat
-    const clarified = await askIfUnsure(tx, ctx.now, { ...row, state: record.state }, items, decided?.which ?? null, checkCtx);
+    const clarified = await askIfUnsure(tx, ctx.now, row, items, decided?.which ?? null, checkCtx);
     // Words that could mean several lines are said only when no question asks which (AC6, AC7)
     const note = [decided?.note, clarified?.about === "line" ? null : decided?.which?.text].filter(Boolean).join(" ");
     if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
@@ -892,6 +896,8 @@ export async function routeItemIn(tx: Tx, ctx: By, row: ExtractionRow, item: Ext
  */
 export async function retargetItemIn(tx: Tx, ctx: By, row: ExtractionRow, item: ExtractedItem, capture: CaptureRow, recordId: string, chosen: "chat" | "review"): Promise<ExtractedItem> {
   if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
+  // Section 6: never onto a field another item of this update already changes; the two could never both save
+  if (fieldTaken((await loadItems(tx, capture.id)).items, item, recordId)) throw new CommandRefused("another part of this update already changes that one");
   const checkCtx = await loadCheckContext(tx, { authorId: capture.authorId, text: capture.text, messageAt: capture.messageAt, transcriptConfidence: capture.transcriptConfidence, captureId: capture.id });
   const read = retarget(item.draft, recordId, checkCtx);
   if ("refused" in read) throw new CommandRefused(read.refused);

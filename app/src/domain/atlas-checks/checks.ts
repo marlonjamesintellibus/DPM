@@ -803,13 +803,16 @@ function start(p: RawProposal): Work {
  * Phase D: the other records an update's words could mean (targetOptions), each read through checks 1 to 13
  * as if Atlas had named it, so every option is one the checks accept for this author (section 6). The
  * target first; null unless at least two fit. Nothing Atlas names outside the author's records survives.
+ * Nor does a field another item of the message already changes (`others`): two items on one field would
+ * never save (E14 merges them only as Atlas reads them), so choosing it would leave the update stuck.
  */
-function closeMatchesOf(w: Work, s: Scope): string[] | null {
+function closeMatchesOf(w: Work, s: Scope, others: readonly Work[]): string[] | null {
   const t = w.target;
   if (w.kind !== "update" || t?.type !== "record") return null;
   const quiet = (v: Work, checks: Check[]) => checks.every(([, run]) => run(v, s) === null);
+  const taken = new Set(others.filter((o) => o !== w).map(mergeKey));
   const fits = [...new Set(w.p.targetOptions ?? [])].filter((id) => {
-    if (id === t.record.id) return false;
+    if (id === t.record.id || taken.has(`${id}|${w.field}`)) return false;
     const found = s.findTarget(id);
     if (found?.type !== "record") return false;
     const v = start({ ...w.p, ...asTarget(found.project, found.record), targetOptions: null });
@@ -885,7 +888,7 @@ export function runChecks(proposals: readonly RawProposal[], ctx: CheckContext, 
   const kept = mergeSameField(read).filter((w) => pass(w, PER_ITEM));
   checkRoutingReasons(kept, s);
   for (const w of kept) {
-    w.closeMatches = closeMatchesOf(w, s);
+    w.closeMatches = closeMatchesOf(w, s, kept);
     // Phase D: Atlas only guessed which record, so the author says which, or accepts the guess, before it saves
     if (w.closeMatches) w.mark = "needs_ok";
   }

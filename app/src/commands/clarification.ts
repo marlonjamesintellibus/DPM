@@ -5,7 +5,9 @@
 // through the item's own machines (M14 PICK, or the record read again by the checks) or as the M20 card for
 // the line, and every option is checked again when it is chosen (rule 4, CL5). Opening the review hands an
 // item's question to it (CL3); its timer does the same after config.clarifyExpiryHours, or closes a line's,
-// which has no review card ("Nothing was done; ask again"). Nothing here changes a record (rule 1).
+// which has no review card ("Nothing was done; ask again"). A correction that withdraws the item closes its
+// question (CV10), and a later reply that makes the card for one of a line question's options answers it
+// (CL1). Nothing here changes a record (rule 1).
 import { and, desc, eq, inArray, lte, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
@@ -14,6 +16,7 @@ import * as t from "../db/schema";
 import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Moved } from "../domain/machine";
+import { WORD_ACTS, type ChatCommandRecord, type WordAct } from "../domain/machines/chat-command";
 import {
   applyClarificationEvent,
   askable,
@@ -21,7 +24,7 @@ import {
   clarifyOutcomeText,
   draftClarification,
   isOwnChat,
-  OPTION_GONE_TEXT,
+  optionGoneText,
   readTypedAnswer,
   type ClarificationRecord,
   type ClarificationState,
@@ -118,10 +121,16 @@ function unsureAbout(item: ExtractedItem, ctx: CheckContext): { about: ClarifyAb
 /**
  * CHECKS_DONE, in the read's transaction: at most one question per capture (section 6). The first item in
  * the message that is choose_project or has close matches, with 2 or 3 options (CD23, ProjectCap: with more,
- * only the review card asks); with none, a reply that could mean 2 or 3 lines of the open answer and has no
- * review card (phase B's AC6 and AC7). Asked only in the author's own chat (rules 3 and 8).
+ * only the review card asks); with none, a reply that could mean 2 or 3 lines of the open answer (phase B's
+ * AC6 and AC7), whether or not the reply also holds an update: the review card holds only its items' choices
+ * (the model check's item 1). Asked only in the author's own chat (rules 3 and 8).
+ *
+ * CL8 says no model, no question, because the rule path makes no proposals, so no item is ever asked about
+ * without one. DPM's own rule does read a reply that decides lines (ruleCommands), and the lines it could
+ * mean are asked about here as with a model: the same options the checks keep, as buttons in place of
+ * "Say it again with its name".
  */
-export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "channel" | "text" | "state">, items: readonly ExtractedItem[], which: WhichLines | null, ctx: CheckContext): Promise<ClarificationRecord | null> {
+export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "channel" | "text">, items: readonly ExtractedItem[], which: WhichLines | null, ctx: CheckContext): Promise<ClarificationRecord | null> {
   const first = (i: ExtractedItem) => i.draft.spans[0]?.start ?? 0;
   const unsure = [...items]
     .sort((a, b) => first(a) - first(b))
@@ -129,7 +138,7 @@ export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "
     .find((u) => u.ask && askable(u.ask.options.length));
   const fields = unsure?.ask
     ? { about: unsure.ask.about, extractionId: unsure.item.id, command: null, quote: quoteOf(capture.text, unsure.item), options: unsure.ask.options }
-    : which && capture.state === "answered"
+    : which
       ? {
           about: "line" as const,
           extractionId: null,
@@ -140,7 +149,9 @@ export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "
       : null;
   if (!fields || !askable(fields.options.length)) return null;
   const draft = draftClarification({ id: `clr-${capture.id}`, captureId: capture.id, authorId: capture.authorId, ...fields, createdAt: now });
-  const r = applyClarificationEvent(draft, { type: "ASK" }, { actorId: capture.authorId, now, ownChat: isOwnChat(capture.channel) });
+  // Rules 3 and 8: which Atlas chat it came from is the conversation's (phase I's groups are other chats)
+  const [conversation] = capture.conversationId ? await tx.select({ atlasChatId: t.conversations.atlasChatId }).from(t.conversations).where(eq(t.conversations.id, capture.conversationId)) : [];
+  const r = applyClarificationEvent(draft, { type: "ASK" }, { actorId: capture.authorId, now, ownChat: isOwnChat(capture.channel, conversation?.atlasChatId) });
   if (!r.outcome.ok) return null;
   // Once only (rule 6): a read delivered twice asks once
   const inserted = await tx
@@ -206,7 +217,7 @@ async function answerIn(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, row: R
     allowed = false;
   }
   const r = applyClarificationEvent(seen, { type: "ANSWER", option, answeredBy }, { actorId: ctx.actorId, now: ctx.now, allowed });
-  if (!r.outcome.ok) throw new CommandRefused(allowed ? r.outcome.reason : OPTION_GONE_TEXT);
+  if (!r.outcome.ok) throw new CommandRefused(allowed ? r.outcome.reason : optionGoneText(seen.about));
   await persist(tx, ctx.now, row, r.record);
   await auditMove(tx, ctx.now, r.record, r.outcome, { actorType: "person", actorId: ctx.actorId });
   return { record: r.record, message: messageOf(r.record) };
@@ -226,8 +237,9 @@ export function answerClarification(ctx: CommandCtx, clarificationId: string, op
 
 /**
  * CL2, CL4: a reply in the same conversation whose words fit exactly one option of the newest open question
- * there is that answer. Returns null when they are not (CL1: the reply is read as a new message, and the
- * question stays); a note when the option they named can no longer be chosen (CL5).
+ * there is that answer, read against the options the chat shows (only those the author may still read, P10).
+ * Returns null when they are not (CL1: the reply is read as a new message, and the question stays); a note
+ * when the option they named can no longer be chosen (CL5).
  */
 export async function answerInWords(tx: Tx, now: Date, reply: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "text">): Promise<{ id: string; note: string | null } | null> {
   if (!reply.conversationId) return null;
@@ -242,16 +254,19 @@ export async function answerInWords(tx: Tx, now: Date, reply: Pick<CaptureRow, "
     await expire(tx, now, open);
     return null;
   }
+  // CL5, P10: "the second one" counts over the options shown, and an option no longer shown is not named
+  const reader = await projectReader(tx, reply.authorId);
+  const shown = open.options.filter((o) => reader.mayRead(o.projectId));
   // A project is also named by the other names people use for it ("Sprouts")
-  const ids = open.options.map((o) => o.id);
-  const aliases = open.about === "project" ? Object.fromEntries((await tx.select({ id: t.projects.id, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids))).map((p) => [p.id, p.aliases])) : {};
-  const option = readTypedAnswer(reply.text, open.options, aliases);
+  const ids = shown.map((o) => o.id);
+  const aliases = open.about === "project" && ids.length ? Object.fromEntries((await tx.select({ id: t.projects.id, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids))).map((p) => [p.id, p.aliases])) : {};
+  const option = readTypedAnswer(reply.text, shown, aliases);
   if (!option) return null;
   try {
     await answerIn(tx, { now, actorId: reply.authorId }, open, option, reply.id);
     return { id: open.id, note: null };
   } catch (e) {
-    if (e instanceof CommandRefused) return { id: open.id, note: OPTION_GONE_TEXT };
+    if (e instanceof CommandRefused) return { id: open.id, note: optionGoneText(open.about) };
     throw e;
   }
 }
@@ -273,6 +288,43 @@ export async function closeWithCapture(tx: Tx, now: Date, captureId: string, by:
   const r = applyClarificationEvent(recordOf(row), { type: "CLOSE" }, { actorId: by.actorId ?? row.authorId, now });
   await persist(tx, now, row, r.record);
   await auditMove(tx, now, r.record, moved(r.outcome), by);
+}
+
+/**
+ * CV10, rule 5: a later correction withdrew the item a question asks about. Its options would all be refused
+ * from here, so it closes ("You corrected this in a later message") rather than wait for its timer.
+ */
+export async function closeWithItem(tx: Tx, now: Date, extractionId: string): Promise<void> {
+  const [row] = await tx.select().from(t.clarifications).where(and(eq(t.clarifications.extractionId, extractionId), eq(t.clarifications.state, "asked")));
+  if (!row) return;
+  const r = applyClarificationEvent(recordOf(row), { type: "CLOSE", because: "corrected" }, { actorId: row.authorId, now });
+  await persist(tx, now, row, r.record);
+  await auditMove(tx, now, r.record, moved(r.outcome), { actorType: "atlas", actorId: null });
+}
+
+/**
+ * CL1, phase B: the author passed over a line question and said it again more clearly ("Approve the slip
+ * one"), and that reply made the M20 card for one of its options, on the same answer and act. That is the
+ * answer, in their own words: the question ends chosen and makes no second card, so it never says
+ * "Nothing was done" under a card that was made.
+ */
+export async function answeredByCards(tx: Tx, now: Date, reply: { id: string; authorId: string }, made: readonly ChatCommandRecord[]): Promise<void> {
+  const said = (c: ChatCommandRecord): c is ChatCommandRecord & { act: WordAct } => (WORD_ACTS as readonly string[]).includes(c.act);
+  for (const card of made.filter(said)) {
+    const open = await tx
+      .select()
+      .from(t.clarifications)
+      .where(and(eq(t.clarifications.authorId, reply.authorId), eq(t.clarifications.about, "line"), eq(t.clarifications.state, "asked"), eq(t.clarifications.answerCaptureId, card.answerCaptureId), eq(t.clarifications.act, card.act), ne(t.clarifications.captureId, reply.id)));
+    for (const row of open) {
+      const option = String(card.line);
+      // Past its time it ends as the timer would (answerIn)
+      if (!row.options.some((o) => o.id === option) || clarificationExpired(recordOf(row), now)) continue;
+      const r = applyClarificationEvent(recordOf(row), { type: "ANSWER", option, answeredBy: reply.id }, { actorId: reply.authorId, now, allowed: true });
+      if (!r.outcome.ok) continue;
+      await persist(tx, now, row, r.record);
+      await auditMove(tx, now, r.record, r.outcome, { actorType: "person", actorId: reply.authorId }, { commandId: card.id });
+    }
+  }
 }
 
 /** Timer clarify_expiry (rule 5, CD2): an item's question goes to its review; a line's closes. */

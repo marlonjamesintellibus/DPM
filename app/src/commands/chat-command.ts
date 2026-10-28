@@ -371,15 +371,17 @@ export async function commandsFromWords(
   let which: WhichLines | null = null;
   if (checked.note) {
     const note = checked.note;
-    const lines = note.kind === "which" ? note.lines : note.kind === "not_offered" ? [note.line] : [];
+    const lines = note.kind === "which" || note.kind === "not_offered" ? note.lines : [];
     const names: string[] = [];
     for (const n of lines) {
       const card = await readableLine(n);
       if (card) names.push(card.title);
     }
     if (note.kind === "which" && open) {
-      // AC6: words that fit no line could mean any line that offers the act
-      const could = note.lines.length ? note.lines : (open?.lines ?? []).filter((l) => l.acts.includes(note.act)).map((l) => l.line);
+      // AC6: words that fit no line could mean any line that offers the act. Only such lines are options:
+      // one that does not offer it would be refused when chosen (section 6)
+      const offers = (n: number) => open.lines.some((l) => l.line === n && l.acts.includes(note.act));
+      const could = (note.lines.length ? note.lines : open.lines.map((l) => l.line)).filter(offers);
       const readable: WhichLines["lines"] = [];
       for (const n of could) {
         const card = await readableLine(n);

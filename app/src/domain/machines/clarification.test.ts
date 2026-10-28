@@ -10,6 +10,7 @@ import {
   clarifyQuestion,
   draftClarification,
   isOwnChat,
+  optionGoneText,
   readTypedAnswer,
   type ClarificationEvent,
   type ClarificationRecord,
@@ -80,7 +81,8 @@ describe("guards", () => {
   it("AskIn own: never asked outside the author's own chat (rules 3 and 8)", () => {
     expect(applyClarificationEvent(at("none"), { type: "ASK" }, { ...base, ownChat: false }).outcome).toMatchObject({ ok: false, reason: "asked only in the author's own chat" });
     expect(applyClarificationEvent(at("none"), { type: "ASK" }, { ...base, ownChat: undefined }).outcome.ok).toBe(false);
-    expect([isOwnChat("app"), isOwnChat("atlas"), isOwnChat("group")]).toEqual([true, true, false]);
+    // The Atlas app's direct chat is the conversation's atlasChatId "dm"; any other Atlas chat (phase I's groups) is not
+    expect([isOwnChat("app", null), isOwnChat("atlas", "dm"), isOwnChat("atlas", "grp-forager"), isOwnChat("atlas", null), isOwnChat("group", "dm")]).toEqual([true, true, false, false, false]);
   });
 
   it("ProjectCap: asked in the chat only with 2 or 3 options; one, or four, stay with the review card", () => {
@@ -116,8 +118,9 @@ describe("guards", () => {
     expect(applyClarificationEvent(line, { type: "REVIEW_OPENED" }, base).outcome).toMatchObject({ ok: false, reason: "a reply that decides a line has no review card" });
   });
 
-  it("CL6: the capture discarded or expired closes it", () => {
+  it("CL6: the capture discarded or expired closes it; so does a correction withdrawing its item (CV10)", () => {
     expect(applyClarificationEvent(at("asked"), { type: "CLOSE" }, base).record).toMatchObject({ state: "closed", endedBy: "capture" });
+    expect(applyClarificationEvent(at("asked"), { type: "CLOSE", because: "corrected" }, base).record).toMatchObject({ state: "closed", endedBy: "corrected" });
   });
 });
 
@@ -138,7 +141,14 @@ describe("what the chat says", () => {
     expect(clarifyOutcomeText(at("handed_to_review", { endedBy: "timer" }), null)).toBe("I left this for your review: choose it there.");
     expect(clarifyOutcomeText(at("closed", { about: "line", endedBy: "timer" }), null)).toBe("Nothing was done; ask again.");
     expect(clarifyOutcomeText(at("closed", { endedBy: "capture" }), null)).toBe("Closed with the update.");
+    expect(clarifyOutcomeText(at("closed", { endedBy: "corrected" }), null)).toBe("You corrected this in a later message.");
     expect(clarifyOutcomeText(at("asked"), null)).toBeNull();
+  });
+
+  it("CL5: a refused option points to the review only when there is one; a line's question has none", () => {
+    expect(optionGoneText("record")).toBe("You can't choose that one any more. Pick another, or choose it in the review.");
+    expect(optionGoneText("project")).toBe("You can't choose that one any more. Pick another, or choose it in the review.");
+    expect(optionGoneText("line")).toBe("You can't choose that one any more. Pick another, or ask me again.");
   });
 });
 
