@@ -1,8 +1,8 @@
 # Atlas conversational plan: wave 4 (28 Oct 2026)
 
 **Goes with:** `atlas-conversational-plan.md` (phases E, G, O and P, with CD49 and CD50) and `01-update-to-plan-machines.md`
-**Branch:** `atlas-conv/wave-4`, from main at `7bda527`. Nothing pushed, and main has not moved.
-**Status:** built and checked; the decisions below wait for your answers.
+**Branch:** `atlas-conv/wave-4`, from main at `7bda527`. Nothing pushed.
+**Status:** built, checked and decided; merged into main.
 
 ## 1. What was built
 
@@ -20,7 +20,13 @@ Until phase F, Atlas still cannot message first. So check-ins, the CM11 question
 ### Checked
 
 - Each track was built, checked by an agent that had not written it, and then fixed. The checks found 48 gaps, 13 of them must-fix: E 9 (5), G 7 (1), CD49 6 (0), CD50 8 (2), P 11 (3), O 7 (2). Every gap was fixed with a test, except where a fix needs one of the decisions below.
-- I reran these on `atlas-conv/wave-4`: typecheck and lint are clean, and 2,357 unit tests pass (1,883 before).
+- I reran these on `atlas-conv/wave-4` after the decisions:
+  - typecheck and lint are clean;
+  - 2,364 unit tests pass (1,883 before wave 4);
+  - all 423 model rows match;
+  - the browser story passes 36 of 36;
+  - the full eval on `read-17` passes 186 of 187, and 5 of 5 drafting cases pass the facts check. The only miss is `andre-decision` (D23).
+- Before the decisions, the integrator's run (the figures below) and mine both had 2,357 unit tests and 418 model rows.
 - The integrator's run:
   - The model check matches all 418 rows (401 before). New and changed models: `clientView` (new), `draft` (CopyRight, Rounds), `coverRequest` (LiveCoverOnlyForReaders, awayShown), `meeting` (ownerAtConfirm, transcribing to failed) and `clarification` (question rows).
   - The browser story passes 36 of 36.
@@ -59,31 +65,49 @@ Until phase F, Atlas still cannot message first. So check-ins, the CM11 question
 - PROMPT_VERSION is `read-17`, with one comment naming what E, G, O and P added. CD49 and CD50 add nothing to the prompt.
 - The e2e data (`pnpm db:reset --e2e`) adds a second Kemar, Kemar Lee, to GQ & Academy for PP2. The only other answer this changes is the GQ sentence of Phase N's "Who hasn't updated today?".
 
-## 2. Decisions (waiting for you)
+## 2. Decisions (settled 28 Oct 2026, the recommended answers)
 
-Each row shows what was built first and what I recommend. Once you decide, the plan will record them as CD51 onward.
+Each row shows what was built first and what was decided. The plan records W4-Dn as CD(50 + n), CD51 to CD69.
 
-| # | Question | Built first | Recommended |
+| # | Question | Built first | Decided |
 |---|---|---|---|
 | W4-D1 | E: what time do check-ins go out? | `commitmentCheckInTime` "09:00", the same as `standupTime`. Section 23 named no time | Keep |
-| W4-D2 | E: a linked work item going Done ends a promise that is only about it ("I'll walk Andre through #208") | It ends, as M22 draws it, and the owner is told it was marked done | Change it. A link going Done ends only a promise to deliver that work (CM3's finish, send or ship words). Any other linked promise is asked CM11's "Does your promise still stand?" This needs a model change |
+| W4-D2 | E: a linked work item going Done ends a promise that is only about it ("I'll walk Andre through #208") | It ends, as M22 draws it, and the owner is told it was marked done | Change it. A link going Done ends only a promise to deliver that work (finish, ship, submit, fix and so on). Any other linked promise is asked CM11's "Does your promise still stand?" Built, with a model change |
 | W4-D3 | E with J: a check-in and a standup question are both waiting | The newest question takes a typed reply. Buttons always answer their own question | Keep |
 | W4-D4 | E with L: undoing a save that moved a promise (CM5) or marked it done (CM6) | Not reversed, because M22 has no arrow out of done. The undo reply names what stays | Keep |
 | W4-D5 | G: should a standup draft list promises due tomorrow too? | Only those due today or earlier | Keep |
-| W4-D6 | G: who may share the status reason with a client, and does Q's client view show it? | The PM only. "What is Forager?" for an outside contact does not show it | The PM only, as CD49. Yes, Q's client view shows a shared reason too |
-| W4-D7 | G: may a reason shared with the client name internal records? In the story, Forager's shared reason names #151 and Trend model, so the Sprouts brief shows them | Yes: the reason is the PM's own words, shared on purpose | No. "Share status with client" refuses a reason that names a record the client view does not show ("It names #151, which Sprouts can't see. Reword it first") |
+| W4-D6 | G: who may share the status reason with a client, and does Q's client view show it? | The PM only. "What is Forager?" for an outside contact does not show it | The PM only, as CD49. Yes, Q's client view shows a shared reason too. Built |
+| W4-D7 | G: may a reason shared with the client name internal records? In the story, Forager's shared reason names #151 and Trend model, so the Sprouts brief shows them | Yes: the reason is the PM's own words, shared on purpose | No. "Share status with client" refuses a reason that names a record the client view does not show ("It names #151, which Sprouts can't see. Reword it first"). Built |
 | W4-D8 | G: CD30 for record names | A name made only of everyday words ("Trend model") counts only with its capital, so "the trend model" passes the client copy check. A name with a digit, # or inner capital counts in any case | Keep |
-| W4-D9 | CD49: who sees the Contacts card, and is the map's open question F8 closed? | Every member sees it, as CD9 already shows contacts. F8 left open | Keep the card for every member. Close F8 as settled by CD49 |
+| W4-D9 | CD49: who sees the Contacts card, and is the map's open question F8 closed? | Every member sees it, as CD9 already shows contacts. F8 left open | Keep the card for every member. F8 is closed as settled by CD49, CD56 and CD57 |
 | W4-D10 | CD50 with CD23: a message with an unsure item and a two-fit question | The item always takes the message's one question, and the question gets the old "say it with its name" text | Keep |
-| W4-D11 | CD50: someone asks again in their own words while a which-question is open | The new message is answered, but the old question stays until its 2-hour timer, then says "Nothing was chosen; ask me again" | Close the old question quietly when a later message answers the same question, as a line's question does (`answeredByCards`) |
+| W4-D11 | CD50: someone asks again in their own words while a which-question is open | The new message is answered, but the old question stays until its 2-hour timer, then says "Nothing was chosen; ask me again" | Close the old question quietly when a later message answers the same question, as a line's question does (`answeredByCards`). Built |
 | W4-D12 | P with LV2: a member asks a teammate who is away | Asked: a member is not shown the teammate's leave (P10), so it cannot refuse. The ask times out after 24 hours and Atlas offers again | Keep |
 | W4-D13 | P with LV4: M8 cannot cancel approved leave, so a proposed handover is never cancelled through the app | Built and tested by writing the leave state directly | Add an M8 arrow to cancel approved leave before it starts, model-checked, in wave 5 |
-| W4-D14 | P10: a chat notice stays visible after its reader leaves the notice's project | O hides its own Ask notices. E's and P's notices stay | Filter every notice by its project when it is read. Small; build now |
+| W4-D14 | P10: a chat notice stays visible after its reader leaves the notice's project | O hides its own Ask notices. E's and P's notices stay | Filter every notice by its project when it is read. Built |
 | W4-D15 | O: an Ask whose record changed owner, and a sure promise by someone named but not listed (MT3) | The Ask is withdrawn, not passed to the new owner. The promise becomes a dependency in the recorder's review and cannot be sent to that person | Keep both. An ADD_ATTENDEE arrow waits until it is asked for |
 | W4-D16 | O with L: undoing the recorder's save | It does not touch M34 Asks, which were sent at read time | Keep |
 | W4-D17 | O with MT7 and CD18: when are two notes the same meeting? | Same project, within `meetingMatchMinutes` (120), and each recorder listed the other as there. A merge sends nothing twice | Keep, and add `meetingMatchMinutes`, `commitmentDropAfterMoves` and `commitmentCheckInTime` to section 23 |
-| W4-D18 | Eval: `kemar-note` passes 3 of 6 on `read-17`; it passed on `read-16`. Atlas sometimes puts "the trend model will slip to the 26th" on #147 instead of the Trend model milestone | Left as it is. E's CM3 prompt lines are the likely cause, but this is not confirmed | Fix the prompt before main moves, then rerun `kemar-note` 6 times and the E cases |
+| W4-D18 | Eval: `kemar-note` passes 3 of 6 on `read-17`; it passed on `read-16`. Atlas sometimes puts "the trend model will slip to the 26th" on #147 instead of the Trend model milestone | Left as it is. E's CM3 prompt lines are the likely cause, but this is not confirmed | Fix the prompt before main moves, then rerun `kemar-note` 6 times and the full eval. Built: 6 of 6 |
 | W4-D19 | CD50 with WY8: "Why is Kemar behind?", choose Kemar Smith, then "and on GQ?" | Answered about GQ's status, the why topic's existing reading of a follow-up that names a project | Keep |
+
+### Built for the decisions
+
+- **W4-D2 (CD52):**
+  - `deliversLinkedWork` in `domain/machines/commitment.ts` reads whether a promise's words deliver its linked work.
+  - The rule's DONE needs it. M22's WORK_CANCELLED becomes WORK_ENDED, which asks the question for cancelled work, or for Done work under a promise only about it.
+  - Save does the same: such a promise saves with the question asked instead of No change.
+  - The notice and inbox item say "is Done" or "was cancelled".
+  - The model gains the fix askWhenAbout, the invariants DoneWorkAsksAbout and AboutNotLost, and the property WorkEndsOnlyDelivery. It also gets three rows and two planted bugs.
+- **W4-D6 (CD56):** `clientViews` reads the set status and the latest reason. "What is Forager?" for Kyle ends "Its status is off track: …" only while that reason is shared.
+- **W4-D7 (CD57):**
+  - `shareReasonWithClient` refuses a reason that names a record the client view hides (`hiddenNamedIn` in `queries/drafts.ts`, CD30 for records).
+  - In the browser story, the reason from step 6 names the blocker and the risk, so phase G now shows the refusal. The MT9 brief holds no status.
+- **W4-D9 (CD59):** F8 is removed from the map's open questions in `map-data.mjs`.
+- **W4-D11 (CD61):** `closeAskedAgain` in `commands/clarification.ts` runs when a later message on the same topic names one of the open question's options. The new message is answered, and the old question closes with `endedBy: "asked_again"` ("You asked again."). CL4's test now opens its second question on another topic.
+- **W4-D14 (CD64):** `noticesFor` hides every notice whose project the viewer can no longer read. A promise's notices that name its linked record now carry that record's project.
+- **W4-D17 (CD67):** `commitmentDropAfterMoves`, `commitmentCheckInTime` and `meetingMatchMinutes` are in the plan's section 23.
+- **W4-D18 (CD68):** in the prompt, CM3's example no longer names #147, a real record, and a slip said of a milestone is that milestone's forecast. PROMPT_VERSION stays `read-17`, since it was never on main. `kemar-note` passes 6 of 6, and the full eval 186 of 187 (only `andre-decision`, as before).
 
 ## 3. Corrections for the plan
 
@@ -119,9 +143,10 @@ Each row shows what was built first and what I recommend. Once you decide, the p
 - Phase F: every check-in, cover ask, M34 Ask, and lapse or outcome message is a notice in the person's DPM chat plus an inbox item until Atlas can message first.
 - Posting a draft (B8, B9). Copy is the only way out.
 - Phase J's standup with Atlas asking about due commitments (section 12). Only the drafted standup lists them.
+- The map page (`dpm-machine-map.html`) is not rebuilt with `build-map.mjs` since wave 4's model changes.
 - A typed "drop it" for an open promise with no check-in out. The cards' buttons do it.
 - A "leave project" command. `withdrawOnLeave` (O) is exported for it, and the timers act as the backstop.
-- An M8 arrow that cancels approved leave (W4-D13), and M34's ADD_ATTENDEE (W4-D15).
+- An M8 arrow that cancels approved leave (W4-D13, wave 5), and M34's ADD_ATTENDEE (W4-D15).
 - who_free's "N things match … ask again with its number" through M21 (it would need a work-item fits kind).
 - The call brief's chases waiting on the client (phase M).
 - Usage numbers for E, G, O and P (W6).

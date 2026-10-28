@@ -2,7 +2,7 @@
 
 **Goes with:** `01-update-to-plan-machines.md` sections 15 (questions in the chat), 16 (conversations), 17 (the message flow) and 18 (talking to Atlas about your work); `atlas-bot-plan.md` (the DPM bot in Atlas)
 **Vocabulary:** the shapes in `research/state-machines/js/map-data.mjs` (Thing, Job, Ask, Switch, Stage, Status rule)
-**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. **Phases A, R and S are built** (wave 1, merged 27 Oct 2026; `atlas-conversational-wave-1.md` is the build report), and **B, C and L** (wave 2; `atlas-conversational-wave-2.md`). Every other phase is plan, and its section ends with what the model check of its machines found: fix those before building it. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
+**Status:** plan, written 27 Oct 2026 to come back to; phases I to S added the same day. **Phases A, R and S are built** (wave 1, merged 27 Oct 2026; `atlas-conversational-wave-1.md` is the build report), **B, C and L** (wave 2; `atlas-conversational-wave-2.md`), **D, H, J, K, N and Q** (wave 3; `atlas-conversational-wave-3.md`), and **E, G, O and P** (wave 4, merged 28 Oct 2026; `atlas-conversational-wave-4.md`). Every other phase is plan, and its section ends with what the model check of its machines found: fix those before building it. Items marked DECIDE were settled on 27 Oct 2026 (section 24): each takes its default unless section 24 says otherwise. New machines continue the numbering after M19 (M18 Conversation and M19 Atlas account link are taken), so they are M20 to M36 and are model checked in `research/state-machines/js` before any code.
 
 Atlas today reads updates, answers questions in conversations, follows up ("and on Store Insights?"), words its answers over DPM's facts, and shows cards with Accept (sections 15 to 17). This plan goes from "a search box you type into" to a teammate: Atlas answers, lets you act on the answer, explains why, speaks first when something needs you, keeps track of what you promised, drafts what you would otherwise write, and asks when it is unsure. Then it moves from one person to the team: it works in the project group, runs the standup with you, spots trouble before anyone reports it, chases people for you, handles meetings and leave, and learns from how it is used.
 
@@ -250,7 +250,7 @@ checking ──TIMER no reply after config.commitmentCheckIns check-ins──▶
 
 ### Built (wave 4)
 
-See `atlas-conversational-wave-4.md`. M22 as the model check's fixed design. Topic `commitments` with Done, New date and Drop on each card. CM3 and CD5 are also checked on the server. Until phase F, check-ins and CM11's question are a notice in the owner's DPM chat plus an inbox item. Waiting on: W4-D1 (check-in time), W4-D2 (Done by link), W4-D3 and W4-D4.
+See `atlas-conversational-wave-4.md`. M22 as the model check's fixed design. Topic `commitments` with Done, New date and Drop on each card. CM3 and CD5 are also checked on the server. Until phase F, check-ins and CM11's question are a notice in the owner's DPM chat plus an inbox item. Decided: CD51 to CD55; CD52 (a promise only about its work is asked whether it still stands) is built.
 
 ## 8. Phase F. Atlas speaks first
 
@@ -359,7 +359,7 @@ ready ──TIMER config.draftExpiryHours──▶ expired
 
 ### Built (wave 4)
 
-See `atlas-conversational-wave-4.md`. M25 with the check's CopyRight and Rounds fixes. The facts check also covers relative times and status words. A status reason reaches a client only once the PM shares it. POST is drawn but nothing sends it (B8, B9). The standup draft lists promises due (E). Waiting on: W4-D5 to W4-D8.
+See `atlas-conversational-wave-4.md`. M25 with the check's CopyRight and Rounds fixes. The facts check also covers relative times and status words. A status reason reaches a client only once the PM shares it. POST is drawn but nothing sends it (B8, B9). The standup draft lists promises due (E). Decided: CD55 to CD58; CD56 (a shared status in the client view) and CD57 (no hidden names in a shared reason) are built.
 
 ## 10. Phase H. Ask about people
 
@@ -751,7 +751,7 @@ proposed ──TIMER attributedExpiryDays──▶ expired; not filed           
 
 ### Built (wave 4)
 
-See `atlas-conversational-wave-4.md`. M33 (extending M2) and M34 with the model check's fixes, plus ownerAtConfirm (a seventh fix). The call brief asks which project through CD50 (MT9). Until phase F, M34 Asks are an inbox item plus a notice in the person's DPM chat. Waiting on: W4-D15 to W4-D17.
+See `atlas-conversational-wave-4.md`. M33 (extending M2) and M34 with the model check's fixes, plus ownerAtConfirm (a seventh fix). The call brief asks which project through CD50 (MT9). Until phase F, M34 Asks are an inbox item plus a notice in the person's DPM chat. Decided: CD65 to CD67.
 
 ## 18. Phase P. Leave and handover in the chat
 
@@ -797,7 +797,7 @@ asked ──the leave is cancelled──▶ withdrawn                           
 
 ### Built (wave 4)
 
-See `atlas-conversational-wave-4.md`. M35 as the fixed design, plus LiveCoverOnlyForReaders and awayShown. "I'm off next week" is read as leave, with "While you're away" under it. LV6 proposes a D6 change, LV10 moves promises due during leave, and `catch_up` comes after mentions, blocked and due. Waiting on: W4-D12 to W4-D14.
+See `atlas-conversational-wave-4.md`. M35 as the fixed design, plus LiveCoverOnlyForReaders and awayShown. "I'm off next week" is read as leave, with "While you're away" under it. LV6 proposes a D6 change, LV10 moves promises due during leave, and `catch_up` comes after mentions, blocked and due. Decided: CD62 to CD64; CD64 (notices hidden once their reader leaves the project) is built, and CD63 waits for wave 5.
 
 ## 19. Phase Q. "What is Forager?"
 
@@ -917,6 +917,8 @@ Not planned yet; written down so they are not lost.
 | commandExpiryMinutes | 30 | B |
 | clarifyExpiryHours | 2 | D |
 | commitmentCheckIns | 2 | E |
+| commitmentDropAfterMoves | 3 | E (CD24) |
+| commitmentCheckInTime | "09:00" | E (CD51) |
 | nudgeDailyCap | 4 | F |
 | nudgeMaxTries | 3 | F |
 | nudgeReplyHours | 24 | F |
@@ -938,11 +940,12 @@ Not planned yet; written down so they are not lost.
 | vocabExpiryDays | 14 | L |
 | chaseReminderWorkingDays | 2 | M |
 | attributedExpiryDays | 3 working days | O |
+| meetingMatchMinutes | 120 | O (CD67) |
 | coverAskHours | 24 | P |
 | evalCandidateDays | 30 | S |
 | metricMinimumCount | 5 | S |
 
-## 24. Decisions (settled 27 Oct 2026)
+## 24. Decisions (settled 27 and 28 Oct 2026)
 
 Marlon asked for the best defaults to be chosen. Every DECIDE in this plan takes the answer below; where the answer differs from the default first written, the row says why.
 
@@ -998,3 +1001,22 @@ Marlon asked for the best defaults to be chosen. Every DECIDE in this plan takes
 | CD48 | A clock override so the browser story shows SG2, SG8 and SG10 (W3-D10) | Not now; DB tests cover them |
 | CD49 | Who turns on a contact's client view, and what date a release shows (W3-D11) | A PM, from the project's contacts (built in wave 4); the target date |
 | CD50 | EX5, PP2 and the chat welcome (W3-D12) | M21 takes questions with 2 or 3 fits (built in wave 4); the welcome names the lead questions to PMs and Leads only |
+| CD51 | What time do promise check-ins go out? (W4-D1) | `commitmentCheckInTime` "09:00", the same as `standupTime` |
+| CD52 | A linked work item going Done, for a promise only about it (W4-D2) | Only a promise to deliver the work (finish, ship, submit, fix and so on) ends; any other is asked CM11's "Does your promise still stand?" (built, model fix askWhenAbout) |
+| CD53 | A check-in and a standup question both waiting (W4-D3) | The newest question takes a typed reply; buttons answer their own |
+| CD54 | Undoing a save that moved a promise or marked it done (W4-D4) | Not reversed; the undo reply names what stays |
+| CD55 | Promises in a standup draft (W4-D5) | Those due today or earlier |
+| CD56 | Who shares a status reason with a client, and does Q's client view show it? (W4-D6) | The PM only; yes, "What is Forager?" for an outside contact shows a shared status in the PM's words (built) |
+| CD57 | May a reason shared with the client name internal records? (W4-D7) | No: "Share status with client" refuses until the reason is reworded (built) |
+| CD58 | CD30 for record names (W4-D8) | A name of everyday words counts only with its capital; one with a digit, # or inner capital in any case |
+| CD59 | Who sees a project's Contacts card, and F8 (W4-D9) | Every member; F8 is closed as settled by CD49, CD56 and CD57 |
+| CD60 | An unsure item and a two-fit question in one message (W4-D10) | The item takes the message's one question |
+| CD61 | Asking again in your own words while a which-question is open (W4-D11) | The new message is answered and the old question closes quietly ("You asked again") when it is the same topic and names one of its options (built) |
+| CD62 | LV2: a member asks a teammate who is away (W4-D12) | Asked: P10 hides the teammate's leave from a member; the ask times out and Atlas offers again |
+| CD63 | LV4: cancelling approved leave (W4-D13) | An M8 arrow to cancel approved leave before it starts, model-checked, in wave 5 |
+| CD64 | A chat notice after its reader leaves the notice's project (W4-D14) | Hidden: every notice with a project is shown only while its reader reads that project (built) |
+| CD65 | O: an Ask whose record changed owner, and a sure promise by someone named but not listed (W4-D15) | The Ask is withdrawn; the promise is a dependency for the recorder. ADD_ATTENDEE waits until asked for |
+| CD66 | Undoing the recorder's save and M34 Asks (W4-D16) | Undo does not touch them |
+| CD67 | When two notes are the same meeting (W4-D17) | Same project, within `meetingMatchMinutes` (120), each recorder listing the other |
+| CD68 | `kemar-note` passing 3 of 6 on read-17 (W4-D18) | Fixed in read-17: CM3's example names no listed record, and a slip said of a milestone is its forecast (6 of 6) |
+| CD69 | WY8 then "and on GQ?" (W4-D19) | Answered about GQ's status, the why topic's reading of a follow-up that names a project |

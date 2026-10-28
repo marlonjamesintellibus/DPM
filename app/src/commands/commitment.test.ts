@@ -49,7 +49,7 @@ const PROMISE: RawProposal = {
   confidence: "high",
   rationale: "Your promise.",
 };
-/** CD51: a promise to deliver its linked work, which that work going Done ends. */
+/** CD52: a promise to deliver its linked work, which that work going Done ends. */
 const FINISH: RawProposal = { ...PROMISE, promise: "Submit the access request", quote: "I'll submit the access request for #151 tomorrow" };
 
 let n = 0;
@@ -113,7 +113,7 @@ describe("a promise saved from the review (M22 SAVE)", () => {
     expect(await row(`cm-${items[0].id}`)).toBeUndefined();
   });
 
-  it("recordAtSave, CD51: a promise only about work Done since Atlas read it saves with its question asked", async () => {
+  it("recordAtSave, CD52: a promise only about work Done since Atlas read it saves with its question asked", async () => {
     const { captureId } = await createCapture(as("kemar"), { channel: "app", messageId: "d2", kind: "text", text: `${PROMISE.quote}.`, messageAt: at(0), receivedAt: at(0) });
     const { items } = await proposeItems(as("kemar"), captureId, [PROMISE]);
     await openReview(as("kemar"), captureId);
@@ -350,7 +350,7 @@ describe("the rules on a commitment's link, and a later update (M22, CM6, CM9, C
     expect(await live("kemar")).not.toContain(`commitment_check:${id}`);
   });
 
-  it("CD51: its linked work going Done asks once whether a promise only about it still stands; It still stands keeps it", async () => {
+  it("CD52: its linked work going Done asks once whether a promise only about it still stands; It still stands keeps it", async () => {
     const { id } = await kemarSays(PROMISE);
     await moveWorkItem(as("kemar", 5), "wi-151", "mark_done");
     expect(await row(id)).toMatchObject({ state: "open", stands: "asked", endedBy: null });
@@ -396,7 +396,7 @@ describe("the rules on a commitment's link, and a later update (M22, CM6, CM9, C
     expect(await notices("kemar", id)).toEqual(["Did you send Kyle the access request? You said you would by Wed 21 Oct."]);
   });
 
-  it("CD55, P10: a check-in that named #151 is no longer shown once Kemar leaves Forager; the promise stays his", async () => {
+  it("CD64, P10: a check-in that named #151 is no longer shown once Kemar leaves Forager; the promise stays his", async () => {
     const { id } = await kemarSays(PROMISE);
     await timers(morning(2));
     const named = "Did you send Kyle the access request (#151 Store sales feed access)? You said you would by Wed 21 Oct.";

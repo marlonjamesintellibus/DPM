@@ -52,7 +52,7 @@ export const MAX_OPTIONS = 3;
 
 /**
  * How it left asked when it was not answered: the review was opened, its timer fired, the capture ended, a
- * later correction withdrew the item it asks about (CV10), or the asker asked again in their own words (CD54).
+ * later correction withdrew the item it asks about (CV10), or the asker asked again in their own words (CD61).
  */
 export type EndedBy = "review" | "timer" | "capture" | "corrected" | "asked_again";
 
@@ -90,7 +90,7 @@ export type ClarificationEvent =
   | { type: "REVIEW_OPENED" }
   /** Timer clarify_expiry: config.clarifyExpiryHours after it was asked (CD2). */
   | { type: "EXPIRE" }
-  /** The capture is discarded or expires (CL6), a correction withdrew its item (CV10, rule 5), or CD54 the asker asked again. */
+  /** The capture is discarded or expires (CL6), a correction withdrew its item (CV10, rule 5), or CD61 the asker asked again. */
   | { type: "CLOSE"; because?: "capture" | "corrected" | "asked_again" };
 
 type Ctx = {

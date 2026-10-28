@@ -657,7 +657,7 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
     expect((await turn("alicia", first.conversationId, first.captureId, 1)).clarification?.outcome).toBe("Got it: Kemar Smith.");
   });
 
-  it("CD54: asked again in her own words, naming one of them, the open question closes quietly and the new message is answered", async () => {
+  it("CD61: asked again in her own words, naming one of them, the open question closes quietly and the new message is answered", async () => {
     const first = await twoKemars();
     // Another topic, or the same topic about someone else, leaves it asking
     await say("alicia", "What is Forager?", 1, first.conversationId);
@@ -775,7 +775,7 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
 
   it("CL4: two questions open in a conversation: a typed answer goes to the newest, and the older one's buttons still work", async () => {
     const older = await twoKemars();
-    // A different question (WY8), so asking it does not close the older one (CD54)
+    // A different question (WY8), so asking it does not close the older one (CD61)
     const newer = await say("alicia", "Why is Kemar behind?", 1, older.conversationId);
     expect((await question(newer.captureId)).state).toBe("asked");
     await say("alicia", "Smith", 2, older.conversationId, noModel);

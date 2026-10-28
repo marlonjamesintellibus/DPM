@@ -1,6 +1,6 @@
 // The client view of a project (KB A7.2 and A7.3, "Client visible"): what an outside contact may read of
 // a project they are tied to. Releases and their dates only: no internal status, no people, no BRAID log,
-// no work; CD52 (W4-D6): a status its PM set shows too, once the PM shares its reason with the client.
+// no work; CD56 (W4-D6): a status its PM set shows too, once the PM shares its reason with the client.
 // Conversational plan, phase Q, EX4: an outside contact who asks what a project is gets this and nothing more. Privacy is applied here, from the viewer (P10): only someone with no org role (orgRole null,
 // as Kyle at Sprouts IT) tied to the project as its contact, with the client view on for them (A7.3, "if
 // client view is on"), reads it; a member reads the project view instead. A tie routing made ("contact on
@@ -17,7 +17,7 @@ export type ClientView = {
   project: { id: string; name: string; aliases: readonly string[]; customer: string | null; startDate: IsoDate | null; endDate: IsoDate | null };
   /** The milestones marked as releases, by their planned date: the date the plan gives, never the forecast. */
   releases: ClientRelease[];
-  /** CD52: the status the PM set, with its reason, only while the reason on show is shared with the client. */
+  /** CD56: the status the PM set, with its reason, only while the reason on show is shared with the client. */
   status: { label: string; reason: string } | null;
 };
 

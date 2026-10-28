@@ -140,7 +140,7 @@ describe("guards", () => {
     expect(applyCommitmentEvent({ ...deliver, link: null }, { type: "DONE", by: "work_done" }, { ...rule, linked: "done" }).outcome.ok).toBe(false);
   });
 
-  it("CD51: Done work ends only a promise to deliver it; one only about it is asked whether it still stands", () => {
+  it("CD52: Done work ends only a promise to deliver it; one only about it is asked whether it still stands", () => {
     expect(deliversLinkedWork("Finish the #208 backfill")).toBe(true);
     expect(deliversLinkedWork("Ship the trend model")).toBe(true);
     expect(deliversLinkedWork("Walk Andre through #208")).toBe(false);

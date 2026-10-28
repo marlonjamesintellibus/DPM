@@ -158,7 +158,7 @@ export async function saveReasonIn(
  * Phase G, section 9: the project's PM marks the reason on show, and the status it explains, as shareable with
  * the client, or takes that back. A client status holds them only while this is on (DR4); a new reason starts
  * unshared. Only the reason the project shows now can be shared (rule 4: what the PM saw is checked again), and
- * only once it names nothing the client view does not show (CD53).
+ * only once it names nothing the client view does not show (CD57).
  */
 export function shareReasonWithClient(ctx: CommandCtx, projectId: string, reasonId: string, shared: boolean): Promise<void> {
   return runCommand(ctx, async (tx) => {

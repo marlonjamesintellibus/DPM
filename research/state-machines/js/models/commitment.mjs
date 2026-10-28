@@ -16,7 +16,7 @@
 //                  live commitment, not only an open one
 //   recordAtSave   saving reads the linked record's state: a promise about Done work is No change, and
 //                  one about cancelled work is saved with CM11's question already asked
-//   askWhenAbout   CD51 (W4-D2): only a promise to deliver its linked work ends when that work is Done. One
+//   askWhenAbout   CD52 (W4-D2): only a promise to deliver its linked work ends when that work is Done. One
 //                  only about it ("I'll walk Andre through #208") is asked CM11's question instead, at save
 //                  and by the rule
 import { clone, product } from '../lib.mjs';
@@ -38,7 +38,7 @@ const MESSAGES = {
   m3: { by: 'kemar', kind: 'done', rec: null }, // "Sent Kyle the request" (CM6)
   m4: { by: 'alicia', kind: 'promise', rec: '208' }, // "Kemar will send Kyle the request" (CD5)
   m5: { by: 'alicia', kind: 'done', rec: null }, // "Kemar sent Kyle the request" (rule 10)
-  m6: { by: 'kemar', kind: 'promise', rec: '208', about: true }, // "I'll walk Andre through #208 Friday" (CD51)
+  m6: { by: 'kemar', kind: 'promise', rec: '208', about: true }, // "I'll walk Andre through #208 Friday" (CD52)
 };
 
 // The arrows as the plan draws them; 'none>open' is SAVE
@@ -73,7 +73,7 @@ export default function Commitment({ Says = ['m1', 'm2', 'm3'], CheckIns = 2, Fi
     Object.assign(c, { st: 'open', moves: Math.min(c.moves + 1, DROP_AT), checkIns: 0, out: false, ci: null });
     if (c.stands === 'asked') c.stands = 'kept'; // a new date says it still stands (CM11)
   };
-  // CD51: the linked work going Done ends only a promise to deliver it; as M22 drew it, any linked promise
+  // CD52: the linked work going Done ends only a promise to deliver it; as M22 drew it, any linked promise
   const endsWithWork = (c) => !c.about || !fixed('askWhenAbout') || bug('endAboutOnDone');
   const fire = (c, ev) => {
     if (!liveFrom.includes(c.st)) return false; // not a drawn arrow: refused, changes nothing
@@ -326,7 +326,7 @@ export default function Commitment({ Says = ['m1', 'm2', 'm3'], CheckIns = 2, Fi
               const c = t.c[k];
               if (!live(c) || !c.link) continue;
               if (endsWithWork(c)) fire(c, 'done');
-              else if (!c.stands && !bug('noAboutAsk')) c.stands = 'asked'; // CD51: does it still stand?
+              else if (!c.stands && !bug('noAboutAsk')) c.stands = 'asked'; // CD52: does it still stand?
             }
           return [t];
         },
@@ -359,9 +359,9 @@ export default function Commitment({ Says = ['m1', 'm2', 'm3'], CheckIns = 2, Fi
       LinkOnlyWhileMember: (s) => SLOTS.every((k) => !s.c[k]?.link || s.member),
       // CM11: a live commitment on cancelled work has asked whether it still stands
       CancelledWorkAsks: (s) => SLOTS.every((k) => !live(s.c[k]) || !s.c[k].link || s.work !== 'cancelled' || s.c[k].stands),
-      // CD51: a live promise only about Done work has asked whether it still stands
+      // CD52: a live promise only about Done work has asked whether it still stands
       DoneWorkAsksAbout: (s) => SLOTS.every((k) => !live(s.c[k]) || !s.c[k].link || !s.c[k].about || s.work !== 'done' || s.c[k].stands),
-      // CD51: a promise only about #208 is not lost as No change because #208 is Done
+      // CD52: a promise only about #208 is not lost as No change because #208 is Done
       AboutNotLost: (s) => Says.every((m) => !MESSAGES[m].about || s.msg[m].st !== 'no_change'),
       // Rule 6: a command with an id has its effect once
       AppliedAtMostOnce: (s) => !s.last || s.last.n === 1,
@@ -388,9 +388,9 @@ export default function Commitment({ Says = ['m1', 'm2', 'm3'], CheckIns = 2, Fi
       // CM7, CM8: a check-in goes out only on a working day the owner is in
       NoCheckInWhileAway: (s, t) => SLOTS.every((k) => !sent(s, t, k) || (working(t) && isIn(t))),
       // Nothing asks "Did you send it?" once Kemar said it is done, or once its linked work is Done
-      // (a promise only about it is asked whether it still stands instead, CD51, and its check-ins go on)
+      // (a promise only about it is asked whether it still stands instead, CD52, and its check-ins go on)
       NoAskAfterDone: (s, t) => SLOTS.every((k) => !sent(s, t, k) || (!s.c[k].told && !(s.work === 'done' && s.c[k].link && !s.c[k].about))),
-      // CD51: the drawn rule on #208 going Done ends only a promise to deliver it
+      // CD52: the drawn rule on #208 going Done ends only a promise to deliver it
       WorkEndsOnlyDelivery: (s, t) => s.work === t.work || SLOTS.every((k) => !live(s.c[k]) || !s.c[k].about || t.c[k].st !== 'done'),
       // P10 and rule 4: a check-in names a record only if its reader can open it when it is sent
       CheckInHoldsOnlyWhatOwnerMaySee: (s, t) => SLOTS.every((k) => !sent(s, t, k) || !t.c[k].ci.rec || reads(t, OWNER)),

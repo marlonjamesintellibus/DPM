@@ -11,7 +11,7 @@
 //   checking ──TIMER no reply (fewer than commitmentCheckIns sent)──▶ checking, ready for the next check-in
 //   checking ──TIMER no reply (commitmentCheckIns sent)──▶ lapsed   final, shown to the owner only
 // CM11's question ("#208 was cancelled; does it still stand?") is a field, asked once, that any answer answers.
-// CD51 (W4-D2): only a promise to deliver its linked work ends when that work is Done; one only about it ("I'll
+// CD52 (W4-D2): only a promise to deliver its linked work ends when that work is Done; one only about it ("I'll
 // walk Andre through #208") is asked CM11's question instead ("#208 is Done; does it still stand?").
 import { config } from "../config";
 import { daysBetween, type IsoDate } from "../dates";
@@ -71,7 +71,7 @@ export type CommitmentEvent =
   | { type: "CHECK_IN" }
   /** TIMER: the day a check-in went out ended with no reply. */
   | { type: "NO_REPLY" }
-  /** Rule, CM11: the linked work item was cancelled, or, CD51, is Done and the promise does not deliver it. */
+  /** Rule, CM11: the linked work item was cancelled, or, CD52, is Done and the promise does not deliver it. */
   | { type: "WORK_ENDED" }
   /** Rule, CM9: the owner left the linked record's project; the commitment stays theirs, the link goes. */
   | { type: "UNLINK" };
@@ -90,11 +90,11 @@ type Ctx = {
 const byOwner = (c: Ctx) => (c.actorId !== null && c.actorId === c.record.ownerId ? null : "only its owner");
 const dayEnded = (c: Ctx, day: IsoDate | null) => day !== null && daysBetween(day, c.today) > 0;
 
-// CD51: words that say the promise is to deliver the linked work itself, so its work going Done keeps it
+// CD52: words that say the promise is to deliver the linked work itself, so its work going Done keeps it
 const DELIVERS =
   /\b(?:finish(?:ed)?|complete[ds]?|wrap(?:ped)?\s+(?:it\s+|this\s+|that\s+)?up|(?:get|have)\s+(?:it\s+|this\s+|that\s+)?done|close\s+(?:it\s+)?out|ship(?:ped)?|land(?:ed)?|deliver(?:ed)?|hand(?:ed)?\s+(?:it\s+)?over|release[ds]?|deploy(?:ed)?|merge[ds]?|submit(?:ted)?|fix(?:ed)?|resolve[ds]?|implement(?:ed)?|build|built|a\s+go\s+done|mi\s+(?:wi|will)\s+done)\b/i;
 
-/** CD51: the promise is to deliver its linked work ("Finish the #208 backfill"), not only about it. */
+/** CD52: the promise is to deliver its linked work ("Finish the #208 backfill"), not only about it. */
 export function deliversLinkedWork(what: string): boolean {
   return DELIVERS.test(what);
 }
@@ -116,7 +116,7 @@ function newDateGuard(c: Ctx, e: Extract<CommitmentEvent, { type: "NEW_DATE" }>)
 
 const checkInGuard = (c: Ctx) => (c.ownerIn ? null : "not on a working day they are in");
 const keepGuard = (c: Ctx) => byOwner(c) ?? (c.record.stands === "asked" ? null : "nothing asked whether it stands");
-/** CM11 and CD51: the linked work ended in a way that leaves the promise open to question. */
+/** CM11 and CD52: the linked work ended in a way that leaves the promise open to question. */
 export function linkEndAsks(what: string, linked: string | null): boolean {
   return linked === "cancelled" || (linked === "done" && !deliversLinkedWork(what));
 }
@@ -243,7 +243,7 @@ export function readCheckInReply(text: string, dayOf: (words: string) => { date:
   return day && /^(?:[\s,]|\b(?:on|by|for|the|then|instead|please|pls|ok)\b)*$/.test(left) ? { act: "date", dueOn: day.date } : null;
 }
 
-/** A new commitment, as Save opens it (M22 SAVE). CM11, CD51: one about cancelled or Done work is saved with its question asked. */
+/** A new commitment, as Save opens it (M22 SAVE). CM11, CD52: one about cancelled or Done work is saved with its question asked. */
 export function openCommitment(fields: Pick<CommitmentRecord, "id" | "ownerId" | "captureId" | "extractionId" | "what" | "dueOn" | "link" | "savedOn"> & { standsAsked?: boolean }): CommitmentRecord {
   const { standsAsked, ...rest } = fields;
   return { ...rest, state: "open", moves: 0, checkIns: 0, checkInOut: false, checkInOn: null, stands: standsAsked && rest.link?.type === "work_item" ? "asked" : null, endedOn: null, endedBy: null };

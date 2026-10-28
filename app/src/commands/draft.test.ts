@@ -334,7 +334,7 @@ describe("client status", () => {
     expect(shared.answer?.text).toBe("Here's a draft client status for Forager 2.0. It holds only what the client view shows: the releases and the status you shared. Edit it, then copy it.");
   });
 
-  it("CD53: a reason that names something the client view does not show is not shared until it is reworded", async () => {
+  it("CD57: a reason that names something the client view does not show is not shared until it is reworded", async () => {
     await saveReason(as("alicia", 1), "forager", { text: "Waiting on #151 before the Trend model can start.", entryIds: ["br-feed-blocker"], draftedByAtlas: false, edited: false });
     const [hidden] = await db.select().from(t.statusReasons).where(eq(t.statusReasons.projectId, "forager"));
     expect(await refusal(shareReasonWithClient(as("alicia", 2), "forager", hidden.id, true))).toBe("it names Trend model, which Sprouts can't see. Reword the reason first");
@@ -347,7 +347,7 @@ describe("client status", () => {
     expect((await db.select().from(t.statusReasons).where(eq(t.statusReasons.id, reworded.id)))[0].clientShareable).toBe(true);
   });
 
-  it("CD52: Kyle's client view of Forager shows the status Alicia set only once she shares its reason with the client", async () => {
+  it("CD56: Kyle's client view of Forager shows the status Alicia set only once she shares its reason with the client", async () => {
     const kyle = () => answerFor(db, "kyle", { asked: "What is Forager?", topic: "explain_project", projectId: null }, at(10));
     await saveReason(as("alicia", 1), "forager", { text: "Waiting on the store feed from Sprouts IT.", entryIds: ["br-feed-blocker"], draftedByAtlas: false, edited: false });
     expect((await kyle()).text).not.toContain("status");

@@ -41,11 +41,14 @@ describe("Save on a promise (M22 SAVE)", () => {
     expect(settleItems([startItem("i1", promise())], p)[0].state).toBe("applied");
   });
 
-  it("recordAtSave: Done work since is No change; cancelled saves with CM11's question asked", () => {
-    const done = plan(promise(), { "work_item:wi-151:state": "done" });
+  it("recordAtSave: Done work since is No change for a promise to deliver it; cancelled saves with CM11's question asked", () => {
+    const deliver = promise({ what: "Submit the access request" });
+    const done = plan(deliver, { "work_item:wi-151:state": "done" });
     expect(done).toMatchObject({ outcome: "apply", commitments: [], noChange: ["i1"] });
-    expect(settleItems([startItem("i1", promise())], done)[0].state).toBe("no_change");
+    expect(settleItems([startItem("i1", deliver)], done)[0].state).toBe("no_change");
     expect(plan(promise(), { "work_item:wi-151:state": "cancelled" })).toMatchObject({ commitments: [{ standsAsked: true }] });
+    // CD52: a promise only about the work saves with the question asked, never lost as No change
+    expect(plan(promise(), { "work_item:wi-151:state": "done" })).toMatchObject({ noChange: [], commitments: [{ standsAsked: true }] });
   });
 
   it("CM5: the same promise moves a live commitment; one ended since opens a new one; the same day is No change", () => {

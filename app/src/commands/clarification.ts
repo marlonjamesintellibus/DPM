@@ -391,14 +391,14 @@ export async function answeredByCards(tx: Tx, now: Date, reply: { id: string; au
   }
 }
 
-/** CD54: the words name one of its options, by its whole label or its first word ("Kemar", "Forager"). */
+/** CD61: the words name one of its options, by its whole label or its first word ("Kemar", "Forager"). */
 function namesAnOption(words: string, options: readonly ClarifyOption[]): boolean {
   const said = ` ${words.toLowerCase().replace(/[^\p{L}\p{N}#.]+/gu, " ")} `;
   return options.some((o) => [o.label, o.label.split(/\s+/)[0]].some((w) => w.length >= 3 && said.includes(` ${w.toLowerCase()} `)));
 }
 
 /**
- * CD54 (W4-D11): the asker passed over a question that asks which, and asked again in their own words, on the same
+ * CD61 (W4-D11): the asker passed over a question that asks which, and asked again in their own words, on the same
  * topic and naming one of its options ("What is Kemar Brown working on?"). The new message is answered, or asks
  * again itself, so the old question closes quietly ("You asked again") rather than wait for its timer.
  */

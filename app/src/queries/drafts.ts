@@ -226,7 +226,7 @@ export async function clientStatusFacts(conn: Conn, viewerId: string, projectId:
 }
 
 /**
- * CD53 (W4-D7): the first name in a reason's words that the project's client view does not show (a milestone that
+ * CD57 (W4-D7): the first name in a reason's words that the project's client view does not show (a milestone that
  * is not a release, work, a BRAID entry), as the PM reads the project, or null. A reason that names one is not
  * shared with the client until it is reworded. CD30 for records: "the trend model" in lower case is words.
  */

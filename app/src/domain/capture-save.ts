@@ -167,7 +167,7 @@ export function planSave(
         continue;
       }
       // recordAtSave: the linked work item as it is now. Done is No change for a promise to deliver it; cancelled, or
-      // Done under a promise only about it (CD51), saves with CM11's question.
+      // Done under a promise only about it (CD52), saves with CM11's question.
       // Membership comes first: work the author can no longer read reads as null (CM9), so neither applies
       const linked = promise.link?.type === "work_item" ? valueOf(`work_item:${promise.link.id}:state`) : null;
       // CM5: the match holds only while that commitment is live; otherwise this promise opens a new one

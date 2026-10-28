@@ -301,10 +301,10 @@ export async function answerCheckInInWords(tx: Tx, now: Date, capture: { id: str
 
 // ---- The rules and the timer ----
 
-/** CD55: a notice that names the linked record belongs to its project, so it is hidden once the owner leaves it (P10). */
+/** CD64: a notice that names the linked record belongs to its project, so it is hidden once the owner leaves it (P10). */
 const namedProject = (r: Pick<CommitmentRecord, "link">, label: string | null): string | null => (label && r.link ? r.link.projectId : null);
 
-/** CM11's question, or CD51's when the work is Done and the promise was only about it. */
+/** CM11's question, or CD52's when the work is Done and the promise was only about it. */
 async function askStands(tx: Tx, now: Date, r: CommitmentRecord, linked: string | null): Promise<void> {
   const label = (await linkLabel(tx, r.ownerId, r.link)) ?? "The work it was about";
   const ended = linked === "done" ? "is Done" : "was cancelled";
@@ -323,7 +323,7 @@ export async function checkInText(conn: Conn, r: CommitmentRecord): Promise<stri
 /**
  * The drawn rules on a commitment's link, run after a change to its project (evaluate) and by the timer: its
  * linked work going Done ends a promise to deliver it as done (the model's WorkDone); going cancelled, or Done
- * under a promise only about it (CD51), asks once whether it still stands (CM11); and an owner who left the
+ * under a promise only about it (CD52), asks once whether it still stands (CM11); and an owner who left the
  * project keeps it without the link (CM9). Each is told in their chat.
  */
 async function followLinks(tx: Tx, now: Date, rows: readonly Row[], world: World): Promise<void> {

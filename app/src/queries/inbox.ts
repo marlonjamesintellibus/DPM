@@ -58,7 +58,7 @@ export type InboxCause =
   | "signals"
   /** Phase E, M22: a check-in on the viewer's own promise, due and not answered yet (a notice in the chat too). */
   | "commitment_check"
-  /** Phase E, CM11 and CD51: the work the viewer's promise was about was cancelled, or is Done and the promise was only about it; does it still stand? */
+  /** Phase E, CM11 and CD52: the work the viewer's promise was about was cancelled, or is Done and the promise was only about it; does it still stand? */
   | "commitment_stands"
   /** Phase P, M35: a teammate going on leave asks the viewer to cover some of their work (a notice in the chat too). */
   | "cover_ask"
@@ -330,7 +330,7 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
     if (check ? !(c.state === "checking" && c.checkInOut) : c.stands !== "asked") continue;
     const age = ageOf(p.row.createdAt, now, false);
     const label = await linkLabel(conn, viewerId, c.link);
-    // CD51: the work is Done and the promise was only about it, or (CM11) it was cancelled; read only when they can open it
+    // CD52: the work is Done and the promise was only about it, or (CM11) it was cancelled; read only when they can open it
     const [work] = label && c.link?.type === "work_item" ? await conn.select({ state: t.workItems.state }).from(t.workItems).where(eq(t.workItems.id, c.link.id)) : [];
     const ended = work?.state === "done" ? "is Done" : "was cancelled";
     items.push({

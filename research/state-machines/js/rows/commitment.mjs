@@ -21,10 +21,10 @@ export const ROWS = [
   { spec: 'Commitment', setting: 'fixed: promise twice, repeats and leaving Forager', model: Commitment({ ...FIXED, Says: ['m1', 'm2'], World: ['repeat', 'project'] }), expectFail: [] },
   { spec: 'Commitment', setting: "fixed: Alicia's words about Kemar (CD5, rule 10)", model: Commitment({ ...FIXED, Says: ['m1', 'm4', 'm5'], World: ['work'] }), expectFail: [] },
   { spec: 'Commitment', setting: 'fixed: commitmentCheckIns = 1', model: Commitment({ ...FIXED, Says: ['m1', 'm3'], CheckIns: 1 }), expectFail: [] },
-  // CD51 (W4-D2): a promise only about #208. As M22 drew it, #208 Done ends it, or saves it as No change
-  { spec: 'Commitment', setting: 'without askWhenAbout: a promise only about #208, and #208 Done (CD51)', model: Commitment({ Fixes: ['anyLive', 'recordAtSave'], Says: ['m6'], World: ['work'] }), expectFail: ['AboutNotLost', 'WorkEndsOnlyDelivery'] },
-  { spec: 'Commitment', setting: 'fixed: a promise only about #208, every event around it (CD51)', model: Commitment({ ...FIXED, Says: ['m6'] }), expectFail: [] },
-  { spec: 'Commitment', setting: 'fixed: a promise about #208, then "Sent Kyle the request" (CD51)', model: Commitment({ ...FIXED, Says: ['m6', 'm3'], World: ['work'] }), expectFail: [] },
+  // CD52 (W4-D2): a promise only about #208. As M22 drew it, #208 Done ends it, or saves it as No change
+  { spec: 'Commitment', setting: 'without askWhenAbout: a promise only about #208, and #208 Done (CD52)', model: Commitment({ Fixes: ['anyLive', 'recordAtSave'], Says: ['m6'], World: ['work'] }), expectFail: ['AboutNotLost', 'WorkEndsOnlyDelivery'] },
+  { spec: 'Commitment', setting: 'fixed: a promise only about #208, every event around it (CD52)', model: Commitment({ ...FIXED, Says: ['m6'] }), expectFail: [] },
+  { spec: 'Commitment', setting: 'fixed: a promise about #208, then "Sent Kyle the request" (CD52)', model: Commitment({ ...FIXED, Says: ['m6', 'm3'], World: ['work'] }), expectFail: [] },
 ];
 
 // Planted bugs, on the fixed design: each one must make a full check fail

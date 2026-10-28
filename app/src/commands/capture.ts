@@ -551,7 +551,7 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
     // unless the message already asks about an item or a line (CD23); the answer comes once they choose
     const which = read?.which && !clarified ? await askWhich(tx, ctx.now, row, question!, read.which) : null;
     const found = which ? null : (read?.answer ?? null);
-    // CD54: asked again in their own words, so a question still asking which about the same thing closes
+    // CD61: asked again in their own words, so a question still asking which about the same thing closes
     if (question && (found || which)) await closeAskedAgain(tx, ctx.now, row, question);
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
     const answer = found && meta?.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;

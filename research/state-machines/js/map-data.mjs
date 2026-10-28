@@ -232,7 +232,7 @@ export const DECISIONS = {
     ['F5', 'Leads’ access to commercial data'],
     ['F6', 'GitHub as the backbone for work items vs in-app tasks'],
     ['F7', 'Reuse the Anubis grid and its state machine'],
-    ['F8', 'Customer access (client view)'],
+    // F8, customer access (client view), is settled: CD49 (a PM switches it), CD56 and CD57 (a shared status, never naming hidden records)
     ['F9', 'Finance or admin role design'],
     ['F10', 'Thresholds as org config: cutoff, quiet days, stalled days, tolerance, minimum group size, SLA'],
     ['F11', 'Existing Atlas architecture and channels'],

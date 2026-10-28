@@ -267,7 +267,7 @@ test("Phase G. Kemar drafts his standup from what he saved and copies it; a clie
   await viewAs("kemar", "/projects/forager");
   await expect(page.getByRole("button", { name: "Share status with client" })).toHaveCount(0); // only the PM shares it
   await viewAs("alicia", "/projects/forager");
-  // CD53: the reason she saved in step 6 names the blocker and the risk, which the client view does not show, so it
+  // CD57: the reason she saved in step 6 names the blocker and the risk, which the client view does not show, so it
   // is not shared until she rewords it (DB tests cover sharing a reworded reason)
   await page.getByRole("button", { name: "Share status with client" }).click();
   await expect(page.getByText(/names .+, which Sprouts can't see\. Reword the reason first/)).toBeVisible();
@@ -708,6 +708,6 @@ test("Phase O, MT9. Kemar's Sprouts call could be about two of his projects: Atl
   const brief = page.getByRole("textbox", { name: "Your call brief" });
   await expect(brief).toHaveValue(/Buyer pilot · Release 1: planned Fri 30 Oct/);
   await expect(brief).not.toHaveValue(/^- (Trend model|Data sources|#\d+)/m);
-  // Alicia's reason was not shared in phase G's step (CD53), so the brief holds no status (DR4)
+  // Alicia's reason was not shared in phase G's step (CD57), so the brief holds no status (DR4)
   await expect(brief).not.toHaveValue(/Status:/);
 });
