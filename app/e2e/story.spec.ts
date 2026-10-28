@@ -241,8 +241,8 @@ test("Phase N. Alicia asks who hasn't updated and who can pick up #160; Kemar, a
   const box = page.getByRole("textbox", { name: "Message to Atlas" });
   await box.fill("Who hasn't updated today?");
   await box.press("Enter");
-  // Names only, per project she leads; Kemar's 8:58 note was about Forager
-  await expect(page.getByText(/not sent an update today on Forager 2\.0: Jodian Taylor\./)).toBeVisible();
+  // Names only, per project she leads; Kemar saved his 8:58 note about Forager in step 4 (LD9)
+  await expect(page.getByText(/no update saved today on Forager 2\.0: Jodian Taylor\./)).toBeVisible();
   await box.fill("Who can pick up #160?");
   await box.press("Enter");
   await expect(page.getByText(/^#160 Feature store backfill on Forager 2\.0 is Jodian Taylor's\./)).toBeVisible();

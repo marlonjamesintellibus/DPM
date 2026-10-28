@@ -58,37 +58,56 @@ export async function sharedPeople(conn: Conn, viewerId: string): Promise<Shared
  * so the records are exactly as the viewer's own screens show them.
  */
 export async function personSeenBy(conn: Conn, viewerId: string, personId: string, now: Date, projectId: string | null = null): Promise<PersonSeen | null> {
+  return (await peopleSeenBy(conn, viewerId, [personId], now, projectId)).get(personId) ?? null;
+}
+
+/**
+ * personSeenBy for several people at once, by id; someone who shares no project with the viewer is not
+ * in it (PP1). The viewer's projects, and the people's contacts and leave, are read once for all of them
+ * (phase N's who_free reads every teammate).
+ */
+export async function peopleSeenBy(conn: Conn, viewerId: string, personIds: readonly string[], now: Date, projectId: string | null = null): Promise<Map<string, PersonSeen>> {
+  const seen = new Map<string, PersonSeen>();
+  const ids = [...new Set(personIds)];
+  if (!ids.length) return seen;
   const reader = await projectReader(conn, viewerId);
-  const [person] = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(eq(t.people.id, personId));
-  if (!person) return null;
-  const contactRows = await conn.select().from(t.projectContacts).where(eq(t.projectContacts.personId, personId));
-  const onIt = (v: ProjectView) => isMember(personId, v.project.id, reader.world.memberships) || contactRows.some((c) => c.projectId === v.project.id);
-  const shared = (await projectsAsked(conn, viewerId, null, now)).filter(onIt);
-  if (!shared.length) return null;
-  const views = projectId ? shared.filter((v) => v.project.id === projectId) : shared;
-  const projects = views.map((v) => ({ id: v.project.id, name: v.project.name }));
+  const people = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(inArray(t.people.id, ids));
+  if (!people.length) return seen;
+  const allContacts = await conn.select().from(t.projectContacts).where(inArray(t.projectContacts.personId, ids));
+  const allLeave = await conn.select().from(t.leave).where(inArray(t.leave.personId, ids));
+  const readable = await projectsAsked(conn, viewerId, null, now);
   const of = (v: ProjectView): Project => ({ id: v.project.id, name: v.project.name });
 
-  const ties = views.flatMap((v) => {
-    const c = contactRows.find((x) => x.projectId === v.project.id);
-    if (!c) return [];
-    // PP3: the records the tie names ("contact on #151"), and the entries on the log that name them
-    const numbers: string[] = c.tie.match(/#\d+/g) ?? [];
-    const work = workOf(v).filter((w) => w.number && numbers.includes(w.number));
-    const entries = v.braid.entries.filter((e) => e.onLog && namesPerson(e.title, person.name, false));
-    return [{ project: of(v), tie: c.tie, work, entries }];
-  });
+  for (const person of people) {
+    const contactRows = allContacts.filter((c) => c.personId === person.id);
+    const onIt = (v: ProjectView) => isMember(person.id, v.project.id, reader.world.memberships) || contactRows.some((c) => c.projectId === v.project.id);
+    const shared = readable.filter(onIt);
+    if (!shared.length) continue;
+    const views = projectId ? shared.filter((v) => v.project.id === projectId) : shared;
+    const projects = views.map(of);
 
-  const theirs = <T extends { owner: PersonRef | null }>(x: T) => x.owner?.id === personId;
-  return {
-    person,
-    projects,
-    work: views.flatMap((v) => ownedOn(v).work.filter(theirs).map((w) => ({ project: of(v), w }))),
-    milestones: views.flatMap((v) => ownedOn(v).milestones.filter(theirs).map((m) => ({ project: of(v), m }))),
-    entries: views.flatMap((v) => ownedOn(v).entries.filter(theirs).map((e) => ({ project: of(v), e }))),
-    ties,
-    onLeaveUntil: await leaveShownTo(conn, viewerId, personId, projects.map((p) => p.id), now, reader),
-  };
+    const ties = views.flatMap((v) => {
+      const c = contactRows.find((x) => x.projectId === v.project.id);
+      if (!c) return [];
+      // PP3: the records the tie names ("contact on #151"), and the entries on the log that name them
+      const numbers: string[] = c.tie.match(/#\d+/g) ?? [];
+      const work = workOf(v).filter((w) => w.number && numbers.includes(w.number));
+      const entries = v.braid.entries.filter((e) => e.onLog && namesPerson(e.title, person.name, false));
+      return [{ project: of(v), tie: c.tie, work, entries }];
+    });
+
+    const theirs = <T extends { owner: PersonRef | null }>(x: T) => x.owner?.id === person.id;
+    seen.set(person.id, {
+      person,
+      projects,
+      work: views.flatMap((v) => ownedOn(v).work.filter(theirs).map((w) => ({ project: of(v), w }))),
+      milestones: views.flatMap((v) => ownedOn(v).milestones.filter(theirs).map((m) => ({ project: of(v), m }))),
+      entries: views.flatMap((v) => ownedOn(v).entries.filter(theirs).map((e) => ({ project: of(v), e }))),
+      ties,
+      onLeaveUntil: leaveSeen(viewerId, person.id, projects.map((p) => p.id), now, reader, allLeave.filter((l) => l.personId === person.id)),
+    });
+  }
+  return seen;
 }
 
 /**
@@ -118,8 +137,18 @@ export async function leaveShownTo(
   now: Date,
   reader?: ProjectReader,
 ): Promise<IsoDate | null> {
-  const { world, mayRead } = reader ?? (await projectReader(conn, viewerId));
-  if (!leaveImpactOwners(personId, world).some((o) => o.ownerId === viewerId && projectIds.includes(o.projectId) && mayRead(o.projectId))) return null;
+  const r = reader ?? (await projectReader(conn, viewerId));
+  if (!showsLeave(viewerId, personId, projectIds, r)) return null;
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, personId));
-  return onLeaveUntil(leave.map(leaveRecordOf), todayIn(now));
+  return leaveSeen(viewerId, personId, projectIds, now, r, leave);
+}
+
+/** PP7, D6: whether one of these projects shows the viewer what this person's leave touches. */
+function showsLeave(viewerId: string, personId: string, projectIds: readonly string[], { world, mayRead }: ProjectReader): boolean {
+  return leaveImpactOwners(personId, world).some((o) => o.ownerId === viewerId && projectIds.includes(o.projectId) && mayRead(o.projectId));
+}
+
+/** leaveShownTo, from the person's leave rows already read. */
+function leaveSeen(viewerId: string, personId: string, projectIds: readonly string[], now: Date, reader: ProjectReader, leave: (typeof t.leave.$inferSelect)[]): IsoDate | null {
+  return showsLeave(viewerId, personId, projectIds, reader) ? onLeaveUntil(leave.map(leaveRecordOf), todayIn(now)) : null;
 }

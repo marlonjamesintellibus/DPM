@@ -19,9 +19,9 @@ const SOMEONES = String.raw`\b(?!(?:my|mi|today|yesterday|tonight|tomorrow|week|
 // "Who has" only before a number or a named thing ("Who has the store feed?", "Who's got #151?"), never
 // "Who has the most work?" or "Who has time?"
 const HAS = String.raw`(?:has|has got|got)(?=\s+(?:#\d|(?:the|di)\s+(?!(?:most|least|fewest|time|capacity|bandwidth|room)\b)))`;
-/** PP5: whose a record is. The words after it say what to look for ("the store feed"). */
+/** PP5: whose a record is ("Who will work on #151?" too). The words after it say what to look for ("the store feed"). */
 const OWNER = new RegExp(
-  String.raw`\b(?:who\s+(?:owns|own|is the owner of|is responsible for|is working on|is doing|is handling|${HAS})|who's\s+(?:the owner of|responsible for|working on|doing|handling|${HAS})|a who\s+(?:own|a work pon|a do|${HAS})|whose\s+(?:is|are)|owner of)\s+(.+?)[?.!]*$`,
+  String.raw`\b(?:who\s+(?:owns|own|is the owner of|is responsible for|is working on|is doing|is handling|will work on|will be working on|will handle|${HAS})|who's\s+(?:the owner of|responsible for|working on|doing|handling|${HAS})|a who\s+(?:own|a work pon|a do|${HAS})|whose\s+(?:is|are)|owner of)\s+(.+?)[?.!]*$`,
 );
 /** PP8: what someone said, sent or wrote ("What did Andre say about pricing?", "Show me Kemar's updates"). */
 const SAID = new RegExp(

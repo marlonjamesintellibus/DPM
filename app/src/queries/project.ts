@@ -99,11 +99,21 @@ export function todayIn(now: Date): IsoDate {
   return dateInZone(now, config.timeZone);
 }
 
+/** "09:10", the time of day in the org time zone, written as config times are ("09:00"), so the two compare. */
+export function clockOf(at: Date): string {
+  return new Intl.DateTimeFormat("en-GB", { timeZone: config.timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at);
+}
+
 /** "9:10am" in the org time zone. */
 export function clockTime(at: Date): string {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: config.timeZone, hour: "numeric", minute: "2-digit", hour12: true }).formatToParts(at);
-  const part = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
-  return `${part("hour")}:${part("minute")}${part("dayPeriod").toLowerCase()}`;
+  const [h, m] = clockOf(at).split(":").map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2, "0")}${h < 12 ? "am" : "pm"}`;
+}
+
+/** A config time in words: "09:00" is "9am", "16:30" is "4:30pm". */
+export function clockWords(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
 }
 
 /** Calendar days ago, in words: "today", "yesterday", "6 days ago". */

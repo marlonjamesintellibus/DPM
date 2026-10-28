@@ -10,7 +10,8 @@ import { capped, counted, forecastText, listed, milestonesOf, projectsAsked, wor
 /**
  * Phase K's hook: the open signals (M29) on these projects that the asker may see, as answer lines,
  * worst first. Phase K is built alongside this phase; until it lands there are none. When it does, it
- * reads its own per-viewer query here and nothing else in this answer changes.
+ * reads its own per-viewer query here (queries/signals.ts, signalsFor) and nothing else in this answer
+ * changes; answer-leads.test.ts fails until it does.
  */
 export async function openSignals(_conn: Conn, _viewerId: string, _views: readonly ProjectView[], _now: Date): Promise<DraftCard[]> {
   return [];
@@ -18,6 +19,8 @@ export async function openSignals(_conn: Conn, _viewerId: string, _views: readon
 
 export const atRiskWeek: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
   const views = await projectsAsked(conn, viewerId, projectId, now);
+  // As portfolio says it: with no projects there is nothing to be at risk on
+  if (!views.length) return { text: "You are not in any projects yet.", cards: [], more: null };
   const today = todayIn(now);
   const sunday = addDays(today, (7 - WEEKDAYS.indexOf(weekday(today))) % 7);
 

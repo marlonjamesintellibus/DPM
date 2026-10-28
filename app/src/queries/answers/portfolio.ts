@@ -4,12 +4,20 @@
 // widen it, but DPM has no lens tags yet and visibility follows group membership (F16), so every lens is
 // their own projects for now: LD4 (an executive with no tags) and LD7 (an employee) hold as built.
 import type { Status } from "../../domain/status/status";
+import type { ProjectView } from "../project";
 import { statusCard } from "./project-status";
 import { capped, projectsAsked, type AnswerBuilder } from "./shared";
 
 // Worst first; a project with no target yet goes last
 const WORST: readonly Status[] = ["off_track", "at_risk", "not_started", "on_track", "done"];
 const rank = (s: Status | null) => (s ? WORST.indexOf(s) : WORST.length);
+
+/** One project in a sentence, in plain words: "Store Insights is On track.", "GQ & Academy has no target yet." */
+function standsAs(v: ProjectView): string {
+  if (!v.displayed.status) return `${v.project.name} has no target yet.`;
+  if (v.displayed.status === "not_started") return `${v.project.name} has not started yet.`;
+  return `${v.project.name} is ${v.displayed.label}.`;
+}
 
 export const portfolio: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
   const views = (await projectsAsked(conn, viewerId, projectId, now)).sort((a, b) => rank(a.displayed.status) - rank(b.displayed.status) || a.project.name.localeCompare(b.project.name));
@@ -19,7 +27,7 @@ export const portfolio: AnswerBuilder = async (conn, viewerId, { projectId }, no
   const said = [off ? `${off} ${off === 1 ? "is" : "are"} Off track` : null, risk ? `${risk} ${risk === 1 ? "is" : "are"} At risk` : null].filter(Boolean).join(" and ");
   const text =
     views.length === 1
-      ? `${views[0].project.name} is ${views[0].displayed.label}.`
+      ? standsAs(views[0])
       : said
         ? `Of your ${views.length} projects, ${said}. They are listed worst first.`
         : `None of your ${views.length} projects is Off track or At risk.`;

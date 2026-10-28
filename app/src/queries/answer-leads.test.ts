@@ -2,8 +2,11 @@
 // per-viewer queries (P10), with edge cases LD1 to LD10. A question goes through the same read as an
 // update, with the recorded fixture, whose rule spots it. In the seed Alicia is PM of Forager and GQ,
 // Andre PM of Store Insights, Kemar a member of all three and Jodian of Forager; Kyle is Forager's
-// outside contact; Kemar's 8:58 note says things about Forager and Store Insights, and he is on leave
-// 26 to 30 Oct. It is 9:40am on Tuesday 20 Oct unless a test says otherwise.
+// outside contact; Kemar's 8:58 note says things about Forager and Store Insights and waits for his
+// review (not saved), and he is on leave 26 to 30 Oct. It is 9:40am on Tuesday 20 Oct unless a test says
+// otherwise.
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import type { Drafter } from "../atlas/extractor";
@@ -18,6 +21,7 @@ import type { RawProposal } from "../domain/atlas-checks/types";
 import { at, seededDb } from "../test/seeded-db";
 import { LEADS_ONLY, TODAY_ONLY } from "./answers/not-updated";
 import { FREE_FOR_WHAT } from "./answers/who-free";
+import { peopleSeenBy, personSeenBy } from "./people";
 
 let db: Db;
 let n = 0;
@@ -39,13 +43,16 @@ const everything = (a: { text: string; cards: { title: string; detail: string | 
 const role = (projectId: string, personId: string, r: "pm" | "lead" | "member") =>
   db.update(t.projectMemberships).set({ role: r }).where(and(eq(t.projectMemberships.projectId, projectId), eq(t.projectMemberships.personId, personId)));
 
-/** Someone sends an update about #160 on Forager, `minutes` after 9:10am, on a channel; nothing is saved. */
-async function updateOnForager(who: string, minutes: number, channel: "app" | "atlas" = "atlas") {
+/**
+ * Someone sends an update finishing their work item `targetId` on `projectId`, `minutes` after 9:10am, on
+ * a channel; with `save`, they review it and save it, otherwise it waits in their review.
+ */
+async function updateOn(who: string, minutes: number, { projectId = "forager", targetId = "wi-160", channel = "atlas", save = false }: { projectId?: string; targetId?: string; channel?: "app" | "atlas"; save?: boolean } = {}) {
   const proposal: RawProposal = {
     kind: "update",
-    projectId: "forager",
-    routingReason: { basis: "target", evidence: "feature store backfill", label: "#160 is on Forager" },
-    targetId: "wi-160",
+    projectId,
+    routingReason: { basis: "target", evidence: "feature store backfill", label: "It is on the project" },
+    targetId,
     field: "state",
     newValue: "done",
     quote: "Finished the feature store backfill, my secret plan worked",
@@ -53,7 +60,12 @@ async function updateOnForager(who: string, minutes: number, channel: "app" | "a
     rationale: "You finished it.",
   };
   const { captureId } = await createCapture(as(who, minutes), { channel, messageId: `u-${++n}`, kind: "text", text: `${proposal.quote}.`, messageAt: at(minutes), receivedAt: at(minutes) });
-  await proposeItems(as(who, minutes), captureId, [proposal]);
+  const { items } = await proposeItems(as(who, minutes), captureId, [proposal]);
+  if (save) {
+    await openReview(as(who, minutes), captureId);
+    for (const i of items) if (i.state === "needs_ok") await decideExtraction(as(who, minutes), i.id, { type: "accept" });
+    expect((await saveCapture(as(who, minutes), captureId)).outcome).toBe("saved");
+  }
   return captureId;
 }
 
@@ -61,14 +73,15 @@ beforeEach(async () => {
   db = await seededDb();
 }, 30_000);
 
-describe("not_updated: who hasn't sent an update today (LD1 to LD10)", () => {
-  it("Alicia, PM of Forager and GQ: names only, per project; Kemar's note was about Forager, not GQ", async () => {
+describe("not_updated: who has no update saved today (LD1 to LD10)", () => {
+  it("Alicia, PM of Forager and GQ: names only, per project", async () => {
     const { row, answer } = await ask("alicia", "Who hasn't updated today?");
     expect(row.question).toMatchObject({ topic: "not_updated" });
-    expect(answer.text).toBe("1 person has not sent an update today on Forager 2.0: Jodian Taylor. 1 person has not sent an update today on GQ & Academy: Kemar Brown.");
+    expect(answer.text).toBe("2 people have no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown. 1 person has no update saved today on GQ & Academy: Kemar Brown.");
     expect(answer.cards.map((c) => [c.title, c.detail])).toEqual([
-      ["Jodian Taylor", "Forager 2.0: no update today"],
-      ["Kemar Brown", "GQ & Academy: no update today"],
+      ["Jodian Taylor", "Forager 2.0: no update saved today"],
+      ["Kemar Brown", "Forager 2.0: no update saved today"],
+      ["Kemar Brown", "GQ & Academy: no update saved today"],
     ]);
   });
 
@@ -82,43 +95,63 @@ describe("not_updated: who hasn't sent an update today (LD1 to LD10)", () => {
   it("the role is read per project when it is answered: a PM on Forager and a member on GQ hears about Forager only", async () => {
     await role("gq", "alicia", "member");
     const { answer } = await ask("alicia", "Who hasn't updated today?");
-    expect(answer.text).toBe("1 person has not sent an update today on Forager 2.0: Jodian Taylor.");
-    expect(everything(answer)).not.toMatch(/GQ|Kemar/);
+    expect(answer.text).toBe("2 people have no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown.");
+    expect(everything(answer)).not.toMatch(/GQ/);
     // Made a Lead again, the next answer has GQ back (rule 7)
     await role("gq", "alicia", "lead");
     expect((await ask("alicia", "Who hasn't updated today?", 31)).answer.text).toContain("on GQ & Academy: Kemar Brown");
   });
 
-  it("P10: Andre hears about Store Insights only; Kemar's note was about it", async () => {
+  it("P10: Andre hears about Store Insights only", async () => {
     const { answer } = await ask("andre", "Who hasn't updated today?");
-    expect(answer.text).toBe("Everyone on Store Insights has sent an update today.");
+    expect(answer.text).toBe("1 person has no update saved today on Store Insights: Kemar Brown.");
     expect(everything(answer)).not.toMatch(/Jodian|Forager|GQ/);
   });
 
-  it("LD9: an update from any channel counts, saved or not; only who and where are read, never the words", async () => {
-    await updateOnForager("jodian", 20, "app");
+  it("LD9: a saved update from any channel counts; only who and where are read, never the words", async () => {
+    await updateOn("jodian", 20, { channel: "app", save: true });
+    await updateOn("kemar", 25, { targetId: "wi-152", save: true });
     const { answer } = await ask("alicia", "Who hasn't updated on Forager?");
-    expect(answer.text).toBe("Everyone on Forager 2.0 has sent an update today.");
+    expect(answer.text).toBe("Everyone on Forager 2.0 has saved an update today.");
     expect(everything(answer)).not.toMatch(/secret|backfill/);
   });
 
+  it("rule 9, PP8: an update still in its author's review is theirs alone, so it is not counted nor hinted at", async () => {
+    // Kemar's 8:58 note about Forager waits for his review, and so does Jodian's
+    await updateOn("jodian", 20, { channel: "app" });
+    const { answer } = await ask("alicia", "Who hasn't updated on Forager?");
+    expect(answer.text).toBe("2 people have no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown.");
+    expect(everything(answer)).not.toMatch(/review|draft|8:58|secret|backfill/);
+  });
+
   it("an update yesterday, or a question today, is not an update today", async () => {
-    await updateOnForager("jodian", -DAY);
+    await updateOn("jodian", -DAY, { save: true });
     await ask("jodian", "What am I working on?", 5);
-    expect((await ask("alicia", "Who hasn't updated on Forager?")).answer.text).toBe("1 person has not sent an update today on Forager 2.0: Jodian Taylor.");
+    expect((await ask("alicia", "Who hasn't updated on Forager?")).answer.text).toBe("2 people have no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown.");
   });
 
   it("LD2: someone on leave today is not missing, and is named as on leave", async () => {
     await db.insert(t.leave).values({ id: "lv-jodian", personId: "jodian", startDate: "2026-10-19", endDate: "2026-10-23", state: "approved" });
+    await updateOn("kemar", 25, { targetId: "wi-152", save: true });
     const { answer } = await ask("alicia", "Who hasn't updated on Forager?");
-    expect(answer.text).toBe("Everyone on Forager 2.0 has sent an update today, or is on leave. Jodian Taylor is on leave until Fri 23 Oct.");
+    expect(answer.text).toBe("Everyone on Forager 2.0 has saved an update today, or is on leave. Jodian Taylor is on leave until Fri 23 Oct.");
     expect(answer.cards).toEqual([]);
   });
 
   it("LD2: Kemar on his approved leave is not missing on GQ; a leave only asked for is not leave", async () => {
-    expect((await ask("alicia", "Who hasn't updated on GQ?", 7 * DAY)).answer.text).toBe("Everyone on GQ & Academy has sent an update today, or is on leave. Kemar Brown is on leave until Fri 30 Oct.");
+    expect((await ask("alicia", "Who hasn't updated on GQ?", 7 * DAY)).answer.text).toBe("Everyone on GQ & Academy has saved an update today, or is on leave. Kemar Brown is on leave until Fri 30 Oct.");
     await db.insert(t.leave).values({ id: "lv-jodian", personId: "jodian", startDate: "2026-10-20", endDate: "2026-10-23", state: "requested" });
-    expect((await ask("alicia", "Who hasn't updated on Forager?")).answer.text).toBe("1 person has not sent an update today on Forager 2.0: Jodian Taylor.");
+    expect((await ask("alicia", "Who hasn't updated on Forager?")).answer.text).toBe("2 people have no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown.");
+  });
+
+  it("LD2: \"or is on leave\" is said of a project only for its own people on leave", async () => {
+    // Kemar is on leave on 27 Oct and on both of Alicia's projects; he saved an update about GQ that day
+    await db.insert(t.workItems).values({ id: "wi-gq-1", projectId: "gq", number: "#301", title: "Academy outline", ownerId: "kemar", state: "in_progress" });
+    await updateOn("kemar", 7 * DAY + 10, { projectId: "gq", targetId: "wi-gq-1", save: true });
+    const { answer } = await ask("alicia", "Who hasn't updated today?", 7 * DAY + 30);
+    expect(answer.text).toBe(
+      "1 person has no update saved today on Forager 2.0: Jodian Taylor. Everyone on GQ & Academy has saved an update today. Kemar Brown is on leave until Fri 30 Oct.",
+    );
   });
 
   it("LD3, CD27: before the standup time it is early; on a weekend nobody is expected", async () => {
@@ -143,7 +176,7 @@ describe("not_updated: who hasn't sent an update today (LD1 to LD10)", () => {
   it("LD10, CD16: a follow-up about another day is today only, with no history", async () => {
     const first = await ask("alicia", "Who hasn't updated today?");
     // "and on GQ?" keeps today
-    expect((await ask("alicia", "and on GQ?", 31, first.conversationId)).answer.text).toBe("1 person has not sent an update today on GQ & Academy: Kemar Brown.");
+    expect((await ask("alicia", "and on GQ?", 31, first.conversationId)).answer.text).toBe("1 person has no update saved today on GQ & Academy: Kemar Brown.");
     const next = await ask("alicia", "And last week?", 32, first.conversationId);
     expect(next.row.question).toMatchObject({ topic: "not_updated" });
     expect(next.answer).toMatchObject({ text: TODAY_ONLY, cards: [] });
@@ -152,6 +185,12 @@ describe("not_updated: who hasn't sent an update today (LD1 to LD10)", () => {
     expect((await ask("alicia", "Who didn't update yesterday?", 34)).answer.text).toBe(TODAY_ONLY);
     // LD1 comes first: a member asking about another day hears only that it is not theirs to see
     expect((await ask("kemar", "Who didn't update yesterday?", 35)).answer.text).toBe(LEADS_ONLY);
+  });
+
+  it("LD10: \"so far today\" asks about today", async () => {
+    const { row, answer } = await ask("alicia", "Who hasn't updated so far today?");
+    expect(row.question).toMatchObject({ topic: "not_updated" });
+    expect(answer.text).toBe("2 people have no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown. 1 person has no update saved today on GQ & Academy: Kemar Brown.");
   });
 });
 
@@ -211,6 +250,21 @@ describe("my_decisions: what waits for the asker's decision, oldest first", () =
     expect(answer.cards).toMatchObject([{ title: "Kemar says: #160 Feature store backfill, In progress to Done", tag: "Asks you" }]);
   });
 
+  it("whether a blocker is resolved, whether a dependency was delivered, and leave she decides as its admin", async () => {
+    await db.insert(t.leave).values({ id: "lv-jodian", personId: "jodian", startDate: "2026-10-26", endDate: "2026-10-27", state: "requested" });
+    await db.insert(t.inboxItems).values([
+      { id: "ib-clear", ownerId: "alicia", causeKey: "confirm_clear:br-feed-blocker", episode: 1, state: "open", createdAt: at(10) },
+      { id: "ib-dep", ownerId: "alicia", causeKey: "dependency_due:br-feed-dependency", episode: 1, state: "open", createdAt: at(11) },
+      { id: "ib-leave", ownerId: "alicia", causeKey: "leave_impact:lv-jodian@forager", episode: 1, state: "open", createdAt: at(12) },
+    ]);
+    const { answer } = await ask("alicia", "What needs a decision from me?");
+    expect(answer.cards.map((c) => c.tag)).toEqual(["Status you set", "Blocker resolved?", "Dependency due", "Leave"]);
+    expect(answer.cards[1].actions?.map((a) => a.act)).toEqual(["resolve"]);
+    // D6: with someone else the admin who decides it, the same leave only asks her to plan cover
+    await db.update(t.groups).set({ ownerId: "andre" }).where(eq(t.groups.id, "g-forager"));
+    expect((await ask("alicia", "What needs a decision from me?", 31)).answer.cards.map((c) => c.tag)).toEqual(["Status you set", "Blocker resolved?", "Dependency due"]);
+  });
+
   it("P10: only their own, on projects they read; a named project narrows it", async () => {
     await reportBraidEntry(as("jodian", 10), "forager", { kind: "risk", title: "Pilot buyers may not reply in time" });
     expect((await ask("andre", "What needs a decision from me?")).answer.text).toBe("Nothing waits for your decision right now.");
@@ -239,6 +293,19 @@ describe("at_risk_week: what is at risk this week on their projects", () => {
       ["Buyer pilot · Release 1", "Forager 2.0: forecast Tue 3 Nov, later than its target Fri 30 Oct"],
       ["Store sales feed access", "Forager 2.0: 1 report, since 14 Oct"],
     ]);
+  });
+
+  it("someone in no projects is told so, as portfolio tells them", async () => {
+    expect((await ask("kyle", "What's at risk this week?")).answer.text).toBe("You are not in any projects yet.");
+    expect((await ask("kyle", "Which projects are off track?")).answer.text).toBe("You are not in any projects yet.");
+  });
+
+  it("phase K: once its per-viewer query is built, openSignals reads it", () => {
+    // The hook returns none until phase K lands. At integration, wire signalsFor in, and add a test where
+    // an open signal raised to the asker is listed and one they cannot see is not
+    const built = existsSync(fileURLToPath(new URL("./signals.ts", import.meta.url)));
+    const hook = readFileSync(fileURLToPath(new URL("./answers/at-risk-week.ts", import.meta.url)), "utf8");
+    expect(!built || /signalsFor\(/.test(hook)).toBe(true);
   });
 
   it("a named project with nothing at risk says so", async () => {
@@ -274,7 +341,7 @@ describe("portfolio: which projects are off track, worst first", () => {
     await db.insert(t.groupMembers).values({ groupId: "g-gq", personId: "exec" });
     await db.insert(t.projectMemberships).values({ projectId: "gq", personId: "exec", state: "member", role: "member" });
     const { answer } = await ask("exec", "Which projects are off track?");
-    expect(answer).toMatchObject({ text: "GQ & Academy is No target yet.", cards: [{ title: "GQ & Academy" }] });
+    expect(answer).toMatchObject({ text: "GQ & Academy has no target yet.", cards: [{ title: "GQ & Academy", tag: "No target yet" }] });
   });
 });
 
@@ -319,5 +386,14 @@ describe("who_free: who can pick up a piece of work (phase H's rule, CD9)", () =
     const next = await ask("alicia", "and #160?", 31, first.conversationId);
     expect(next.row.question).toMatchObject({ topic: "who_free" });
     expect(titles(next.answer)).toEqual(["Kemar Brown"]);
+  });
+
+  it("every teammate is read in one go, exactly as one at a time (CD9, PP1)", async () => {
+    const now = at(7 * DAY);
+    const all = await peopleSeenBy(db, "andre", ["kemar", "jodian", "nobody"], now);
+    // Andre shares no project with Jodian, so she is not there, as a name nobody has is not
+    expect([...all.keys()]).toEqual(["kemar"]);
+    expect(all.get("kemar")).toEqual(await personSeenBy(db, "andre", "kemar", now));
+    expect(await personSeenBy(db, "andre", "jodian", now)).toBeNull();
   });
 });

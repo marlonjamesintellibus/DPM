@@ -7,13 +7,13 @@ import type { Topic } from "./topic";
 
 /** The work after the words that ask who could take it: "#151", "the store feed". */
 const FREE = new RegExp(
-  String.raw`\b(?:who\s+(?:can|could|will|would|is free to|is able to|has time to|has room to|has capacity to)|who's\s+(?:free to|able to)|a who\s+(?:can|could|fi))\s+(?:pick up|pick it up|take on|take over|take|tek|cover|help with|work on|handle)\b\s*(.*?)[?.!]*$`,
+  String.raw`\b(?:who\s+(?:can|could|would|is free to|is able to|has time to|has room to|has capacity to)|who's\s+(?:free to|able to)|a who\s+(?:can|could|fi))\s+(?:pick up|pick it up|take on|take over|take|tek|cover|help with|work on|handle)\b\s*(.*?)[?.!]*$`,
 );
 
 export const whoFree = {
   id: "who_free",
   // "Who can pick up #151?", "Who could take the store feed?", "Who's free?", "Who has time to cover #152?".
-  // Phase R: "A who can tek #151?"
+  // Phase R: "A who can tek #151?". Not "Who will work on #151?", which asks whose it is (people, PP5)
   rule: new RegExp(`${FREE.source}|\\bwho(?:'s| is| are)\\s+free\\b|\\bwho has (?:time|room|capacity|bandwidth)\\b`),
   prompt: "who on the team could pick up a piece of work, with how much each has",
   suggest: ["What's due this week?", "What's blocked?"],

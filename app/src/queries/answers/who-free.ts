@@ -8,7 +8,7 @@ import type { Conn } from "../../db/conn";
 import { followUpRest } from "../../domain/question";
 import { asThing, ownedMatches } from "../../domain/topics/people";
 import { freePhrase } from "../../domain/topics/who-free";
-import { ownedOn, personSeenBy } from "../people";
+import { ownedOn, peopleSeenBy } from "../people";
 import { projectReader, todayIn, type ProjectWorkItem } from "../project";
 import { placesOf } from "./people";
 import { capped, counted, dayDate, projectsAsked, workTitle, type AnswerBuilder, type Body, type DraftCard } from "./shared";
@@ -62,10 +62,9 @@ async function teammates(conn: Conn, viewerId: string, project: { id: string; na
     ? `${workTitle(work)} on ${project.name} is ${ownerId === viewerId ? "yours" : work.owner ? `${work.owner.name}'s` : "nobody's yet"}.`
     : null;
   const cards: DraftCard[] = [];
-  for (const id of ids) {
-    // Phase H's rule: only what the two share (CD9); they are on this project, so they share it
-    const seen = await personSeenBy(conn, viewerId, id, now);
-    if (!seen) continue;
+  // Phase H's rule: only what the two share (CD9); they are on this project, so they share it. Read once
+  // for every teammate
+  for (const seen of (await peopleSeenBy(conn, viewerId, ids, now)).values()) {
     const late = seen.work.filter(({ w }) => !!w.dueDate && w.dueDate < today).length;
     cards.push({
       title: seen.person.name,
