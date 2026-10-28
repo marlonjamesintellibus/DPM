@@ -7,6 +7,7 @@ import { loadBraidLog, membersOf } from "../db/records";
 import * as t from "../db/schema";
 import { config } from "../domain/config";
 import { dateInZone, type IsoDate } from "../domain/dates";
+import type { BraidEntryRecord, BraidEntryState, BraidLog } from "../domain/machines/braid-entry";
 import { LIVE_LEAVE } from "../domain/machines/leave";
 import { signalKey, signalRecipients, type SignalMemory, type SignalRecord } from "../domain/machines/signal";
 import { ownerCheckText, signalConditions, signalText, type SignalCondition, type SignalWorld } from "../domain/signals";
@@ -176,7 +177,33 @@ export type SignalView = {
 };
 
 /** Risk states a signal can be added to: still waiting or on the log, not ended. */
-const COVERING = ["proposed", "more_info", "open", "mitigating"];
+export const COVERING: readonly BraidEntryState[] = ["proposed", "more_info", "open", "mitigating"];
+
+/**
+ * SG5: the open risk that already covers a signal, if any: a risk filed from an earlier signal on the same
+ * subject, or one linked to the blocker it is about. Read for the card and read again when Accept runs, so a
+ * risk that closed or was declined since the card was shown is a conflict, never a silent add (M16, E83).
+ */
+export async function coveringRisks(conn: Conn, projectId: string, log: BraidLog): Promise<(r: Pick<SignalRow, "rule" | "subjectType" | "subjectId">) => BraidEntryRecord | undefined> {
+  const earlierSignals = await conn
+    .select({ id: t.signals.id, rule: t.signals.rule, subjectId: t.signals.subjectId })
+    .from(t.signals)
+    .where(and(eq(t.signals.projectId, projectId), eq(t.signals.state, "accepted")));
+  const signalSources = earlierSignals.length
+    ? await conn
+        .select({ entryId: t.braidSources.entryId, signalId: t.braidSources.signalId })
+        .from(t.braidSources)
+        .where(and(inArray(t.braidSources.signalId, earlierSignals.map((s) => s.id)), isNull(t.braidSources.withdrawnAt)))
+    : [];
+  const risks = Object.values(log).filter((e) => e.kind === "risk" && COVERING.includes(e.state));
+  return (r) => {
+    const before = new Set(earlierSignals.filter((s) => s.rule === r.rule && s.subjectId === r.subjectId).map((s) => s.id));
+    return (
+      risks.find((e) => signalSources.some((s) => s.entryId === e.id && s.signalId && before.has(s.signalId))) ??
+      (r.subjectType === "braid_entry" ? risks.find((e) => e.links.some((l) => l.entryId === r.subjectId)) : undefined)
+    );
+  };
+}
 
 /**
  * The raised signals of one inbox item (a project and a day, SG10) that are raised to the viewer now and still
@@ -199,25 +226,7 @@ export async function signalsFor(conn: Conn, viewerId: string, projectId: string
   const mine = rows.filter((r) => signalRecipients(signalOf(r), members, log, { approversNeeded: project.decisionApprovers }).includes(viewerId) && held.has(signalKey(r)));
   if (!mine.length) return [];
 
-  // SG5: a risk filed from an earlier signal on the same subject, or one linked to the blocker it is about
-  const earlierSignals = await conn
-    .select({ id: t.signals.id, rule: t.signals.rule, subjectId: t.signals.subjectId })
-    .from(t.signals)
-    .where(and(eq(t.signals.projectId, projectId), eq(t.signals.state, "accepted")));
-  const signalSources = earlierSignals.length
-    ? await conn
-        .select({ entryId: t.braidSources.entryId, signalId: t.braidSources.signalId })
-        .from(t.braidSources)
-        .where(and(inArray(t.braidSources.signalId, earlierSignals.map((s) => s.id)), isNull(t.braidSources.withdrawnAt)))
-    : [];
-  const covering = (r: SignalRow) => {
-    const before = new Set(earlierSignals.filter((s) => s.rule === r.rule && s.subjectId === r.subjectId).map((s) => s.id));
-    const risks = Object.values(log).filter((e) => e.kind === "risk" && COVERING.includes(e.state));
-    return (
-      risks.find((e) => signalSources.some((s) => s.entryId === e.id && s.signalId && before.has(s.signalId))) ??
-      (r.subjectType === "braid_entry" ? risks.find((e) => e.links.some((l) => l.entryId === r.subjectId)) : undefined)
-    );
-  };
+  const covering = await coveringRisks(conn, projectId, log);
   const people = await peopleById(conn, mine.map((r) => r.earlier?.by));
 
   return mine

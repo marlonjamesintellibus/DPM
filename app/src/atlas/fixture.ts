@@ -9,7 +9,28 @@ import { ruleCommands } from "../domain/acting";
 import { ruleQuestion } from "../domain/question";
 import { AtlasReadFailed, type Extractor } from "./extractor";
 
-const RECORDINGS = new Map<string, readonly RawProposal[]>([[KEMAR_NOTE, KEMAR_PROPOSALS]]);
+/**
+ * Phase K's story steps: Kemar says the store feed is still blocked, a report on the blocker already on the
+ * log (M16 same as). Said after Alicia resolved it, it reopens it (S14): a repeated blocker Atlas notices on save.
+ */
+export const FEED_STILL_BLOCKED = "The Sprouts store feed is still blocked for me too.";
+const FEED_STILL_BLOCKED_PROPOSALS: readonly RawProposal[] = [
+  {
+    kind: "braid_same",
+    projectId: "forager",
+    routingReason: { basis: "target", evidence: "Store sales feed access", label: "Same subject as #151" },
+    braidKind: "blocker",
+    matchEntryId: "br-feed-blocker",
+    quote: "The Sprouts store feed is still blocked for me too",
+    confidence: "high",
+    rationale: "The same store feed blocker: add them as a source",
+  },
+];
+
+const RECORDINGS = new Map<string, readonly RawProposal[]>([
+  [KEMAR_NOTE, KEMAR_PROPOSALS],
+  [FEED_STILL_BLOCKED, FEED_STILL_BLOCKED_PROPOSALS],
+]);
 
 export function createFixtureExtractor(recordings: ReadonlyMap<string, readonly RawProposal[]> = RECORDINGS): Extractor {
   return {

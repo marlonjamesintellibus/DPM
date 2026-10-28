@@ -11,7 +11,7 @@ import { getInbox } from "../queries/inbox";
 import { signalsFor } from "../queries/signals";
 import { seededDb } from "../test/seeded-db";
 import type { RawProposal } from "../domain/atlas-checks/types";
-import { decideBraidEntry, reportBraidEntry, runBraidReminders } from "./braid";
+import { decideBraidEntry, reportBraidEntry, resolveBraidEntry, runBraidReminders } from "./braid";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./capture";
 import { CommandRefused, StaleVersion } from "./core";
 import { acceptSignal, detectSignals, dismissSignal, runSignalTimers, setProjectPaused, stillGoing } from "./signals";
@@ -163,6 +163,51 @@ describe("ACCEPT and DISMISS (M29, M15)", () => {
     await expect(acceptSignal(as("alicia", "2026-10-28", 10), last.id, { sameAs: "br-feed-blocker" })).rejects.toThrow(/cannot be added to that risk/);
   });
 
+  it("SG5, E83: the risk the card offered was closed before the tap: a conflict; nothing is added or remembered", async () => {
+    await nightly("2026-10-21");
+    const first = await acceptSignal(as("alicia", "2026-10-21", 10), (await latest("quiet_project", "forager")).id);
+    await nightly("2026-10-23");
+    const again = await latest("quiet_project", "forager");
+    const [shown] = await view("alicia", "2026-10-23", "quiet_project");
+    expect(shown.sameAs?.id).toBe(first.entryId);
+    await resolveBraidEntry(as("alicia", "2026-10-23", 10), first.entryId, "closed");
+
+    await expect(acceptSignal(as("alicia", "2026-10-23", 11), again.id, { seenVersion: again.version, sameAs: first.entryId })).rejects.toThrow(
+      '"Forager 2.0 may have stalled" is closed now, so nothing was added to it. Accept this as a new risk, or dismiss it',
+    );
+    expect(await latest("quiet_project", "forager")).toMatchObject({ id: again.id, state: "raised", version: again.version });
+    const [risk] = await db.select().from(t.braidEntries).where(eq(t.braidEntries.id, first.entryId));
+    expect(risk.state).toBe("closed");
+    expect(await db.select().from(t.braidSources).where(eq(t.braidSources.entryId, first.entryId))).toHaveLength(1);
+    expect(await memory("quiet_project", "forager")).toMatchObject({ answer: "accepted", level: 1 });
+
+    // The card offers no risk now; accepting it files a new one
+    const [now] = await view("alicia", "2026-10-23", "quiet_project");
+    expect(now).toMatchObject({ id: again.id, sameAs: null });
+    const r = await acceptSignal(as("alicia", "2026-10-23", 11), again.id, { seenVersion: now.version });
+    expect(r.entryId).not.toBe(first.entryId);
+    expect(await memory("quiet_project", "forager")).toMatchObject({ answer: "accepted", level: 2 });
+  });
+
+  it("SG5, E85: a risk declined after the card was shown is never sent back to be decided again by a tap", async () => {
+    await reports("br-feed-blocker", [
+      ["kemar", "2026-10-15T13:58:00Z"],
+      ["jodian", "2026-10-15T14:30:00Z"],
+    ]);
+    const { entry } = await reportBraidEntry(as("kemar", "2026-10-20"), "forager", { kind: "risk", title: "Sprouts may not open the feed" });
+    await db.insert(t.braidLinks).values({ entryId: entry.id, otherEntryId: "br-feed-blocker", relation: "related" });
+    await detectSignals({ db, now: on("2026-10-20", 10) }, "forager");
+    const [shown] = await view("alicia", "2026-10-20", "repeated_blocker");
+    expect(shown.sameAs?.id).toBe(entry.id);
+    await decideBraidEntry(as("alicia", "2026-10-20", 11), entry.id, { type: "decline", reason: "Kyle confirmed access" });
+
+    await expect(acceptSignal(as("alicia", "2026-10-20", 12), shown.id, { seenVersion: shown.version, sameAs: entry.id })).rejects.toThrow('"Sprouts may not open the feed" is declined now');
+    const [risk] = await db.select().from(t.braidEntries).where(eq(t.braidEntries.id, entry.id));
+    expect(risk.state).toBe("declined");
+    expect(await latest("repeated_blocker", "br-feed-blocker")).toMatchObject({ id: shown.id, state: "raised" });
+    expect(await memory("repeated_blocker", "br-feed-blocker")).toBeUndefined();
+  });
+
   it("SG5: a risk linked to the blocker a signal is about covers it", async () => {
     await reports("br-feed-blocker", [
       ["kemar", "2026-10-15T13:58:00Z"],
@@ -209,6 +254,21 @@ describe("ACCEPT and DISMISS (M29, M15)", () => {
     const refreshed = await latest("quiet_project", "forager");
     expect(refreshed).toMatchObject({ id: s.id, level: 2, version: s.version + 1 });
     await expect(dismissSignal(as("alicia", "2026-10-23", 10), s.id, "fine", { seenVersion: s.version })).rejects.toThrow(StaleVersion);
+  });
+
+  it("SG6, rule 5: a signal whose stored level is behind the facts is answered with the version the card shows, also after a refusal", async () => {
+    await nightly("2026-10-21");
+    const s = await latest("quiet_project", "forager");
+    // 23 Oct, before any run: the 21 Oct card shows the facts as they are now, and the stored version
+    const [shown] = await signalsFor(db, "alicia", "forager", "2026-10-21", on("2026-10-23"));
+    expect(shown).toMatchObject({ id: s.id, version: s.version, text: "No update on Forager 2.0 from anyone for 6 working days, since 15 Oct" });
+    expect(await latest("quiet_project", "forager")).toMatchObject({ level: 1, version: s.version });
+    // A refusal rolls back the answer's REFRESH with everything else; the retry with the same version still runs
+    await expect(acceptSignal(as("alicia", "2026-10-23", 10), s.id, { seenVersion: shown.version, sameAs: "br-pipeline-risk" })).rejects.toThrow(CommandRefused);
+    expect(await latest("quiet_project", "forager")).toMatchObject({ level: 1, version: s.version });
+    const r = await dismissSignal(as("alicia", "2026-10-23", 10), s.id, "Between sprints", { seenVersion: shown.version });
+    expect(r.signal).toMatchObject({ state: "dismissed", level: 2 });
+    expect(await memory("quiet_project", "forager")).toMatchObject({ answer: "dismissed", level: 2 });
   });
 
   it("SG3: dismissed, and it stays the same: not raised again within the snooze, nor after it", async () => {
@@ -343,6 +403,36 @@ describe("on save", () => {
     expect(await latest("repeated_blocker", "br-feed-blocker")).toMatchObject({ state: "raised", raisedOn: "2026-10-22" });
     // #151 has been In progress since 15 Oct but is Blocked now, so it is not stale
     expect(await signal("stale_work", "wi-151")).toEqual([]);
+  });
+
+  it("repeated blocker: Alicia resolves the feed blocker, and Kemar's saved update reports it again (S14): raised on that save", async () => {
+    await resolveBraidEntry(as("alicia", "2026-10-20", 10), "br-feed-blocker");
+    await detectSignals({ db, now: on("2026-10-20", 11) }, "forager");
+    expect(await signal("repeated_blocker", "br-feed-blocker")).toEqual([]); // one reporter, and not reported again yet
+
+    const ctx = as("kemar", "2026-10-22");
+    const proposal: RawProposal = {
+      kind: "braid_same",
+      projectId: "forager",
+      routingReason: { basis: "target", evidence: "store feed", label: "Same subject" },
+      braidKind: "blocker",
+      matchEntryId: "br-feed-blocker",
+      quote: "Still no access to the store sales feed",
+      confidence: "high",
+      rationale: "Reported again",
+    };
+    const { captureId } = await createCapture(ctx, { channel: "app", kind: "text", text: "Still no access to the store sales feed.", messageAt: ctx.now, receivedAt: ctx.now, messageId: "save-reopen" });
+    const { items } = await proposeItems(ctx, captureId, [proposal]);
+    await openReview(ctx, captureId);
+    for (const i of items) if (i.state === "needs_ok") await decideExtraction(ctx, i.id, { type: "accept" });
+    expect((await saveCapture(ctx, captureId)).outcome).toBe("saved");
+
+    // The save's own audit row (resolved to reported) is what the rule reads: two reporters, but reopened
+    const [blocker] = await db.select().from(t.braidEntries).where(eq(t.braidEntries.id, "br-feed-blocker"));
+    expect(blocker.state).toBe("reported");
+    expect(await latest("repeated_blocker", "br-feed-blocker")).toMatchObject({ state: "raised", raisedOn: "2026-10-22", stage: "leads" });
+    const [shown] = await view("alicia", "2026-10-22", "repeated_blocker");
+    expect(shown.text).toBe('The blocker "Store sales feed access" was reported again on 22 Oct after it was resolved');
   });
 });
 

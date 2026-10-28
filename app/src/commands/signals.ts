@@ -12,7 +12,8 @@ import * as t from "../db/schema";
 import { applyToLog, draftEntry, type BraidEvent } from "../domain/machines/braid-entry";
 import { applySignalEvent, LIVE_SIGNAL, signalKey, signalRecipients, type SignalEvent, type SignalRecord } from "../domain/machines/signal";
 import { riskTitle } from "../domain/signals";
-import { conditionsNow, signalOf, type SignalRow } from "../queries/signals";
+import { ENTRY_STATE_LABEL } from "../queries/project";
+import { conditionsNow, COVERING, coveringRisks, signalOf, type SignalRow } from "../queries/signals";
 import { audit, CommandRefused, moved, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProject, policyOf, type Evaluation } from "./evaluate";
 import { persistSignal, rememberSignal, runSignalRules } from "./signal-rules";
@@ -37,7 +38,9 @@ async function firstNameOf(tx: Tx, personId: string | null): Promise<string> {
 /**
  * The signal as it is now, for an answer. CONDITION_GONE is checked when it runs, so nobody files a risk
  * on trouble that went away since the card was shown. SG6: a signal someone already answered is refused,
- * and the person is told who answered it.
+ * and the person is told who answered it. The seen version is compared with the row as it was stored, before
+ * this run's rules: the card already shows the facts as they are now, and a REFRESH made here is rolled back
+ * with any refusal, so comparing after it would refuse every retry of a signal whose level was behind.
  */
 async function loadForAnswer(tx: Tx, ctx: CommandCtx, signalId: string, opts: SignalAnswerOpts): Promise<SignalRow> {
   const [first] = await tx.select().from(t.signals).where(eq(t.signals.id, signalId));
@@ -57,7 +60,7 @@ async function loadForAnswer(tx: Tx, ctx: CommandCtx, signalId: string, opts: Si
     default:
       throw new CommandRefused("this signal is closed");
   }
-  if (opts.seenVersion !== undefined && opts.seenVersion !== row.version) throw new StaleVersion(`signal ${signalId}`);
+  if (opts.seenVersion !== undefined && opts.seenVersion !== first.version) throw new StaleVersion(`signal ${signalId}`);
   return row;
 }
 
@@ -78,6 +81,19 @@ export function acceptSignal(ctx: CommandCtx, signalId: string, opts: SignalAnsw
       conditionsNow(tx, row.projectId, today),
     ]);
     const policy = policyOf(project);
+    // SG5, E83: the risk it is added to is checked again now. One that closed, was declined or merged since the
+    // card was shown is a conflict: nothing is added, the signal stays raised, and the person decides again
+    if (opts.sameAs) {
+      const offered = (await coveringRisks(tx, row.projectId, log))(row);
+      if (offered?.id !== opts.sameAs) {
+        const entry = log[opts.sameAs];
+        throw new CommandRefused(
+          entry?.kind === "risk" && !COVERING.includes(entry.state)
+            ?`"${entry.title}" is ${ENTRY_STATE_LABEL[entry.state].toLowerCase()} now, so nothing was added to it. Accept this as a new risk, or dismiss it`
+            : "it cannot be added to that risk: it is not an open risk that covers this",
+        );
+      }
+    }
     const actor = { id: ctx.actorId, role: members.find((m) => m.id === ctx.actorId)?.role ?? null };
     const record = signalOf(row);
     const facts = held.get(signalKey(row))?.facts ?? record.facts;
