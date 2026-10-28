@@ -308,6 +308,25 @@ describe("edge cases SU1 to SU10", () => {
     expect(review.setAside.unused.map((u) => u.text)).toEqual(["Spent the morning pairing with Jodian on the backfill"]);
   });
 
+  it("W3-D4: with no model connected, the taps are kept and what he typed waits in the review, set aside; nothing is lost", async () => {
+    const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    await tap("kemar", answer("done"), 1);
+    await say("kemar", "Spent the morning pairing with Jodian on the backfill", 2, start.conversationId, noModel);
+    // The fixture has no recording of these words: every try fails, as with no OPENROUTER_API_KEY
+    const done = await tap("kemar", { act: "stop" }, 3, createFixtureExtractor());
+    expect(await capture(done.composed!)).toMatchObject({ state: "proposed", tries: 3 });
+    expect((await items(done.composed!)).map((i) => [i.draft.target?.id, i.value, i.state])).toEqual([["wi-145", "done", "pre_accepted"]]);
+    const review = (await getReview(db, "kemar", done.composed!)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(review.setAside.unused.map((u) => u.text)).toEqual(["Spent the morning pairing with Jodian on the backfill"]);
+  });
+
+  it("W3-D4: a standup with no taps still fails as any message does when Atlas cannot read it", async () => {
+    const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    await say("kemar", "Spent the morning pairing with Jodian on the backfill", 1, start.conversationId, noModel);
+    const done = await tap("kemar", { act: "stop" }, 2, createFixtureExtractor());
+    expect(await capture(done.composed!)).toMatchObject({ state: "failed" });
+  });
+
   it("SU5: a voice note in the Atlas chat answers like typed words, once transcribed", async () => {
     const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor(), { atlasChatId: "dm" });
     await say("kemar", "Done", 1, start.conversationId, noModel, { kind: "voice" });

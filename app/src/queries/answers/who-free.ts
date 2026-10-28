@@ -72,6 +72,7 @@ async function teammates(conn: Conn, viewerId: string, project: { id: string; na
         counted(seen.work.length, "open work item", "open work items"),
         late ? `${late} past due` : "none past due",
         seen.onLeaveUntil ? `on leave until ${dayDate(seen.onLeaveUntil)}` : null,
+        seen.leaveAhead ? `away ${dayDate(seen.leaveAhead.start)} to ${dayDate(seen.leaveAhead.end)}` : null,
       ]
         .filter(Boolean)
         .join(", "),

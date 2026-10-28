@@ -187,7 +187,7 @@ asked ──capture expires or is rejected──▶ closed
 | CL5 | One of the options was cancelled or they left its project before they answered | That option is refused at answer time (rule 4); the others still work |
 | CL6 | The capture expires (7 days) | Closed with it |
 | CL7 | Voice message | Same: the question is asked in text after the transcript |
-| CL8 | No model connected | No clarification (the rule path makes no proposals) |
+| CL8 | No model connected | No item clarification (the rule path makes no proposals). A reply DPM's own rule reads as deciding 2 or 3 answer lines is still asked about (CD39) |
 
 ### Model check (27 Oct 2026): fix before building
 
@@ -197,7 +197,7 @@ asked ──capture expires or is rejected──▶ closed
 
 ### Built (wave 3)
 
-See `atlas-conversational-wave-3.md`. M21 with the model check's fixes: own chat only (by `atlasChatId`), 2 or 3 options, a line's question closes on its 2-hour timer. It covers projects, vague updates (`targetOptions`) and answer lines, and replaces B's AC6 and AC7 text. Typed answers are read by a DPM rule. Waiting for review: W3-D1 (line questions with no model), W3-D2 (one line), W3-D12 (questions with 2 or 3 fits).
+See `atlas-conversational-wave-3.md`. M21 with the model check's fixes: own chat only (by `atlasChatId`), 2 or 3 options, a line's question closes on its 2-hour timer. It covers projects, vague updates (`targetOptions`) and answer lines, and replaces B's AC6 and AC7 text. Typed answers are read by a DPM rule. Decided: CD39 (line questions with no model), CD40 (one line), CD50 (questions with 2 or 3 fits wait for wave 4).
 
 ## 7. Phase E. Commitments
 
@@ -373,12 +373,12 @@ Default proposed: a viewer sees another person's **work items, milestones and BR
 | PP4 | Asking about yourself by name | my_work |
 | PP5 | "Who owns the store feed?" | The owner of the matching record or entry, on readable projects |
 | PP6 | "Is Kemar overloaded?" | Facts only (count of open items, how many past due); no judgement |
-| PP7 | The person is on leave | Their work, and "on leave until" where the project shows it |
+| PP7 | The person is on leave | Their work, and "on leave until" where the project shows it; to the same viewers, the next leave decided ("away Mon 26 Oct to Fri 30 Oct", CD43) |
 | PP8 | Asking about someone's updates or messages | Never: captures are their author's (M1) |
 
 ### Built (wave 3)
 
-See `atlas-conversational-wave-3.md`. Topic `people` under CD9, one list in `queries/people.ts` that "Who owns …" also reads. In a follow-up, the newest words decide. Waiting for review: W3-D5 (upcoming leave for leads), W3-D6 (owners of closed records), W3-D12 (PP2 as a clarification).
+See `atlas-conversational-wave-3.md`. Topic `people` under CD9, one list in `queries/people.ts` that "Who owns …" also reads. In a follow-up, the newest words decide. Decided: CD43 (PMs and Leads see the next leave, built), CD44 (owners of closed records are not named), CD50 (PP2 as a clarification in wave 4).
 
 ## 11. Phase I. Atlas in the project group
 
@@ -496,7 +496,7 @@ composed ──▶ one capture (M1, M2) from the answers, each read with its que
 
 ### Built (wave 3)
 
-See `atlas-conversational-wave-3.md`. M28 started by the person. Each question keeps what it showed (`saw`, SU3), questions and commands typed mid-standup run as normal (SU4), and the review hides lines about projects the person left (P10). Scheduled starts are drawn and model-checked, but nothing schedules one until phase F. Waiting for review: W3-D3 (CD12 for a standup the person starts), W3-D4 (taps kept with no model).
+See `atlas-conversational-wave-3.md`. M28 started by the person. Each question keeps what it showed (`saw`, SU3), questions and commands typed mid-standup run as normal (SU4), and the review hides lines about projects the person left (P10). Scheduled starts are drawn and model-checked, but nothing schedules one until phase F. Decided: CD41 (a standup the person starts asks from all open work), CD42 (taps kept when Atlas cannot read the typed answers, built).
 
 ## 13. Phase K. Signals
 
@@ -550,7 +550,7 @@ raised ──TIMER signalExpiryDays──▶ expired                            
 
 ### Built (wave 3)
 
-See `atlas-conversational-wave-3.md`. M29 with six rules, levels in steps, Accept through M15 with the covering risk checked again at the tap, and pausing by a PM (CD13). The "Atlas noticed" inbox item, Accept, Add to and Dismiss are in the browser story. Waiting for review: W3-D8 (Accept files an open risk), W3-D9 (pausing PM only), W3-D10 (no clock override for the story).
+See `atlas-conversational-wave-3.md`. M29 with six rules, levels in steps, Accept through M15 with the covering risk checked again at the tap, and pausing by a PM (CD13). The "Atlas noticed" inbox item, Accept, Add to and Dismiss are in the browser story. Decided: CD46 (Accept files an open risk), CD47 (pausing is the PM's), CD48 (no clock override for the story).
 
 ## 14. Phase L. Undo, "why did you file that?", and corrections
 
@@ -686,7 +686,7 @@ New topics, answered only where the asker holds the role:
 
 ### Built (wave 3)
 
-See `atlas-conversational-wave-3.md`. Topics `not_updated` (saved updates only), `my_decisions`, `at_risk_week` (with K's signals), `portfolio` and `who_free`. The lead digest waits on phase F. An executive's whole-org view waits on KB F16. Waiting for review: W3-D7 (unsaved updates don't count).
+See `atlas-conversational-wave-3.md`. Topics `not_updated` (saved updates only), `my_decisions`, `at_risk_week` (with K's signals), `portfolio` and `who_free`. The lead digest waits on phase F. An executive's whole-org view waits on KB F16. Decided: CD45 (unsaved updates don't count); CD50 (the welcome names these questions to PMs and Leads, built).
 
 ## 17. Phase O. Meetings
 
@@ -805,7 +805,7 @@ A new topic `explain_project`: "What is Forager?", "Explain Store Insights", "I'
 
 ### Built (wave 3)
 
-See `atlas-conversational-wave-3.md`. Topic `explain_project`; the client view needs `project_contacts.client_view` and a connected group. EX5 still says "Say it again with its name", and EX6 waits on phase I. Waiting for review: W3-D11 (who turns the client view on), W3-D12 (EX5 as a clarification).
+See `atlas-conversational-wave-3.md`. Topic `explain_project`; the client view needs `project_contacts.client_view` and a connected group. EX5 still says "Say it again with its name", and EX6 waits on phase I. Decided: CD49 (a PM turns the client view on, wave 4; releases show the target date), CD50 (EX5 as a clarification in wave 4).
 
 ## 20. Phase R. Jamaican English and Patois
 
@@ -970,3 +970,15 @@ Marlon asked for the best defaults to be chosen. Every DECIDE in this plan takes
 | CD36 | Does a reminder count as a change that refuses a chat card? (W2-D3) | No: only bookkeeping by a rule since the answer, and the card runs |
 | CD37 | May a PM or Lead approve a correction they proposed? (W2-D4) | Yes, the right checked when they approve |
 | CD38 | M31's "a person tied to a record" (W2-D5) | Dropped for now |
+| CD39 | CL8: may Atlas ask "which line?" with no model connected? (W3-D1) | Yes, when DPM's own rule reads the reply; no item is asked about without a model |
+| CD40 | AC6 with only one line that offers the act (W3-D2) | "I'm not sure which one you mean"; M21 needs 2 options |
+| CD41 | CD12 for a standup the person starts after a same-day update (W3-D3) | It asks about all their open work, as M28's START does |
+| CD42 | A standup's typed answers when Atlas cannot read them (W3-D4) | On the last try the taps are kept and the typed words wait in the review, set aside |
+| CD43 | May PMs and Leads see someone's upcoming leave? (W3-D5) | Yes, where they already see its impact: the next leave decided, when the person is not on leave today |
+| CD44 | "Who owns …" a done or closed record (W3-D6) | "Nothing open on your projects matches" (CD9's open list) |
+| CD45 | Does an unsaved update count for not_updated? (W3-D7) | No: only saved updates (rule 9) |
+| CD46 | Does accepting a signal file an open risk or a proposal? (W3-D8) | An open risk: only a PM or Lead accepts (M15) |
+| CD47 | May Leads pause signals on a project? (W3-D9) | No, the PM only |
+| CD48 | A clock override so the browser story shows SG2, SG8 and SG10 (W3-D10) | Not now; DB tests cover them |
+| CD49 | Who turns on a contact's client view, and what date a release shows (W3-D11) | A PM, from the project's contacts (wave 4); the target date |
+| CD50 | EX5, PP2 and the chat welcome (W3-D12) | Wave 4 extends M21 to questions with 2 or 3 fits; the welcome names the lead questions to PMs and Leads only |

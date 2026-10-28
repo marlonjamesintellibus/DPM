@@ -1,8 +1,8 @@
 # Atlas conversational plan: wave 3 (27 Oct 2026)
 
 **Goes with:** `atlas-conversational-plan.md` (phases D, H, J, K, N and Q) and `01-update-to-plan-machines.md` sections 15 to 20
-**Branch:** `atlas-conv/wave-3`, from main at `8ca0855`. Not merged into main. Nothing pushed.
-**Status:** built and checked; decisions W3-D1 to W3-D12 wait for review.
+**Branch:** `atlas-conv/wave-3`, from main at `8ca0855`. Nothing pushed.
+**Status:** built, checked and decided; merged into main.
 
 ## 1. What was built
 
@@ -18,7 +18,7 @@
 ### Checked
 
 - Each phase was built, checked by an agent that had not written it, and then fixed. The checks found 50 gaps, 17 of them must-fix: D 9 (2), J 7 (4), H 11 (4), N 11 (2), K 4 (1), Q 8 (4). Every must-fix gap is fixed with a test. So is every should-fix gap except those listed under "Not built yet".
-- On `atlas-conv/wave-3`, rerun by me: typecheck and lint are clean, and 1,878 unit tests pass (1,421 before). The integrator's runs: the browser story passes 27 of 27, and all 401 model-check rows match.
+- On `atlas-conv/wave-3`, rerun by me after the decisions: typecheck and lint are clean, 1,883 unit tests pass (1,421 before), and the browser story passes 28 of 28 (a new step checks the welcome for a PM and a member). The integrator's run: all 401 model-check rows match; the decisions changed no machine.
 - Full eval on `read-16`: 158 of 159. The only miss is `andre-decision` (D23, as before). Three cases passed with an extra item: `filler`, `ja-sen-it` and `ja-mi-a-go`.
 - Migrations `0014_clarifications`, `0015_standups`, `0016_signals` and `0017_client_view` come after main's `0013_undo_and_vocabulary`.
 
@@ -37,24 +37,30 @@
 - PROMPT_VERSION is `read-16`, with a comment naming what D, J, H, N and Q each added (K adds nothing to the prompt).
 - The three merges that needed conflicts resolved (`5574b24`, `fcef8d1`, `33630da`) have no Co-Authored-By line. Adding it would mean rewriting history, so it was left.
 
-## 2. Decisions for review
+## 2. Decisions (settled 27 Oct 2026, the recommended answers)
 
-Each row shows what was built. The recommended answer is in the last column.
+Each row shows what was built first and what was decided. The plan records them as CD39 to CD50.
 
-| # | Question | Built | Recommended |
+| # | Question | Built first | Decided |
 |---|---|---|---|
 | W3-D1 | CL8: with no model connected, may Atlas still ask "which line?" when a reply fits two answer lines? | Yes: DPM's own rule reads the reply, and the options are the asker's own lines | Keep. CL8 then reads "no item clarification without a model" |
 | W3-D2 | AC6 with only one line that offers the act | "I'm not sure which one you mean" | Keep. M21 needs 2 options, and a one-option question is a confirm card in disguise |
 | W3-D3 | CD12: a standup the person starts after a same-day update | Asks about all their open work, as the model's Start does. Saved changes are no longer open, so they are not asked about | Keep |
-| W3-D4 | A standup with typed answers when no model is connected | The composed read fails, and the tap answers are lost with it | Keep the tap proposals and leave the typed words for the review (rule 5: nothing lost). Not built yet; a small change |
-| W3-D5 | PP7: should PMs and Leads see someone's upcoming leave ("away 26 to 30 Oct")? | Only leave that is on today | Yes, for PMs and Leads, who already see it in the leave-impact inbox item. Not built yet |
+| W3-D4 | A standup with typed answers when no model is connected | The composed read fails, and the tap answers are lost with it | Keep the tap proposals and leave the typed words for the review (rule 5: nothing lost). Built |
+| W3-D5 | PP7: should PMs and Leads see someone's upcoming leave ("away 26 to 30 Oct")? | Only leave that is on today | Yes, for PMs and Leads, who already see it in the leave-impact inbox item. Built |
 | W3-D6 | "Who owns #142?" when #142 is done or closed | "Nothing open on your projects matches" (CD9's open list) | Keep |
 | W3-D7 | LD9: does an unsaved update count as "has updated"? | No: only saved updates count, and the words say "no update saved today". In the seed, Kemar's unsaved 8:58 note no longer counts | Keep (rule 9: the capture is its author's until saved) |
 | W3-D8 | K: does Accept file an open risk or a proposal? | An open risk: only a PM or Lead can accept, and their report goes straight onto the log (M15) | Keep |
 | W3-D9 | K: may Leads pause signals on a project? | PM only | Keep |
 | W3-D10 | K: a browser clock override so the story can show SG2, SG8 and SG10 | Not built; DB tests cover all three | Don't build now |
 | W3-D11 | Q: who turns a contact's client view on, and does a release show its target or its forecast? | Only the seed turns it on (Kyle on Forager). Releases show the target date | A PM turns it on from the project's contacts (a small command, wave 4). Keep the target date |
-| W3-D12 | Questions that need a choice: EX5 (two projects fit "what is …"), PP2 (two people fit "Kemar") and the chat welcome | Plain "Say it again with its name" answers. The welcome lists Q's and J's additions but not H's or N's | Wave 4 extends M21 to questions with 2 or 3 options. The welcome shows the lead questions to PMs and Leads only |
+| W3-D12 | Questions that need a choice: EX5 (two projects fit "what is …"), PP2 (two people fit "Kemar") and the chat welcome | Plain "Say it again with its name" answers. The welcome lists Q's and J's additions but not H's or N's | Wave 4 extends M21 to questions with 2 or 3 options. The welcome shows the lead questions to PMs and Leads only (built) |
+
+### Built for the decisions
+
+- **W3-D4:** on the read's last try, a standup with tap answers keeps them (`tapsOnly` in `commands/atlas.ts`), and what was typed waits in the review, set aside as not used. A standup with no taps still fails, as any message does.
+- **W3-D5:** `leaveAhead` in `domain/machines/leave.ts` gives the next leave decided. `peopleSeenBy` shows it to the same viewers as today's leave, and only when the person is not on leave today. "What is Kemar working on?" ends "Kemar Brown is away Mon 26 Oct to Fri 30 Oct.", and who_free's line says "away Mon 26 Oct to Fri 30 Oct".
+- **W3-D12:** the welcome names "what a teammate is working on" to everyone. A PM or Lead on a project they read now (`leadsAProject` in `queries/project.ts`) also sees the lead questions.
 
 ## 3. Corrections for the plan
 
@@ -71,6 +77,6 @@ Each row shows what was built. The recommended answer is in the last column.
 
 - Atlas starting a standup, the weekly lead digest, and signals as nudges: all wait on phase F.
 - EX6 (explaining a project in a group): waits on phase I.
-- W3-D4, W3-D5, W3-D11 (the switch) and W3-D12, if accepted.
+- W3-D11's switch for a contact's client view, and W3-D12's questions with 2 or 3 fits asked through M21: wave 4.
 - Usage numbers for D, H, J, K, N and Q (W6).
 - A "leave project" command (the SG9 test changes the membership row directly).

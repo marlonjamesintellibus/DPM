@@ -143,6 +143,12 @@ export async function projectReader(conn: Conn, viewerId: string): Promise<Proje
   return { world, orgTags, mayRead: (projectId) => isCandidate(viewerId, orgTags, projectId, world) };
 }
 
+/** W3-D12: whether the viewer is a PM or Lead on a project they read now, so the chat's welcome names the lead questions. */
+export async function leadsAProject(conn: Conn, viewerId: string): Promise<boolean> {
+  const { world, mayRead } = await projectReader(conn, viewerId);
+  return world.memberships.some((m) => m.personId === viewerId && m.state === "member" && (m.role === "pm" || m.role === "lead") && mayRead(m.projectId));
+}
+
 /**
  * For each source that came from a capture, the quote the viewer may read on this project, or null.
  * The item behind the source must be saved into this project (rule 9) and its span must be one of

@@ -193,3 +193,12 @@ export function onLeaveUntil(leaves: readonly LeaveRecord[], today: IsoDate): Is
   const away = leaves.filter((l) => AWAY.includes(l.state) && inside(today, l));
   return away.length ? away.map((l) => l.end).sort().at(-1)! : null;
 }
+
+/**
+ * W3-D5: the soonest leave decided and still ahead of today (approved, its handover under way or done),
+ * or null. As onLeaveUntil, a change still waiting on the admin is not their leave yet.
+ */
+export function leaveAhead(leaves: readonly LeaveRecord[], today: IsoDate): LeaveRange | null {
+  const ahead = leaves.filter((l) => CHANGEABLE.includes(l.state) && daysBetween(today, l.start) > 0).sort((a, b) => a.start.localeCompare(b.start));
+  return ahead.length ? { start: ahead[0].start, end: ahead[0].end } : null;
+}

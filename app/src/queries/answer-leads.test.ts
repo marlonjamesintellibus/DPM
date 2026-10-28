@@ -21,6 +21,7 @@ import { at, seededDb } from "../test/seeded-db";
 import { LEADS_ONLY, TODAY_ONLY } from "./answers/not-updated";
 import { FREE_FOR_WHAT } from "./answers/who-free";
 import { peopleSeenBy, personSeenBy } from "./people";
+import { leadsAProject } from "./project";
 
 let db: Db;
 let n = 0;
@@ -353,6 +354,17 @@ describe("portfolio: which projects are off track, worst first", () => {
   });
 });
 
+describe("W3-D12: the chat's welcome names the lead questions to a PM or Lead only", () => {
+  it("Alicia and Andre are PMs; Kemar and Jodian are members; a PM of a project they can no longer read is not", async () => {
+    expect(await leadsAProject(db, "alicia")).toBe(true);
+    expect(await leadsAProject(db, "andre")).toBe(true);
+    expect(await leadsAProject(db, "kemar")).toBe(false);
+    expect(await leadsAProject(db, "jodian")).toBe(false);
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.personId, "andre"), eq(t.projectMemberships.projectId, "insights")));
+    expect(await leadsAProject(db, "andre")).toBe(false);
+  });
+});
+
 describe("who_free: who can pick up a piece of work (phase H's rule, CD9)", () => {
   it("Alicia: the others on #151's project, with their open and past due work; not its owner, not her, not Kyle", async () => {
     const { row, answer } = await ask("alicia", "Who can pick up #151?");
@@ -370,6 +382,10 @@ describe("who_free: who can pick up a piece of work (phase H's rule, CD9)", () =
     expect(answer).toMatchObject({ wording: "rules" });
     expect(answer.cards).toMatchObject([{ title: "Kemar Brown", detail: "4 open work items, 3 past due, on leave until Fri 30 Oct" }]);
     expect(answer.text).not.toMatch(/best|should|free|available/i);
+  });
+
+  it("W3-D5: before Kemar's leave starts, Alicia sees its dates on his line", async () => {
+    expect((await ask("alicia", "Who can pick up #160?")).answer.cards).toMatchObject([{ title: "Kemar Brown", detail: "4 open work items, none past due, away Mon 26 Oct to Fri 30 Oct" }]);
   });
 
   it("what Kemar sees of Alicia is what they share, and nobody else is on Store Insights for Andre", async () => {

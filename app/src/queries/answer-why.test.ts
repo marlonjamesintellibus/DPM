@@ -357,7 +357,7 @@ describe("WY1 and WY8: what a why answer never says", () => {
   it("WY8: why about a person is not a why about a record; phase H says what they have, never a reason", async () => {
     const kemar = await ask("alicia", "Why is Kemar late?");
     expect(kemar.row.question).toMatchObject({ topic: "why" });
-    expect(kemar.answer.text).toBe(`${NOT_WHY}Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due.`);
+    expect(kemar.answer.text).toBe(`${NOT_WHY}Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.`);
     expect(kemar.answer.cards.map((c) => c.title)).toContain("#151 Store sales feed access");
     expect((await ask("kemar", "Why is Kyle so slow?")).answer.text).toBe(`${NOT_WHY}Kyle is an outside contact on Forager 2.0, tied to 1 thing there.`);
   });

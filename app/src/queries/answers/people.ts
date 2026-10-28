@@ -99,7 +99,7 @@ export async function aboutSomeone(conn: Conn, viewerId: string, question: Asked
   return { ...body, text: `${lead}${body.text}${after}` };
 }
 
-/** PP6: facts only, the counts and how many are past due; PP7: leave where the project shows it. */
+/** PP6: facts only, the counts and how many are past due; PP7 and W3-D5: leave, today's or the next, where the project shows it. */
 function whatTheyHave(seen: PersonSeen, now: Date): Body {
   const today = todayIn(now);
   const { person } = seen;
@@ -157,6 +157,7 @@ function whatTheyHave(seen: PersonSeen, now: Date): Body {
       ? `${person.name} is an outside contact ${where}${tiedCount ? `, tied to ${counted(tiedCount, "thing", "things")} there` : ""}.`
       : null,
     seen.onLeaveUntil ? `${person.name} is on leave until ${dayDate(seen.onLeaveUntil)}.` : null,
+    seen.leaveAhead ? `${person.name} is away ${dayDate(seen.leaveAhead.start)} to ${dayDate(seen.leaveAhead.end)}.` : null,
   ];
   return { text: sentences.filter(Boolean).join(" "), ...capped(cards, { label: `of ${person.name}'s`, href: "/projects" }) };
 }

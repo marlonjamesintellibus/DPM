@@ -3,8 +3,8 @@
 // milestones and BRAID entries they own, only on projects the two share: projects the viewer reads now
 // (getProject, P10) where the other is a current member or an outside contact. For an outside contact,
 // what they are tied to there (PP3). Never their captures, commitments, inbox, nudges or settings: nothing
-// here reads them (PP8). Leave shows only as the day it ends, and only where the project already shows
-// the viewer what that person's leave touches (D6: its PMs, Leads and admin). Someone who shares no
+// here reads them (PP8). Leave shows only as the day it ends, or the dates of the next one (W3-D5), and only
+// where the project already shows the viewer what that person's leave touches (D6: its PMs, Leads and admin). Someone who shares no
 // project with the viewer is not here at all, so they read exactly as a name nobody has (PP1).
 import { eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
@@ -12,7 +12,7 @@ import { leaveRecordOf } from "../db/records";
 import * as t from "../db/schema";
 import type { IsoDate } from "../domain/dates";
 import { isMember } from "../domain/machines/membership";
-import { leaveImpactOwners, onLeaveUntil } from "../domain/machines/leave";
+import { leaveAhead, leaveImpactOwners, onLeaveUntil, type LeaveRange } from "../domain/machines/leave";
 import { namesPerson } from "../domain/names";
 import { milestonesOf, projectsAsked, workOf } from "./answers/shared";
 import { projectReader, todayIn, type PersonRef, type ProjectBraidEntry, type ProjectMilestone, type ProjectReader, type ProjectView, type ProjectWorkItem } from "./project";
@@ -37,6 +37,8 @@ export type PersonSeen = {
   ties: { project: Project; tie: string; work: ProjectWorkItem[]; entries: ProjectBraidEntry[] }[];
   /** PP7: the last day of the leave they are on today, where a shared project shows the viewer its impact. */
   onLeaveUntil: IsoDate | null;
+  /** W3-D5: when they are not on leave today, the next leave decided, shown to the same viewers as onLeaveUntil. */
+  leaveAhead: LeaveRange | null;
 };
 
 /** Everyone the viewer shares a project with: the members and outside contacts of the projects they read now. */
@@ -104,7 +106,7 @@ export async function peopleSeenBy(conn: Conn, viewerId: string, personIds: read
       milestones: views.flatMap((v) => ownedOn(v).milestones.filter(theirs).map((m) => ({ project: of(v), m }))),
       entries: views.flatMap((v) => ownedOn(v).entries.filter(theirs).map((e) => ({ project: of(v), e }))),
       ties,
-      onLeaveUntil: leaveSeen(viewerId, person.id, projects.map((p) => p.id), now, reader, allLeave.filter((l) => l.personId === person.id)),
+      ...leaveOf(viewerId, person.id, projects.map((p) => p.id), now, reader, allLeave.filter((l) => l.personId === person.id)),
     });
   }
   return seen;
@@ -140,7 +142,7 @@ export async function leaveShownTo(
   const r = reader ?? (await projectReader(conn, viewerId));
   if (!showsLeave(viewerId, personId, projectIds, r)) return null;
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, personId));
-  return leaveSeen(viewerId, personId, projectIds, now, r, leave);
+  return leaveOf(viewerId, personId, projectIds, now, r, leave).onLeaveUntil;
 }
 
 /** PP7, D6: whether one of these projects shows the viewer what this person's leave touches. */
@@ -148,7 +150,10 @@ function showsLeave(viewerId: string, personId: string, projectIds: readonly str
   return leaveImpactOwners(personId, world).some((o) => o.ownerId === viewerId && projectIds.includes(o.projectId) && mayRead(o.projectId));
 }
 
-/** leaveShownTo, from the person's leave rows already read. */
-function leaveSeen(viewerId: string, personId: string, projectIds: readonly string[], now: Date, reader: ProjectReader, leave: (typeof t.leave.$inferSelect)[]): IsoDate | null {
-  return showsLeave(viewerId, personId, projectIds, reader) ? onLeaveUntil(leave.map(leaveRecordOf), todayIn(now)) : null;
+/** PP7 and W3-D5: the leave they are on today, or else the next one, as the viewer may see it. */
+function leaveOf(viewerId: string, personId: string, projectIds: readonly string[], now: Date, reader: ProjectReader, leave: (typeof t.leave.$inferSelect)[]): Pick<PersonSeen, "onLeaveUntil" | "leaveAhead"> {
+  if (!showsLeave(viewerId, personId, projectIds, reader)) return { onLeaveUntil: null, leaveAhead: null };
+  const records = leave.map(leaveRecordOf);
+  const until = onLeaveUntil(records, todayIn(now));
+  return { onLeaveUntil: until, leaveAhead: until ? null : leaveAhead(records, todayIn(now)) };
 }

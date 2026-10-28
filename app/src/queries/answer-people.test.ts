@@ -48,7 +48,7 @@ describe("what someone has, on projects the two share (CD9)", () => {
     const { row, answer } = await ask("alicia", "What is Kemar working on?");
     expect(row.state).toBe("answered");
     expect(row.question).toMatchObject({ topic: "people" });
-    expect(answer.text).toBe("Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due.");
+    expect(answer.text).toBe("Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.");
     // In my_work's order: In progress by due date, then To do
     expect(titles(answer)).toEqual(["#145 Google Trends connector", "#151 Store sales feed access", "#147 Trend scoring model", "#152 Store feed connector", "Trend model", "Store sales feed access"]);
     expect(answer.cards[0]).toMatchObject({ detail: "Forager 2.0: due Wed 21 Oct", tag: "In progress", href: "/projects/forager" });
@@ -60,7 +60,7 @@ describe("what someone has, on projects the two share (CD9)", () => {
 
   it("Andre shares only Store Insights with Kemar: only that, and nothing of Forager", async () => {
     const { answer } = await ask("andre", "What's on Kemar's plate?");
-    expect(answer.text).toBe("Kemar Brown has 1 open work item on Store Insights; none is past due.");
+    expect(answer.text).toBe("Kemar Brown has 1 open work item on Store Insights; none is past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.");
     expect(titles(answer)).toEqual(["#208 Weekly sales export"]);
   });
 
@@ -70,7 +70,7 @@ describe("what someone has, on projects the two share (CD9)", () => {
   });
 
   it("a named project the two share narrows it; one the person is not on says so", async () => {
-    expect((await ask("alicia", "What is Kemar working on in GQ?")).answer.text).toBe("Kemar Brown has nothing open on GQ & Academy.");
+    expect((await ask("alicia", "What is Kemar working on in GQ?")).answer.text).toBe("Kemar Brown has nothing open on GQ & Academy. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.");
     expect((await ask("alicia", "What is Jodian working on in GQ?")).answer.text).toBe("Jodian Taylor is not on GQ & Academy.");
   });
 
@@ -120,9 +120,9 @@ describe("PP1: someone the asker shares no project with reads as a name nobody h
 
   it("CV8: a follow-up that only says where keeps the person asked about before", async () => {
     const first = await ask("alicia", "What is Kemar working on?");
-    expect((await ask("alicia", "and on GQ?", 31, first.conversationId)).answer.text).toBe("Kemar Brown has nothing open on GQ & Academy.");
+    expect((await ask("alicia", "and on GQ?", 31, first.conversationId)).answer.text).toBe("Kemar Brown has nothing open on GQ & Academy. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.");
     expect((await ask("alicia", "what about Forager?", 32, first.conversationId)).answer.text).toBe(
-      "Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on Forager 2.0; none is past due.",
+      "Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on Forager 2.0; none is past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.",
     );
   });
 });
@@ -136,7 +136,7 @@ describe("PP2: a first name two shared people have", () => {
     expect((await ask("alicia", "What is Kemar Smith working on?")).answer.text).toBe("Kemar Smith has nothing open on Forager 2.0.");
     expect((await ask("alicia", "What is Jodian working on?")).answer.text).toBe("Jodian Taylor has 1 open work item on Forager 2.0; none is past due.");
     // Andre shares a project with Kemar Brown and Jodian Grant only
-    expect((await ask("andre", "What is Kemar working on?")).answer.text).toBe("Kemar Brown has 1 open work item on Store Insights; none is past due.");
+    expect((await ask("andre", "What is Kemar working on?")).answer.text).toBe("Kemar Brown has 1 open work item on Store Insights; none is past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.");
   });
 
   it("the reply the answer suggests, a follow-up by full name, settles it", async () => {
@@ -256,7 +256,7 @@ describe("PP6: facts only, never a judgement", () => {
   it("two people named: the first, and the answer says who was left out", async () => {
     const both = await ask("alicia", "What are Kemar and Jodian working on?");
     expect(both.answer.text).toBe(
-      "Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due. Ask about Jodian Taylor on their own.",
+      "Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct. Ask about Jodian Taylor on their own.",
     );
     // The asker named with someone: the other, and how to ask about their own
     const kemar = await ask("kemar", "What are Kemar and Jodian working on?");
@@ -268,7 +268,7 @@ describe("PP6: facts only, never a judgement", () => {
 
   it("Is Kemar overloaded? Four days on: the counts and how many are past due", async () => {
     const { answer } = await ask("alicia", "Is Kemar overloaded?", 4 * DAY);
-    expect(answer.text).toBe("Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; 4 are past due.");
+    expect(answer.text).toBe("Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; 4 are past due. Kemar Brown is away Mon 26 Oct to Fri 30 Oct.");
     expect(answer.text).not.toMatch(/overloaded|busy|too much|a lot/i);
     expect(answer.cards[0]).toMatchObject({ title: "#145 Google Trends connector", detail: "Forager 2.0: due Wed 21 Oct, past due" });
   });
@@ -284,9 +284,16 @@ describe("PP7: leave, only where the project already shows its impact", () => {
     expect(jodian.answer.text).toMatch(/^Kemar Brown has /);
   });
 
-  it("before the leave starts, and once it is over, nothing is said", async () => {
-    expect((await ask("alicia", "What is Kemar working on?")).answer.text).not.toMatch(/leave/);
-    expect((await ask("alicia", "What is Kemar working on?", 11 * DAY)).answer.text).not.toMatch(/leave/);
+  it("W3-D5: before the leave starts, the PMs who see its impact see its dates; Jodian does not; once it is over, nothing is said", async () => {
+    expect((await ask("alicia", "What is Kemar working on?")).answer.text).toMatch(/ Kemar Brown is away Mon 26 Oct to Fri 30 Oct\.$/);
+    expect((await ask("andre", "What is Kemar working on?")).answer.text).toMatch(/ Kemar Brown is away Mon 26 Oct to Fri 30 Oct\.$/);
+    expect((await ask("jodian", "What is Kemar working on?")).answer.text).not.toMatch(/away|leave/);
+    expect((await ask("alicia", "What is Kemar working on?", 11 * DAY)).answer.text).not.toMatch(/away|leave/);
+  });
+
+  it("W3-D5: leave still waiting on the admin is not shown ahead either", async () => {
+    await db.update(t.leave).set({ state: "requested" }).where(eq(t.leave.id, "lv-kemar-oct"));
+    expect((await ask("alicia", "What is Kemar working on?")).answer.text).not.toMatch(/away|leave/);
   });
 
   it("a request not yet approved is not leave", async () => {

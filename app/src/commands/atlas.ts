@@ -88,9 +88,13 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
         const why: ReadFailure = e instanceof AtlasReadFailed ? e.why : "model_error";
         const message = e instanceof Error ? e.message : String(e);
         failures.push({ step: "read", why, message });
-        await failRead(at(), captureId, why, { model: extractor.name, message, attempt: readAttempt });
-        await pause(readAttempt);
-        continue;
+        // W3-D4: on the last try a standup keeps its taps, and the typed words stay in the review, set aside (rule 5)
+        if (standup?.tapped.length && readAttempt >= config.captureMaxTries) extraction = tapsOnly(standup);
+        else {
+          await failRead(at(), captureId, why, { model: extractor.name, message, attempt: readAttempt });
+          await pause(readAttempt);
+          continue;
+        }
       }
       const proposed = await proposeItems(at(), captureId, extraction.proposals, {
         model: extraction.model,
@@ -117,8 +121,14 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
  * read here; the answers are an update.
  */
 async function readStandup(extractor: Extractor, context: CheckContext, standup: StandupRead, attempt: number): Promise<Extraction> {
-  const read = standup.typed ? await extractor.extract({ ...context, text: standup.typed, earlier: undefined, openAnswer: null }, { attempt }) : { proposals: [], malformed: [], model: "standup", usage: null };
+  if (!standup.typed) return tapsOnly(standup);
+  const read = await extractor.extract({ ...context, text: standup.typed, earlier: undefined, openAnswer: null }, { attempt });
   return { ...read, proposals: [...standup.tapped, ...atlasProposals(standup, read.proposals)], question: null, commands: [] };
+}
+
+/** The taps alone, DPM's own proposals: every answer was a tap, or Atlas could not read the typed ones (W3-D4). */
+function tapsOnly(standup: StandupRead): Extraction {
+  return { proposals: standup.tapped, malformed: [], model: "standup", usage: null, question: null, commands: [] };
 }
 
 /** Captures waiting for a read: never started, or waiting to try again. A worker runs readCapture on each. */

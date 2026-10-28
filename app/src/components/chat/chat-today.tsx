@@ -11,7 +11,7 @@ import { getDb } from "@/db/client";
 import type { Answer } from "@/domain/question";
 import { suggestionsAfter } from "@/domain/topics";
 import { getConversationList, getThread, type ChatCapture, type ConversationRow, type Thread } from "@/queries/chat";
-import { clockTime } from "@/queries/project";
+import { clockTime, leadsAProject } from "@/queries/project";
 import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
@@ -41,6 +41,8 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
   if (thread && !thread.found) notFound();
   const open = thread?.found ? thread : null;
   const reading = !!open?.turns.some((c) => READING.has(c.state) || wording(c.answer, at));
+  // W3-D12: the lead questions (phase N) are named only to a PM or Lead
+  const lead = !open && (await leadsAProject(db, viewerId));
   return (
     <div className="flex min-h-0 flex-1">
       <RefreshWhile active={reading} />
@@ -77,8 +79,10 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
             <AtlasLine>
               <span>
                 Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what
-                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, how a project stands, or what a project is and where to start
-                on it. Or I can ask you, in a short standup.
+                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, how a project stands, what a teammate is working on, or what a
+                project is and where to start on it.
+                {lead && " As a lead, you can also ask who hasn\u2019t updated today, what needs your decision, what\u2019s at risk this week, how all your projects stand, or who can pick up a piece of work."}{" "}
+                Or I can ask you, in a short standup.
               </span>
               {/* Phase J: the standup's button sends what typing it would */}
               <Suggestions asks={["Start my standup"]} />

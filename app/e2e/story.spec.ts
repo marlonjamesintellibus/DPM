@@ -40,6 +40,15 @@ test("1, 2. Kemar's voice note: Atlas proposes 9 updates for 2 projects, 4 need 
   await expect(page.getByRole("button", { name: "Save 9 updates" })).toBeDisabled();
 });
 
+test("W3-D12. A new chat's welcome names the lead questions to Alicia, a PM, and not to Kemar", async () => {
+  await viewAs("alicia", "/?view=chat&c=new");
+  await expect(page.getByText(/what a teammate is working on/)).toBeVisible();
+  await expect(page.getByText(/As a lead, you can also ask who hasn’t updated today/)).toBeVisible();
+  await viewAs("kemar", "/?view=chat&c=new");
+  await expect(page.getByText(/what a teammate is working on/)).toBeVisible();
+  await expect(page.getByText(/As a lead/)).toHaveCount(0);
+});
+
 test("Section 15. Kemar asks Atlas what needs him: the answer links his waiting review", async () => {
   await viewAs("kemar", "/projects");
   await page.getByRole("link", { name: "Ask Atlas" }).first().click();
