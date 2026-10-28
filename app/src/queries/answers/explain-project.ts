@@ -203,5 +203,7 @@ function forClient(question: AskedQuestion, views: readonly ClientView[]): Body 
   const releases = v.releases.length
     ? `${v.releases.length === 1 ? "Its release is" : "Its releases are"} ${either(v.releases.map(release), "and")}.`
     : "It has no releases planned yet.";
-  return none(`${p.name} is ${forWhom(p)}, ${runs(p)}. ${releases}`);
+  // CD52: the status its PM set, only once they shared its reason with the client, in the PM's own words
+  const status = v.status ? ` Its status is ${v.status.label.toLowerCase()}: ${v.status.reason.replace(/\.$/, "")}.` : "";
+  return none(`${p.name} is ${forWhom(p)}, ${runs(p)}. ${releases}${status}`);
 }

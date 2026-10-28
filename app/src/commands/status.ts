@@ -16,6 +16,7 @@ import { RANK, type Status } from "../domain/status/status";
 import type { Drafter } from "../atlas/extractor";
 import { wordReason } from "../atlas/reason";
 import { standingOf } from "../queries/acting";
+import { hiddenNamedIn } from "../queries/drafts";
 import { STATUS_LABEL } from "../queries/project";
 import { audit, CommandRefused, moved, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProject, type Evaluation } from "./evaluate";
@@ -156,7 +157,8 @@ export async function saveReasonIn(
 /**
  * Phase G, section 9: the project's PM marks the reason on show, and the status it explains, as shareable with
  * the client, or takes that back. A client status holds them only while this is on (DR4); a new reason starts
- * unshared. Only the reason the project shows now can be shared (rule 4: what the PM saw is checked again).
+ * unshared. Only the reason the project shows now can be shared (rule 4: what the PM saw is checked again), and
+ * only once it names nothing the client view does not show (CD53).
  */
 export function shareReasonWithClient(ctx: CommandCtx, projectId: string, reasonId: string, shared: boolean): Promise<void> {
   return runCommand(ctx, async (tx) => {
@@ -167,6 +169,8 @@ export function shareReasonWithClient(ctx: CommandCtx, projectId: string, reason
     const showing = project.setOverride === "explained" || project.setOverride === "reason_stale";
     if (!showing || latest?.id !== reasonId) throw new CommandRefused("that reason is no longer the one the project shows; reload and try again");
     if (latest.clientShareable === shared) throw new CommandRefused(shared ? "it is already shared with the client" : "it is not shared with the client");
+    const hidden = shared ? await hiddenNamedIn(tx, ctx.actorId, projectId, ctx.now, latest.text) : null;
+    if (hidden) throw new CommandRefused(`it names ${hidden}, which ${project.customer ?? "the client"} can't see. Reword the reason first`);
     await tx.update(t.statusReasons).set({ clientShareable: shared }).where(eq(t.statusReasons.id, reasonId));
     await audit(tx, ctx.now, { actorType: "person", actorId: ctx.actorId, action: shared ? "SHARE_WITH_CLIENT" : "UNSHARE_WITH_CLIENT", subjectType: "project", subjectId: projectId, detail: { reasonId } });
   });
