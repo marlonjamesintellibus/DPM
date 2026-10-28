@@ -16,6 +16,7 @@ import { vocabularyCauses } from "../domain/machines/vocabulary-change";
 import { signalCause, signalRecipients } from "../domain/machines/signal";
 import { signalOf } from "../queries/signals";
 import { runSignalRules } from "./signal-rules";
+import { followLinksInto } from "./commitment";
 import { calculatePlan } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import { audit, CommandRefused, expectOne, nextVersion, todayOf } from "./core";
@@ -84,6 +85,8 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
   if (!project) throw new CommandRefused(`no project ${projectId}`, "not_found");
   // Phase K, M29: the signal rules first, so the inbox below shows what they leave raised
   await runSignalRules(tx, projectId, now, { detect: opts.detectSignals ?? false });
+  // Phase E, M22: a promise linked to work here hears of it going Done or cancelled, or of its owner leaving (CM9)
+  await followLinksInto(tx, now, projectId);
   const [planRows, members, { log }, work] = await Promise.all([
     loadPlanRows(tx, projectId),
     membersOf(tx, projectId),

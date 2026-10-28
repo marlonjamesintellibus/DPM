@@ -110,7 +110,8 @@ export const extractedItemMachine = defineMachine<ItemState, ItemEvent, Ctx>({
       from: READY_STATES,
       on: "ALREADY_TRUE",
       to: "no_change",
-      guard: ({ item }) => (item.draft.kind === "update" ? null : "only a record update can already be true"),
+      // Phase E: a promise about work already Done, or a commitment already done, is too (the model's recordAtSave)
+      guard: ({ item }) => (item.draft.kind === "update" || item.draft.kind === "commitment" ? null : "only a record update or a promise can already be true"),
     },
     { from: READY_STATES, on: "APPLIED", to: "applied" },
   ],
@@ -118,6 +119,8 @@ export const extractedItemMachine = defineMachine<ItemState, ItemEvent, Ctx>({
 
 
 function draftValue(draft: ExtractedItemDraft): string | null {
+  // Phase E: a promise's value is its due day, which the author may correct (CM2); a done one says so
+  if (draft.commitment) return draft.commitment.act === "done" ? "done" : draft.commitment.dueOn;
   return draft.target?.newValue ?? draft.braid?.title ?? null;
 }
 

@@ -21,6 +21,9 @@ describe("evaluation cases", () => {
         if (type === "same" || type === "resolve" || type === "supersede") expect(entries, `${c.id}: ${key}`).toContain(rest);
         if (type === "outcome") expect(entries, `${c.id}: ${key}`).toContain(rest.split("=")[0]);
         if (type === "new") expect(projects, `${c.id}: ${key}`).toContain(rest.split(":")[1].split("@")[0]);
+        // Phase E: a promise names a record or entry of theirs, or none; the same or a done one names a live commitment of theirs
+        if (type === "promise" && !rest.startsWith("*")) expect(new Set([...records, ...entries, "none"]), `${c.id}: ${key}`).toContain(rest.split("@")[0]);
+        if (type === "same-promise" || type === "promise-done") expect((ctx.commitments ?? []).map((x) => x.id), `${c.id}: ${key}`).toContain(rest.split("@")[0]);
       }
     }
   });

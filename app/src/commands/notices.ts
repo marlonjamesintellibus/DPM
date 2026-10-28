@@ -20,7 +20,7 @@ export async function notice(
   now: Date,
   to: readonly string[],
   text: string,
-  subject: { type: string; id: string; projectId: string; act: string },
+  subject: { type: string; id: string; projectId: string | null; act: string },
 ): Promise<void> {
   const people = [...new Set(to)].sort();
   if (!people.length) return;

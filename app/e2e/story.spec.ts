@@ -8,7 +8,7 @@ test.describe.configure({ mode: "serial" });
 
 let page: Page;
 
-async function viewAs(who: "kemar" | "alicia" | "andre", path = "/") {
+async function viewAs(who: "kemar" | "alicia" | "andre" | "jodian", path = "/") {
   const url = new URL(path, test.info().project.use.baseURL);
   await page.context().addCookies([{ name: "dpm-viewer", value: who, url: url.origin }]);
   await page.goto(path);
@@ -100,7 +100,7 @@ test("Section 16. Conversations: a follow-up continues one, New starts another, 
 
 test("Section 18. Kemar asks what he is working on: his open work, each linked to its project", async () => {
   await page.getByRole("link", { name: "New", exact: true }).click();
-  await expect(page.getByText("what you’re working on, what’s due, any updates, who mentioned you")).toBeVisible();
+  await expect(page.getByText("what you’re working on, what’s due, what you promised, any updates, who mentioned you")).toBeVisible();
   const box = page.getByRole("textbox", { name: "Message to Atlas" });
   await box.fill("What am I working on?");
   await box.press("Enter");
@@ -499,4 +499,87 @@ test("Phase K. Kemar reports it again: Alicia dismisses it and says why, and it 
   await page.getByLabel("Why dismiss it").fill("Kyle is chasing Sprouts IT this week");
   await page.getByRole("button", { name: "Dismiss" }).click();
   await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
+});
+
+test("Phase E. Kemar promises to send Kyle the access request: a promise he reviews and saves, then finds when he asks what he promised", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("I'll send Kyle the access request for #151 tomorrow.");
+  await box.press("Enter");
+  // A promise is his alone (CD3): it goes to "You", never to Forager
+  await expect(page.getByText("You · 1 personal item, only you see it")).toBeVisible();
+  await page.getByRole("button", { name: /^Review/ }).last().click();
+  await expect(page).toHaveURL(/\/review\//);
+  // The day is read from "tomorrow" and shown to correct (CM2), with the record it names
+  const promise = card("Send Kyle the access request");
+  await expect(promise).toContainText('Due Wed 21 Oct, you said "tomorrow" · #151 Store sales feed access');
+  await expect(promise).toContainText("Only you see your promises");
+  await promise.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Saved/).first()).toBeVisible();
+  // CM12: what he promised, his own only, soonest first
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  await box.fill("What did I promise?");
+  await box.press("Enter");
+  await expect(page.getByRole("link", { name: /Send Kyle the access request.*Due Wed 21 Oct · #151 Store sales feed access/ })).toBeVisible();
+  // Each open promise carries its own Done, New date and Drop, so he can end one before it is due (M22 anyLive)
+  const own = page.getByRole("group", { name: "Promised: Send Kyle the access request" });
+  await expect(own.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+  await expect(own.getByRole("button", { name: "Drop it" })).toBeVisible();
+});
+
+test("Phase E. Kemar's promise from Friday was due Monday: Tuesday morning's check-in is in his inbox and chat, and Done ends it", async () => {
+  // The first timer run after the server starts checks in on it (a notice and an inbox item until phase F)
+  await viewAs("kemar", "/?view=inbox");
+  const checkIn = page.getByRole("link", { name: /Did you send Andre the buyers' column list\?/ });
+  await expect(async () => {
+    await page.reload();
+    await expect(checkIn).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 90_000 });
+  await checkIn.click();
+  await expect(page.getByText(/you said you would by Mon 19 Oct/).first()).toBeVisible();
+  // The chat shows the same check-in, with the same buttons
+  await viewAs("kemar", "/?view=chat");
+  await expect(page.getByText("Did you send Andre the buyers' column list? You said you would by Mon 19 Oct.")).toBeVisible();
+  await expect(page.getByRole("group", { name: "Your promise" }).getByRole("button", { name: "New date" })).toBeVisible();
+  await page.getByRole("group", { name: "Your promise" }).getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByText("Marked done.", { exact: true })).toBeVisible();
+  // Answered, it leaves his inbox
+  await page.goto("/?view=inbox");
+  await expect(checkIn).toHaveCount(0);
+});
+
+test("Phase P. Kemar says he's off next week: what is due then shows, and he asks Jodian to cover the Trend model", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("I'm off next week.");
+  await box.press("Enter");
+  // D6: next week is Mon 26 to Fri 30 Oct, his approved leave, so there is nothing to save; cover is asked for it at once
+  await expect(page.getByText("Got it. 0 updates for you.")).toBeVisible();
+  await expect(page.getByText(/^While you're away \(Mon 26 Oct to Fri 30 Oct\): Trend model is forecast Mon 26 Oct/)).toBeVisible();
+  // Who could cover, with only the facts phase H's rule shows (CD9), and his tap sends the ask (rule 9)
+  const ask = page.getByRole("group", { name: "Ask cover on Forager 2.0" });
+  await expect(ask.getByRole("checkbox", { name: /Trend model/ })).toBeChecked();
+  // One request may list several things (LV8); here only the Trend model is asked
+  for (const other of await ask.locator("label").filter({ hasNotText: "Trend model" }).getByRole("checkbox").all()) await other.uncheck();
+  await ask.getByRole("combobox", { name: "Who to ask" }).selectOption("jodian");
+  await ask.getByRole("button", { name: "Ask to cover" }).click();
+  // Nothing is left to ask, so the form goes and the line says who was asked
+  await expect(page.getByText("Asked Jodian, waiting for an answer")).toBeVisible();
+  await expect(ask).toHaveCount(0);
+});
+
+test("Phase P. Jodian accepts in her inbox: a handover is proposed, Alicia is told with no OK needed (CD19), and Kemar sees Jodian covers it", async () => {
+  await viewAs("jodian", "/?view=inbox");
+  const asked = page.getByRole("link", { name: /Kemar asks you to cover Trend model while they're away Mon 26 Oct to Fri 30 Oct/ });
+  await asked.click();
+  await page.getByRole("group", { name: "Cover while they're away" }).getByRole("button", { name: "Accept" }).click();
+  // Answered, it leaves her inbox
+  await expect(asked).toHaveCount(0);
+
+  await viewAs("alicia", "/?view=chat");
+  await expect(page.getByText(/Jodian will cover Trend model for Kemar while they're away Mon 26 Oct to Fri 30 Oct\. A handover is proposed\. No OK is needed from you\./)).toBeVisible();
+
+  await viewAs("kemar", "/?view=chat");
+  await expect(page.getByText("Jodian covers it")).toBeVisible();
+  await expect(page.getByText("Jodian will cover Trend model while you're away. A handover is proposed.")).toBeVisible();
 });

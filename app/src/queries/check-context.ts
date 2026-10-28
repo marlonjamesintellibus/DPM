@@ -6,6 +6,7 @@ import { loadItems, loadWorld, orgTagsOf } from "../db/records";
 import * as t from "../db/schema";
 import type { CandidateProject, CandidateRecord, CheckContext, EarlierTurn, OpenAnswer, ProjectPerson } from "../domain/atlas-checks/types";
 import { OPEN_ITEM_STATES, type ItemState } from "../domain/machines/extracted-item";
+import { LIVE_COMMITMENT } from "../domain/machines/commitment";
 import { LIVE_LEAVE } from "../domain/machines/leave";
 import { candidateProjects } from "../domain/machines/membership";
 import type { AnswerCard } from "../domain/question";
@@ -99,8 +100,14 @@ export async function loadCheckContext(
   const openAnswer = input.captureId ? await loadOpenAnswer(conn, input.captureId) : null;
   // Phase J: a standup's answers are quoted only from the answers, and the questions taps answered
   const standup = input.captureId ? await composedRead(conn, input.captureId) : null;
+  // Phase E, CM5 and CM6: the author's own live commitments, each naming its record only on a project they file into
+  const promises = await conn.select().from(t.commitments).where(and(eq(t.commitments.ownerId, input.authorId), inArray(t.commitments.state, [...LIVE_COMMITMENT])));
+  const commitments = promises
+    .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.id.localeCompare(b.id))
+    .map((c) => ({ id: c.id, what: c.what, dueOn: c.dueOn, state: c.state, linkId: c.linkProjectId && projects.some((p) => p.id === c.linkProjectId) ? c.linkId : null }));
   return {
     ...(earlier.length ? { earlier } : {}),
+    ...(commitments.length ? { commitments } : {}),
     ...(openAnswer ? { openAnswer } : {}),
     ...(standup ? { standup: { quoteIn: standup.quoteIn } } : {}),
     text: input.text,

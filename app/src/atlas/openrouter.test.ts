@@ -69,19 +69,21 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-16's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio; phase J standup; phase Q explain_project); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-16");
+  it("the topics come from domain/topics in read-wave4-e's words and order (phase C added why; phase L why_filed, correction and undo; phase H people; phase N who_free, not_updated, my_decisions, at_risk_week and portfolio; phase J standup; phase Q explain_project; phase E commitments; phase P catch_up); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-wave4-p2");
     expect(SYSTEM_PROMPT).toContain(
-      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), explain_project (what a project is, who it is for and where to start on it), updates (what is new or changed since they last asked), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), commitments (what they promised to do: their own open and due commitments), blocked (what is blocked or stuck), project_status (how a project stands), explain_project (what a project is, who it is for and where to start on it), updates (what is new or changed since they last asked), catch_up (catching up after time away: what changed since their leave began, and what was handed over), mentions (who mentioned them), people (what someone else is working on or has on their plate, or who owns a record or entry), who_free (who on the team could pick up a piece of work, with how much each has), not_updated (who on their projects has not sent an update today (for a PM or Lead)), my_decisions (what waits for their decision: proposals, kind changes, statuses they set and asks to them), at_risk_week (what is at risk this week across their projects: late milestones and live blockers), portfolio (which projects are off track or at risk, across all of theirs), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
     expect(questionSchema.shape.topic.options).toEqual([
       "needs_me",
       "my_work",
       "due",
+      "commitments",
       "blocked",
       "project_status",
       "explain_project",
       "updates",
+      "catch_up",
       "mentions",
       "people",
       "who_free",
@@ -134,6 +136,21 @@ describe("the request", () => {
     const correction = { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" };
     expect(questionSchema.safeParse({ asked: "Kyle is Store Insights, not Forager", topic: "correction", projectId: "insights", correction }).success).toBe(true);
     expect(questionSchema.safeParse({ asked: "hi", topic: "small_talk", projectId: null }).success).toBe(true);
+  });
+
+  it("phase E: the author's own promise is a commitment, matched or said done by a listed id; CM3 and CD5 are not (M22)", () => {
+    expect(SYSTEM_PROMPT).toContain('- "commitment": something the author promises to do themselves');
+    expect(SYSTEM_PROMPT).toContain("put that commitment's id in commitmentId");
+    expect(SYSTEM_PROMPT).toContain('propose kind "commitment" with newValue "done"');
+    expect(SYSTEM_PROMPT).toContain("is that record's forecast; propose the update");
+    expect(SYSTEM_PROMPT).toContain("Someone else's promise (\"Kyle will send it\", \"Jodian said she'd do it\") is never the author's");
+    expect(SYSTEM_PROMPT).not.toContain('("I\'ll send Kyle the request"), propose nothing for it');
+    const promise = { kind: "commitment", projectId: null, routingReason: { basis: "personal", evidence: "I'll", label: "You" }, promise: "Send Kyle the access request", newValue: "promised", targetId: "wi-151", commitmentId: null, quote: "I'll send Kyle the access request tomorrow", confidence: "medium", rationale: "Your promise" };
+    expect(proposalSchema.safeParse(promise).success).toBe(true);
+    // The author's live commitments go to Atlas with the projects, their own only
+    const message = userMessage({ ...KEMAR_CONTEXT, commitments: [{ id: "cm-1", what: "Send Andre the export columns", dueOn: "2026-10-19", state: "due", linkId: "wi-208" }] });
+    expect(message).toContain('"promise": "Send Andre the export columns"');
+    expect(userMessage(KEMAR_CONTEXT)).toContain('"commitments": []');
   });
 
   it("phase J: a standup's answers are read each with its question, quoting only the author's words (M28, SU4)", () => {

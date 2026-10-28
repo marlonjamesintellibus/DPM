@@ -16,6 +16,8 @@ import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
 import { ClarifyButtons } from "./clarify";
+import { CommitmentButtons } from "./commitment";
+import { AskCover, CoverAnswerButtons, NoCoverNeeded } from "./cover";
 import { StandupButtons } from "./standup";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
@@ -79,7 +81,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
             <AtlasLine>
               <span>
                 Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what
-                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, how a project stands, what a teammate is working on, or what a
+                needs you, what you&rsquo;re working on, what&rsquo;s due, what you promised, any updates, who mentioned you, what is blocked, how a project stands, what a teammate is working on, or what a
                 project is and where to start on it.
                 {lead && " As a lead, you can also ask who hasn\u2019t updated today, what needs your decision, what\u2019s at risk this week, how all your projects stand, or who can pick up a piece of work."}{" "}
                 Or I can ask you, in a short standup.
@@ -124,6 +126,11 @@ function Messages({ thread, at, helpOn }: { thread: Thread; at: Date; helpOn: bo
           <span>
             {n.text} <span className="type-micro text-fg-3">· {n.time}</span>
           </span>
+          {/* Phase E, M22: a check-in on their promise, answered here, in the inbox, or by typing it */}
+          {n.promise && <CommitmentButtons id={n.promise.id} mode={n.promise.mode} today={n.promise.today} dropFirst={n.promise.dropFirst} />}
+          {n.promiseOutcome && <span className="type-caption text-fg-3">{n.promiseOutcome}</span>}
+          {/* Phase P, M35: asked to cover a teammate's work while they are away, answered here or in the inbox */}
+          {n.cover && <CoverAnswerButtons id={n.cover.id} items={n.cover.items} />}
         </AtlasLine>
       ),
     })),
@@ -198,6 +205,11 @@ function AnswerBlock({ capture, answer, last, helpOn }: { capture: ChatCapture; 
               ) : c.actions?.length && c.subject ? (
                 <span className="relative z-10 flex shrink-0 items-start gap-2">
                   <LineActions captureId={capture.id} line={i + 1} projectId={c.subject.projectId} actions={c.actions} tapped={capture.taps.findLast((t) => t.line === i + 1) ?? null} />
+                </span>
+              ) : c.promise ? (
+                // Phase E, CM12: the asker's own promise, ended or moved from here as from a check-in
+                <span className="relative z-10 flex shrink-0 items-start gap-2">
+                  <CommitmentButtons id={c.promise.id} mode={c.promise.mode} today={c.promise.today} dropFirst={c.promise.dropFirst} label={`Promised: ${c.title}`} />
                 </span>
               ) : c.review ? (
                 <form action={startReview.bind(null, c.review.captureId)} className="relative z-10 shrink-0">
@@ -312,6 +324,7 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
           </div>
         )}
       </AtlasLine>
+      <AwayBlock capture={capture} />
       {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
       <CommandsBlock capture={capture} />
       <ClarifyBlock capture={capture} />
@@ -344,6 +357,59 @@ function StandupBlock({ capture }: { capture: ChatCapture }) {
       )}
       {s.ended && <AtlasLine>{s.ended}</AtlasLine>}
     </>
+  );
+}
+
+/**
+ * Phase P (section 18): the message said leave. What is due while away, from DPM's own queries (LV1 when nothing
+ * is), each thing with who was asked or covers it; once the update is saved and before the leave starts, the
+ * things still free per project with the teammates who could be asked (M35 PICK), and "No cover needed".
+ */
+function AwayBlock({ capture }: { capture: ChatCapture }) {
+  const a = capture.away;
+  if (!a) return null;
+  const free = a.things.filter((x) => x.status.kind === "free");
+  const projects = [...new Map(free.map((x) => [x.project.id, x.project])).values()];
+  return (
+    <AtlasLine>
+      <span>{a.line}</span>
+      {a.things.length > 0 && (
+        <ul className="flex flex-col overflow-hidden rounded-panel border border-line">
+          {a.things.map((x) => (
+            <li key={x.key} className="flex flex-col gap-0.5 border-b border-line px-3 py-2.5 last:border-b-0">
+              <span className="type-body-medium text-fg-1">{x.label}</span>
+              <span className="type-caption text-fg-2">
+                {x.project.name} · {x.when.replace(/^is /, "")}
+              </span>
+              <span className="type-micro text-fg-3">
+                {x.status.kind === "asked"
+                  ? `Asked ${x.status.who}, waiting for an answer`
+                  : x.status.kind === "covered"
+                    ? `${x.status.who} covers it${x.status.waiting ? "; the handover starts when your leave is approved" : ""}`
+                    : (x.note ?? "Nobody asked yet")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {a.promises.length > 0 && <span className="type-caption text-fg-3">Only you see your promises, so nobody can cover one; your review can move it to your first day back.</span>}
+      {!a.leaveId && a.things.length > 0 && <span className="type-caption text-fg-3">Save your update, then you can ask someone to cover.</span>}
+      {a.open && free.length > 0 && !a.dismissed && (
+        <div className="flex flex-col gap-2">
+          {projects.map((p) => (
+            <AskCover
+              key={p.id}
+              leaveId={a.leaveId!}
+              projectName={p.name}
+              things={free.filter((x) => x.project.id === p.id).map((x) => ({ key: x.key, label: x.label, when: x.when }))}
+              teammates={a.teammates[p.id] ?? []}
+            />
+          ))}
+          <NoCoverNeeded leaveId={a.leaveId!} offerId={a.offerId} />
+        </div>
+      )}
+      {a.dismissed && free.length > 0 && <span className="type-caption text-fg-3">You said no cover is needed.</span>}
+    </AtlasLine>
   );
 }
 

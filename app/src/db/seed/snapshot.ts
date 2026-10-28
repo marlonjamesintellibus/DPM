@@ -108,6 +108,11 @@ export const HANDOVER = {
   ],
 };
 
+// Phase E, M22: Kemar promised on Friday 16 Oct to send Andre the buyers' column list by Monday, said before DPM
+// kept his words. It names no record (his note saves #208 Done, which would end a promise linked to it). It is
+// still open at 9:10am Tuesday: the first timer run that morning makes it due and checks in on it
+export const COMMITMENTS = [{ id: "cm-kemar-columns", ownerId: "kemar", what: "Send Andre the buyers' column list", dueOn: "2026-10-19", state: "open" as const, savedOn: "2026-10-16" }];
+
 export const LEAVE = [{ id: "lv-kemar-oct", personId: "kemar", startDate: "2026-10-26", endDate: "2026-10-30", state: "approved" as const }];
 
 // Forager's BRAID log before Kemar saves (KB B5, L14b). Store Insights and GQ have none yet.

@@ -20,9 +20,11 @@ import { applyWorkItem } from "../domain/machines/work-item";
 import { lastSave, liveAsksOfSave, readReceipt, RECEIPT_ACTION, type StoredReceipt } from "../queries/undo";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
+import { coverOnLeave } from "./cover";
 import { syncLeaveImpact } from "./leave";
 import { notice } from "./notices";
 import { withdrawAsksOfSave } from "./owner-ask";
+import { dropCommitmentsOfSave } from "./commitment";
 
 // ---- The receipt, kept by the save (commands/capture.ts) ----
 
@@ -161,6 +163,8 @@ export async function undoInTx(tx: Tx, now: Date, actorId: string, input: { comm
   if (!refusal) {
     // W2-D1: the Asks the save made that still wait are taken back too
     const askProjects = await withdrawAsksOfSave(tx, now, actorId, receipt.captureId);
+    // Phase E, as CD34: the promises it opened and nobody moved since are dropped, as their owner (M22 DROP)
+    await dropCommitmentsOfSave(tx, now, actorId, receipt.captureId);
     // UN3: the deciders' items close as cause gone, as the rules see it now; then the people the save told hear it
     await evaluateProjects(tx, [...new Set([...projectsOf(receipt), ...askProjects])].sort(), now, { actorId });
     told = await tellUndone(tx, now, actorId, receipt);
@@ -308,6 +312,8 @@ async function runArrows(tx: Tx, now: Date, actorId: string, receipt: StoredRece
         expectOne(rows, `leave ${r.id}`);
         await undoAudit(r, "leave", "leave", m.from, m.to);
         await syncLeaveImpact(tx, now, r.id, { actorId });
+        // Phase P: a request withdrawn by the undo ends its cover requests; dates put back leave what is no longer due
+        await coverOnLeave(tx, now, r.id);
         break;
       }
       case "braid_entry":

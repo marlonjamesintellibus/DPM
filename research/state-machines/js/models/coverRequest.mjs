@@ -10,7 +10,8 @@
 // #151 and #208 are Forager work; the Trend model is Store Insights. Andre is the outsider for Forager,
 // Jodian for Store Insights. One request lists items of one project (LV8), so only a teammate who reads
 // every one of them may be asked.
-//   LV2  a teammate on leave then is refused before asking
+//   LV2  a teammate on leave then is refused before asking, when the project shows Kemar that leave (a PM or Lead
+//        sees it, CD43); a member is not shown it, so P10 wins and the ask goes (phase P as built)
 //   LV3  the dates change: items no longer due while away leave open requests; an empty one is withdrawn
 //   LV4  the leave is cancelled after a cover was accepted: the handover is cancelled through M7
 //   LV8  one request, several items: accepted together, or each declined
@@ -20,9 +21,14 @@
 //
 // Fixes are the smallest changes to the plan as written that the check showed were needed (none by
 // default, which is the plan as written):
-//   suggestedWayOut       suggested --TIMER (the leave starts), or the leave is cancelled--> withdrawn
+//   suggestedWayOut       suggested --TIMER (the leave starts), the leave is cancelled, or DISMISS (Kemar)--> withdrawn
 //   declineCancels        the admin declining the leave acts as the leave cancelled
-//   leaveProjectWithdraws Kemar or the teammate leaving the project withdraws an open request (as CH10, E77)
+//   leaveProjectWithdraws Kemar or the teammate leaving the project withdraws an open request (as CH10, E77), and
+//                         cancels an accepted cover's live handover, waiting or proposed (phase P's check: a
+//                         handover that waited must not start for someone off the project, LV9); whichever of
+//                         the two still reads every item is told the cover ended
+// Rule 4 as built: Accept, Decline and DeclineItem each recheck that both still read every item, and approving
+// the leave starts a waiting handover only for two people still on the project.
 //   oneCoverPerItem       PICK is refused for an item already in an open or accepted request
 import { clone, product, subsets } from '../lib.mjs';
 
@@ -51,6 +57,8 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
   const arrows = fix('suggestedWayOut') ? [...ARROWS, 'suggested>withdrawn'] : ARROWS;
   // P10: a person reads an item only on a project they are a member of now
   const reads = (s, p, i) => s.members[PROJECT[i]].includes(p);
+  // Rule 4: Kemar and the request's teammate both still read every item it names
+  const bothRead = (s, x) => x.items.every((i) => reads(s, x.to, i) && reads(s, 'kemar', i));
   const t0 = (s, by) => Object.assign(clone(s), { by, said: [] });
   const say = (t, to, items, kind) => t.said.push({ to, items: [...items], kind });
   // Items already in an open ask or a live cover (oneCoverPerItem)
@@ -64,8 +72,8 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
     // P10, LV8: the teammate reads every item the request names; anyone else is refused in the same
     // words as a name nobody has
     if (Bug !== 'askAnyone' && !items.every((i) => reads(s, who, i))) return [];
-    // LV2: refused before asking when the project shows the teammate's leave
-    if (Bug !== 'askAway' && s.away.includes(who)) return [];
+    // LV2: refused before asking when the project shows Kemar the teammate's leave
+    if (Bug !== 'askAway' && s.away.includes(who) && s.awayShown) return [];
     if (fix('oneCoverPerItem') && items.some((i) => taken(s, r).includes(i))) return [];
     const t = t0(s, by);
     Object.assign(t.req[r], { st: 'asked', to: who, items, sent: 1 });
@@ -78,7 +86,7 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
     const x = s.req[r];
     if (x.st !== 'asked' && !(Bug === 'lateAccept' && x.st === 'unanswered')) return [];
     // Rule 4: checked when it runs. Both still read every item, or the tap is refused
-    if (Bug !== 'noRecheck' && !x.items.every((i) => reads(s, x.to, i) && reads(s, 'kemar', i))) return [];
+    if (Bug !== 'noRecheck' && !bothRead(s, x)) return [];
     const t = t0(s, by);
     const y = t.req[r];
     Object.assign(y, { st: 'accepted', handovers: 1, ho: s.leave === 'approved' ? 'proposed' : 'waiting' });
@@ -95,25 +103,28 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
   // The handover is cancelled through M7 (LV4), and with it the cover
   const cancelHandover = (t, r) => {
     const y = t.req[r];
-    if (!LIVE_HANDOVER.includes(y.ho)) return;
+    if (!LIVE_HANDOVER.includes(y.ho)) return false;
     y.ho = 'cancelled';
     for (const i of y.items) if (t.cover[i] === y.to) t.cover[i] = null;
+    return true;
   };
-  // The leave is off: open asks are withdrawn, live handovers cancelled
+  // The leave is off: open asks are withdrawn, live handovers cancelled and the teammate told
   const leaveOff = (t) => {
     for (const r of REQS) {
       const y = t.req[r];
       if (y.st === 'asked' || (y.st === 'suggested' && fix('suggestedWayOut'))) y.st = 'withdrawn';
-      cancelHandover(t, r);
+      if (cancelHandover(t, r)) say(t, y.to, y.items, 'cancelled');
     }
   };
 
   return {
     name: `CoverRequest (${Fixes.length ? `fixes ${Fixes.join(', ')}` : 'as written'}${Bug ? `, bug ${Bug}` : ''})`,
     init: () =>
-      product(['requested', 'approved'], [[], ['jodian']]).map(([leave, away]) => ({
+      // Jodian's leave then: none, shown to Kemar, or not shown to him (he is a member, CD43)
+      product(['requested', 'approved'], [[[], false], [['jodian'], true], [['jodian'], false]]).map(([leave, [away, awayShown]]) => ({
         leave,
         away,
+        awayShown,
         members: { forager: ['alicia', 'jodian', 'kemar'], insights: ['andre', 'kemar'] },
         due: Object.fromEntries(ITEMS.map((i) => [i, true])),
         cover: Object.fromEntries(ITEMS.map((i) => [i, null])),
@@ -155,6 +166,8 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
         step(s, r) {
           const x = s.req[r];
           if (x.st !== 'asked') return [];
+          // Rule 4, P10: the decline names the items to Kemar, so both must still read them
+          if (Bug !== 'noRecheck' && !bothRead(s, x)) return [];
           const t = t0(s, x.to);
           Object.assign(t.req[r], { st: 'declined', told: true });
           say(t, 'kemar', x.items, 'declined');
@@ -168,6 +181,7 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
         step(s, r, i) {
           const x = s.req[r];
           if (x.st !== 'asked' || x.items.length < 2 || !x.items.includes(i)) return [];
+          if (Bug !== 'noRecheck' && !bothRead(s, x)) return [];
           const t = t0(s, x.to);
           t.req[r].items = x.items.filter((k) => k !== i);
           say(t, 'kemar', [i], 'declined');
@@ -201,6 +215,18 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
         step(s, r) {
           if (!fix('suggestedWayOut') || Bug === 'noOfferLapse' || s.req[r].st !== 'suggested') return [];
           const t = t0(s, 'timer');
+          t.req[r].st = 'withdrawn';
+          return [t];
+        },
+      },
+      {
+        // suggestedWayOut, as built (phase P): Kemar says no cover is needed, and the offer ends with nothing asked.
+        // Atlas offers again only once something is free again (a decline, no answer, new dates).
+        name: 'Dismiss',
+        params: REQS.map((r) => [r]),
+        step(s, r) {
+          if (!fix('suggestedWayOut') || s.req[r].st !== 'suggested') return [];
+          const t = t0(s, 'kemar');
           t.req[r].st = 'withdrawn';
           return [t];
         },
@@ -250,8 +276,14 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
           const t = t0(s, 'admin');
           t.leave = to;
           if (to === 'approved' && Bug !== 'noApprovalHook') {
-            // LV9: the handover waited on the approval
-            for (const r of REQS) if (t.req[r].ho === 'waiting') t.req[r].ho = 'proposed';
+            // LV9: the handover waited on the approval; it starts, and the teammate is told, only while both
+            // still read every item (rule 4)
+            for (const r of REQS) {
+              const y = t.req[r];
+              if (y.ho !== 'waiting' || (Bug !== 'noRecheck' && !bothRead(t, y))) continue;
+              y.ho = 'proposed';
+              say(t, y.to, y.items, 'handover');
+            }
           }
           if (to === 'declined' && fix('declineCancels')) leaveOff(t);
           return [t];
@@ -287,7 +319,12 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
           if (fix('leaveProjectWithdraws')) {
             for (const r of REQS) {
               const y = t.req[r];
-              if (y.st === 'asked' && (y.to === who || who === 'kemar') && y.items.some((i) => PROJECT[i] === project)) y.st = 'withdrawn';
+              if (!((y.to === who || who === 'kemar') && y.items.some((i) => PROJECT[i] === project))) continue;
+              if (y.st === 'asked') y.st = 'withdrawn';
+              // Planted bug keepCover: only the ask is withdrawn, as phase P was first built
+              else if (y.st === 'accepted' && Bug !== 'keepCover' && cancelHandover(t, r)) {
+                for (const p of ['kemar', y.to]) if (y.items.every((i) => reads(t, p, i))) say(t, p, y.items, 'cover_ended');
+              }
             }
           }
           return [t];
@@ -312,6 +349,9 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
         LIVE_LEAVE.includes(s.leave) || REQS.every((r) => !OPEN.includes(s.req[r].st) && !LIVE_HANDOVER.includes(s.req[r].ho)),
       // LV3: an open ask names only items still due while away
       OpenAsksOnlyForDueItems: (s) => REQS.every((r) => s.req[r].st !== 'asked' || s.req[r].items.every((i) => s.due[i])),
+      // LV9, rule 4: a live cover (its handover waiting or proposed) holds only between two people who both
+      // still read every item it names
+      LiveCoverOnlyForReaders: (s) => REQS.every((r) => s.req[r].st !== 'accepted' || !LIVE_HANDOVER.includes(s.req[r].ho) || bothRead(s, s.req[r])),
       // "Declined; the asker picks someone else", "unanswered; the asker is told"
       AskerToldOfEveryEnd: (s) => REQS.every((r) => !['declined', 'unanswered'].includes(s.req[r].st) || s.req[r].told),
       // CD19: a change of owner never surprises the PM
@@ -341,8 +381,9 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
       // P10 and rule 8: every message (the ask, the PM's notice, what Kemar is told) names only items its
       // reader may open when it is sent
       EveryReaderMaySeeIt: (s, t) => t.said.every((m) => m.items.every((i) => reads(t, m.to, i))),
-      // LV2: nobody is asked to cover while the project shows them on leave
-      NeverAskSomeoneAway: (s, t) => t.said.every((m) => m.kind !== 'ask' || !t.away.includes(m.to)),
+      // LV2: nobody is asked to cover while the project shows Kemar their leave (P10: a leave he is not shown
+      // cannot refuse anything)
+      NeverAskSomeoneAway: (s, t) => t.said.every((m) => m.kind !== 'ask' || !(t.away.includes(m.to) && t.awayShown)),
     },
     leadsTo: {
       // Rule 5, nothing gets stuck: each waiting state ends, by a timer or a named way out

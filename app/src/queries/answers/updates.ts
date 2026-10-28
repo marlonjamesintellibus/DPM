@@ -13,7 +13,7 @@ import { DAY_MS } from "../../domain/dates";
 import { ON_LOG_STATES } from "../../domain/machines/braid-entry";
 import type { AnswerCard } from "../../domain/question";
 import type { SettableStatus } from "../../domain/status/status";
-import { clockTime, daysAgo, firstName, peopleById, STATUS_LABEL, todayIn } from "../project";
+import { clockTime, daysAgo, firstName, peopleById, STATUS_LABEL, todayIn, type ProjectView } from "../project";
 import { loadTargetRecords, targetChange, targetTitle } from "../review";
 import { capped, counted, dayDate, projectsAsked, type AnswerBuilder } from "./shared";
 
@@ -41,15 +41,30 @@ function when(at: Date, now: Date): string {
 export const updates: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
   const views = await projectsAsked(conn, viewerId, projectId, now);
   const named = views.length === 1 && projectId ? views[0] : null;
+  const since = await updatesSince(conn, viewerId, named?.project.id ?? null, now);
+  const news = await newsSince(conn, viewerId, views, named !== null, since.at, now);
+  const sinceLabel = since.first ? `in the last ${config.updatesMaxDays} days` : `since ${todayIn(since.at) === todayIn(now) ? clockTime(since.at) : `${dayDate(todayIn(since.at))}, ${clockTime(since.at)}`}`;
+  const on = named ? ` on ${named.project.name}` : since.first ? " on your projects" : "";
+  // CQ5: asked twice in a row, "Nothing new since 9:41am."
+  if (!news.length) return { text: `Nothing new${on} ${sinceLabel}.`, cards: [], more: null };
+  const lead = sinceLabel[0].toUpperCase() + sinceLabel.slice(1);
+  return { text: `${lead}: ${counted(news.length, "update", "updates")}${on || " on your projects"}.`, ...capped(news.map((x) => x.card), { label: "on your projects", href: "/projects" }) };
+};
+
+/**
+ * What is new on these projects (the asker reads each now) after `sinceAt`, newest first: the updates answer's facts,
+ * which phase P's catch-up reads from the start of a leave. named: one project was asked about, so a notice with no
+ * project is left out.
+ */
+export async function newsSince(conn: Conn, viewerId: string, views: readonly ProjectView[], named: boolean, sinceAt: Date, now: Date): Promise<{ at: Date; card: AnswerCard }[]> {
   const ids = views.map((v) => v.project.id);
   const nameOf = new Map(views.map((v) => [v.project.id, v.project.name]));
-  const since = await updatesSince(conn, viewerId, named?.project.id ?? null, now);
-  const fresh = (at: Date) => at > since.at && at <= now;
+  const fresh = (at: Date) => at > sinceAt && at <= now;
   const news: { at: Date; card: AnswerCard }[] = [];
 
   // Notices to them (D15), about projects they can still read
   for (const n of await conn.select().from(t.notices).where(eq(t.notices.personId, viewerId))) {
-    if (!fresh(n.at) || (n.projectId ? !ids.includes(n.projectId) : !!named)) continue;
+    if (!fresh(n.at) || (n.projectId ? !ids.includes(n.projectId) : named)) continue;
     const where = n.projectId ? nameOf.get(n.projectId)! : "You";
     news.push({ at: n.at, card: { title: n.text, detail: `${where}: ${when(n.at, now)}`, tag: "For you", href: n.projectId ? `/projects/${n.projectId}?view=table` : "/?view=chat" } });
   }
@@ -117,10 +132,5 @@ export const updates: AnswerBuilder = async (conn, viewerId, { projectId }, now)
   }
 
   news.sort((a, b) => b.at.getTime() - a.at.getTime() || a.card.title.localeCompare(b.card.title));
-  const sinceLabel = since.first ? `in the last ${config.updatesMaxDays} days` : `since ${todayIn(since.at) === todayIn(now) ? clockTime(since.at) : `${dayDate(todayIn(since.at))}, ${clockTime(since.at)}`}`;
-  const on = named ? ` on ${named.project.name}` : since.first ? " on your projects" : "";
-  // CQ5: asked twice in a row, "Nothing new since 9:41am."
-  if (!news.length) return { text: `Nothing new${on} ${sinceLabel}.`, cards: [], more: null };
-  const lead = sinceLabel[0].toUpperCase() + sinceLabel.slice(1);
-  return { text: `${lead}: ${counted(news.length, "update", "updates")}${on || " on your projects"}.`, ...capped(news.map((x) => x.card), { label: "on your projects", href: "/projects" }) };
-};
+  return news;
+}

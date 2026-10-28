@@ -10,7 +10,7 @@ import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, load
 import * as t from "../db/schema";
 import { mayChangeField, retarget, runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
-import { fieldTaken, planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
+import { commitmentKeys, fieldTaken, planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
 import type { Moved } from "../domain/machine";
@@ -61,9 +61,11 @@ import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
 import { answeredByCards, answerInWords, askIfUnsure, closeWithCapture, closeWithItem, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
+import { coverOnLeave, offerIn } from "./cover";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 import { createOwnerAsks } from "./owner-ask";
+import { answerCheckInInWords, applyCommitmentsAtSave } from "./commitment";
 import { answerStandupInWords, startStandup } from "./standup";
 import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
 import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
@@ -401,12 +403,15 @@ export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" 
 export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number): Promise<boolean> {
   return runCommand(ctx, async (tx) => {
     const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
-    const answered = await answerInWords(tx, ctx.now, row);
+    const clarified = await answerInWords(tx, ctx.now, row);
+    // Phase E: or a short reply to the check-in on their promise that waits on them ("done", "move it to Friday")
+    const promised = clarified ? null : await answerCheckInInWords(tx, ctx.now, row);
+    const answered = clarified ?? promised;
     if (!answered) return false;
     const r = moveCapture(record, { type: "PROPOSALS_READY", count: 0, asked: true });
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     if (answered.note) await tx.update(t.captures).set({ commandNote: answered.note }).where(eq(t.captures.id, captureId));
-    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { items: 0, clarification: answered.id, attempt });
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { items: 0, ...(promised ? { commitment: promised.id } : { clarification: answered.id }), attempt });
     return true;
   });
 }
@@ -656,7 +661,7 @@ export function decideExtraction(ctx: CommandCtx, extractionId: string, decision
           : decision.type === "reject"
             ? { type: "REJECT" }
             : { type: "UNDO" };
-    const checkEdit = decision.type === "edit" ? await editRule(tx, item, ctx.actorId) : undefined;
+    const checkEdit = decision.type === "edit" ? await editRule(tx, item, ctx.actorId, ctx.now) : undefined;
     const r = moveItem(item, event, { checkEdit });
     await persistItems(tx, [item], [r.item], new Map([[row.id, row.version]]), ctx.now);
     await auditItem(tx, ctx.now, row.captureId, r.item, r.outcome, { type: "person", id: ctx.actorId }, decision.type === "edit" ? { value: decision.value } : undefined);
@@ -666,10 +671,11 @@ export function decideExtraction(ctx: CommandCtx, extractionId: string, decision
 
 const SETTABLE_WORK_STATES: readonly string[] = ["to_do", "in_progress", "blocked", "done"];
 
-function parseLeave(value: string | null, personId: string): ExtractedLeave | null {
+/** The item's dates; back (LV6) when the author said they are back early, so the dates shorten the leave they are on. */
+function parseLeave(value: string | null, personId: string, item: Pick<ExtractedItem, "draft">): ExtractedLeave | null {
   const [start, end] = (value ?? "").split("/");
   if (!start) return null;
-  return { personId, start, end: !end || end === ".." ? null : end };
+  return { personId, start, end: !end || end === ".." ? null : end, ...(item.draft.leave?.back ? { back: true } : {}) };
 }
 
 function leaveRecords(rows: (typeof t.leave.$inferSelect)[]): LeaveRecord[] {
@@ -680,7 +686,21 @@ function leaveRecords(rows: (typeof t.leave.$inferSelect)[]): LeaveRecord[] {
  * E22: an edited value must pass the target's own rules, read now: the record's machine must
  * accept it, and a forecast may not fall before the project starts.
  */
-async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<(value: string) => string | null> {
+async function editRule(tx: Tx, item: ExtractedItem, authorId: string, now: Date): Promise<(value: string) => string | null> {
+  // Phase E, CM2: the author corrects a promise's day on the card; it is a day still to come. CM5: run again at
+  // Save, since a review stays open for days, so a day that has passed since goes back to the card to fix,
+  // whether it opens a promise or moves a live one (M22's NEW_DATE wants a day still to come)
+  if (item.draft.commitment?.act === "promise") {
+    const [{ messageAt }] = await tx.select({ messageAt: t.captures.messageAt }).from(t.captures).innerJoin(t.extractions, eq(t.extractions.captureId, t.captures.id)).where(eq(t.extractions.id, item.id));
+    return (value) =>
+      !isIsoDate(value)
+        ? "a promise's day is a date"
+        : value < dateInZone(messageAt, config.timeZone)
+          ? "pick a day from when you said it on"
+          : value < todayOf(now)
+            ? "that day has passed; pick a day from today on"
+            : null;
+  }
   const target = item.draft.target;
   if (item.draft.kind !== "update" || !target) return () => null; // a BRAID title: the machine wants it non-empty
   const world = await loadWorld(tx);
@@ -730,7 +750,7 @@ async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<
     case "leave": {
       const leaves = leaveRecords(await tx.select().from(t.leave).where(eq(t.leave.personId, authorId)));
       return (value) => {
-        const extracted = parseLeave(value, authorId);
+        const extracted = parseLeave(value, authorId, item);
         if (!extracted) return "leave reads start/end, for example 2026-10-26/2026-10-30";
         const r = acceptExtractedLeave(extracted, leaves);
         return r.kind === "refused" ? r.reason : null;
@@ -1054,7 +1074,7 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
     case "leave": {
       // Leave already "has" the value when live leave, requested or approved, covers it (M8, D6)
       // A change compares against the leave's dates as they are now, so a leave that moved meanwhile is a conflict
-      const extracted = parseLeave(item.value, authorId);
+      const extracted = parseLeave(item.value, authorId, item);
       if (!extracted) return null;
       const leaves = leaveRecords(await tx.select().from(t.leave).where(eq(t.leave.personId, authorId)));
       const fit = fitLeave(extracted, leaves);
@@ -1063,6 +1083,23 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
       return null;
     }
   }
+}
+
+/**
+ * Phase E: a fact a promise is saved against, keyed as commitmentKeys builds it: the linked work item's state, or
+ * the matched commitment's state and due day. Someone else's commitment reads as gone (CD3). The model's
+ * recordAtSave checks membership first (CM9, P10): work on a project the author can no longer read reads as
+ * nothing, so its state never decides the save ("Already done") and the promise opens without the link.
+ */
+async function readCommitmentFact(tx: Tx, key: string, authorId: string, mayRead: (projectId: string) => boolean): Promise<string | null> {
+  const [type, id, field] = key.split(":");
+  if (type === "work_item") {
+    const [wi] = await tx.select({ state: t.workItems.state, projectId: t.workItems.projectId }).from(t.workItems).where(eq(t.workItems.id, id));
+    return wi && mayRead(wi.projectId) ? wi.state : null;
+  }
+  const [row] = await tx.select().from(t.commitments).where(eq(t.commitments.id, id));
+  if (!row || row.ownerId !== authorId) return null;
+  return field === "due" ? row.dueOn : row.state;
 }
 
 /**
@@ -1168,7 +1205,7 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       return handover.projectId;
     }
     case "leave": {
-      const extracted = parseLeave(w.value, s.authorId);
+      const extracted = parseLeave(w.value, s.authorId, item);
       if (!extracted) throw new CommandRefused("leave needs real dates");
       const rows = await tx.select().from(t.leave).where(eq(t.leave.personId, s.authorId));
       const r = acceptExtractedLeave(extracted, leaveRecords(rows));
@@ -1379,22 +1416,45 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
     for (const item of items.filter(isReady)) {
       const key = targetKey(item);
       if (key !== null && !(key in current)) current[key] = await readCurrent(tx, item, authorId);
+      // Phase E: a promise reads its linked work and the commitment it matches or ends, as they are now
+      for (const k of commitmentKeys(item)) if (!(k in current)) current[k] = await readCommitmentFact(tx, k, authorId, isMember);
     }
     let plan = planSave(saving.record, items, current);
     if (plan.outcome === "refused") throw new CommandRefused(plan.reason);
+    // Phase E: a promise said done after it was dropped or closed can never save; the author rejects it
+    const refusals = new Map<string, string>();
+    if (plan.outcome === "conflict" || plan.outcome === "apply") {
+      for (const c of plan.conflicts.filter((x) => x.key.startsWith("commitment:"))) {
+        refusals.set(c.itemId, `That promise is ${c.current === "lapsed" ? "closed" : (c.current ?? "gone")} now, so it can't be marked done. Reject it`);
+      }
+    }
     // D12: every write is checked against its record's machine before anything is written. A
     // refusal goes back to its card, and all or nothing (S3) means the rest waits with it
-    const refusals = new Map<string, string>();
     if (plan.outcome === "apply") {
       for (const w of plan.writes) {
         // Phase J: a write that goes back as an ask is not the author's to apply, so its record's rules do not run
         if (deciders.has(w.itemId)) continue;
-        const reason = (await editRule(tx, s0(items, w.itemId), authorId))(w.value);
+        const reason = (await editRule(tx, s0(items, w.itemId), authorId, ctx.now))(w.value);
         if (reason) refusals.set(w.itemId, `${reason}. Edit it or reject it`);
       }
-      if (refusals.size) {
-        const refused = plan.writes.filter((w) => refusals.has(w.itemId));
-        plan = { outcome: "conflict", conflicts: refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null })) };
+      // Phase E, CM5: a promise's day is checked as it saves, so one that passed while the review waited goes back
+      // to its card to fix, never a machine refusal that stops the save with nothing said
+      const promised: { itemId: string; dueOn: string }[] = plan.commitments.flatMap((c) => (c.act === "promise" ? [c] : []));
+      for (const c of promised) {
+        const reason = (await editRule(tx, s0(items, c.itemId), authorId, ctx.now))(c.dueOn);
+        if (reason) refusals.set(c.itemId, `${reason}. Edit it or reject it`);
+      }
+      const refused = plan.writes.filter((w) => refusals.has(w.itemId));
+      const late = promised.filter((c) => refusals.has(c.itemId));
+      if (refused.length || late.length) {
+        plan = {
+          outcome: "conflict",
+          conflicts: [
+            ...plan.conflicts,
+            ...refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null })),
+            ...late.map((c) => ({ itemId: c.itemId, key: `promise:${c.itemId}:due`, saw: c.dueOn, current: null })),
+          ],
+        };
       }
     }
     if (deciders.size) {
@@ -1468,7 +1528,16 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       // Section 20, U5 and U7: someone else's record, or new work, asks the person with the right (M37)
       await createOwnerAsks(tx, ctx.now, { id: captureId, authorId }, plan.asks);
       for (const a of plan.asks) touched.add(a.projectId);
+      // Phase E, M22: the author's own promises open, move or end their commitments; no project is touched (CD3)
+      await applyCommitmentsAtSave(tx, ctx.now, { id: captureId, authorId }, plan.commitments, world);
     });
+    // Phase P, M35: a saved leave, new, changed or already on record, gets Atlas's offer of cover for what is due
+    // while away (LV1: nothing due, nothing offered), and the requests it has settle on its dates now (LV3)
+    for (const item of settled.filter((i) => i.draft.target?.type === "leave" && i.draft.leave && (i.state === "applied" || i.state === "no_change"))) {
+      const leaveId = item.draft.leave!.leaveId ?? `lv-${item.id}`;
+      await offerIn(tx, ctx.now, leaveId, captureId);
+      await coverOnLeave(tx, ctx.now, leaveId);
+    }
     await syncReminder(tx, ctx.now, authorId, captureId, false, true);
     // Phase L: a set status the rules move after this save is part of it, and goes back with an undo
     const statusBefore = new Map<string, typeof t.projects.$inferSelect>();

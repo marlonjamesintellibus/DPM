@@ -20,7 +20,7 @@
 // correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
 // unsure (phase D, M21): what DPM asks the author which of, after the checks: "records:<id>,<id>" for an
 //   update whose words fit 2 or 3 records. A case without it must leave no record unsure.
-import type { EarlierTurn, OpenAnswer } from "../../domain/atlas-checks/types";
+import type { EarlierTurn, ExistingLeave, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
 import type { Correction } from "../../domain/topics/correction";
@@ -65,6 +65,8 @@ export type EvalCase = {
   unsure?: string;
   /** Phase J: the text is a standup's typed answers, each after its "Atlas:" question; quotes only from the answers (M28). */
   standup?: true;
+  /** Phase P: the author's live leave for this case only, in place of the seed's (LV6: back early from leave they are on). */
+  leave?: ExistingLeave[];
 };
 
 // Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
@@ -326,11 +328,11 @@ export const EVAL_CASES: EvalCase[] = [
   },
   {
     id: "own-promise",
-    about: "the author's own promise is not proposed (phase E)",
+    about: "phase E: the author's own promise is a commitment, due the day it names, never a dependency",
     text: "I'll send Kyle the access request for the store feed tomorrow.",
-    expect: [],
-    allow: ["same:br-feed-dependency", "same:br-feed-blocker", "upd:wi-151*"],
-    forbid: ["new:dependency*"],
+    expect: [["promise:wi-151@2026-10-21", "promise:br-feed-dependency@2026-10-21", "promise:br-feed-blocker@2026-10-21", "promise:none@2026-10-21"]],
+    allow: ["same:br-feed-dependency", "same:br-feed-blocker", "upd:wi-151.state=blocked"],
+    forbid: ["new:dependency*", "upd:wi-151.forecast*"],
   },
   {
     id: "unfinished-own-work",
@@ -626,6 +628,46 @@ export const EVAL_CASES: EvalCase[] = [
     forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
     ask: { topic: "updates", projectId: null },
   },
+  // Phase P: leave and catching up after it (section 18, LV5 to LV7)
+  {
+    id: "p-catch-up",
+    about: "phase P: catch me up is catch_up, read from the start of his leave",
+    text: "Catch me up",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "catch_up", projectId: null },
+  },
+  {
+    id: "p-back-what-missed",
+    about: "phase P: back from leave and asking what he missed, no leave change",
+    text: "I'm back, what did I miss?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "catch_up", projectId: null },
+  },
+  {
+    id: "p-catch-up-project",
+    about: "phase P: catching up on one project names it",
+    text: "What happened on Forager while I was off?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "catch_up", projectId: "forager" },
+  },
+  {
+    id: "p-back-early",
+    about: "phase P, LV6: back early from leave he is on (Mon 19 to Fri 23 Oct) ends it the day before, a D6 change; never a question",
+    text: "I'm back early, back to work today.",
+    leave: [{ id: "lv-eval-back", start: "2026-10-19", end: "2026-10-23", state: "approved" }],
+    expect: ["upd:leave-kemar.dates=2026-10-19/2026-10-19"],
+    forbid: ["new:*", "same:*", "promise:*"],
+  },
+  {
+    id: "p-off-next-week",
+    about: "phase P: leave next week is his leave (D6), read by DPM as Mon 26 to Fri 30 Oct; never a question",
+    text: "I'm off next week.",
+    expect: ["upd:leave-kemar.dates=2026-10-26/2026-10-30"],
+    forbid: ["new:*", "same:*", "promise:*"],
+  },
   {
     id: "q-mentions",
     about: "mentions: who named him",
@@ -756,8 +798,9 @@ export const EVAL_CASES: EvalCase[] = [
     about: "JA3 future: will finish tomorrow is not done",
     text: "Mi a go finish #145 tomorrow.",
     expect: [],
-    allow: ["upd:wi-145.state=in_progress"],
-    forbid: ["upd:wi-145.state=done"],
+    // Phase E, CM3: finishing his own work by a day is its forecast, never a promise
+    allow: ["upd:wi-145.state=in_progress", "upd:wi-145.forecast=2026-10-21"],
+    forbid: ["upd:wi-145.state=done", "promise:*"],
   },
   {
     id: "ja-code-switch",
@@ -1247,5 +1290,88 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["*"],
     ask: { topic: "explain_project", projectId: "forager" },
+  },
+  // Phase E: commitments. Kemar speaks on Tuesday 20 Oct; his seeded promise "Send Andre the buyers' column list"
+  // (cm-kemar-columns, due Mon 19 Oct) is live, so the same promise and one said done have something to match
+  {
+    id: "e-promise-day",
+    about: "CM2: the author's own promise with a day is a commitment due then",
+    text: "I'll send Andre the export schedule on Thursday.",
+    expect: [["promise:none@2026-10-22", "promise:wi-208@2026-10-22"]],
+    forbid: ["new:*", "track:*", "upd:wi-208*"],
+  },
+  {
+    id: "e-promise-no-day",
+    about: "CM1, CD4: no day said is due the next working day",
+    text: "Let me check the buyer list with Alicia.",
+    expect: [["promise:none@2026-10-21", "promise:ms-release-1@2026-10-21"]],
+    forbid: ["new:*", "track:*"],
+  },
+  {
+    id: "e-promise-vague",
+    about: "CM2: a vague day ('next week') is read by the server as the end of that week",
+    text: "I'll write up the pipeline notes for Jodian next week.",
+    expect: [["promise:none@2026-10-30", "promise:br-pipeline-risk@2026-10-30"]],
+    forbid: ["new:*", "track:*"],
+  },
+  {
+    id: "e-promise-with-update",
+    about: "an update and a promise in one message: each is its own item",
+    text: "Weekly sales export is fixed. I'll walk Andre through it tomorrow.",
+    expect: ["upd:wi-208.state=done", ["promise:none@2026-10-21", "promise:wi-208@2026-10-21"]],
+    forbid: ["new:*"],
+  },
+  {
+    id: "e-not-own-forecast",
+    about: "CM3: finishing his own work by a day is its forecast, not a promise",
+    text: "I'll finish the trend scoring model by Friday.",
+    expect: ["upd:wi-147.forecast=2026-10-23"],
+    allow: ["upd:ms-trend.forecast*"],
+    forbid: ["promise:*", "new:*"],
+  },
+  {
+    id: "e-not-others-promise",
+    about: "CD5: a teammate's promise is never the author's",
+    text: "Jodian will send Kyle the backfill numbers tomorrow.",
+    expect: [],
+    allow: ["new:dependency*", "ask:*"],
+    forbid: ["promise:*", "same-promise:*"],
+  },
+  {
+    id: "e-not-done-work",
+    about: "work already done is not a promise",
+    text: "I sent Kyle the store feed request this morning.",
+    expect: [],
+    allow: ["same:*", "upd:wi-151*"],
+    forbid: ["promise:*", "same-promise:*", "promise-done:*"],
+  },
+  {
+    id: "e-same-promise",
+    about: "CM5: the same promise with a new day moves the live one, never a second",
+    text: "I'll get Andre the buyers' column list on Friday instead.",
+    expect: ["same-promise:cm-kemar-columns@2026-10-23"],
+    forbid: ["promise:*"],
+  },
+  {
+    id: "e-promise-done",
+    about: "CM6: a later update that says it was done proposes it done",
+    text: "Sent Andre the buyers' column list this morning.",
+    expect: ["promise-done:cm-kemar-columns"],
+    forbid: ["promise:*", "same-promise:*", "new:*"],
+  },
+  {
+    id: "e-ja-promise",
+    about: "phase R: 'mi wi' and 'mi a go' are the author's own future, a promise",
+    text: "Mi a go sen Andre di export schedule tumaro.",
+    expect: [["promise:none@2026-10-21", "promise:wi-208@2026-10-21"]],
+    forbid: ["new:*", "upd:wi-208.state=done"],
+  },
+  {
+    id: "e-what-promised",
+    about: "CM12: what he promised is a question, topic commitments",
+    text: "What did I promise?",
+    expect: [],
+    forbid: ["*"],
+    ask: { topic: "commitments", projectId: null },
   },
 ];

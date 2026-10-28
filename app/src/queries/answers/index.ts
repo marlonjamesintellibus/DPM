@@ -3,6 +3,8 @@
 import type { QuestionTopic } from "../../domain/question";
 import { atRiskWeek } from "./at-risk-week";
 import { blocked } from "./blocked";
+import { catchUp } from "./catch-up";
+import { commitments } from "./commitments";
 import { correction } from "./correction";
 import { due } from "./due";
 import { explainProject } from "./explain-project";
@@ -29,10 +31,12 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   needs_me: needsMe,
   my_work: myWork,
   due,
+  commitments,
   blocked,
   project_status: standing,
   explain_project: explainProject,
   updates,
+  catch_up: catchUp,
   mentions,
   people,
   who_free: whoFree,

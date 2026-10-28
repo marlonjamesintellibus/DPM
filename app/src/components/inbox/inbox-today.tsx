@@ -15,7 +15,11 @@ import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { describeOwnerAsk } from "@/queries/owner-ask";
 import { signalsFor } from "@/queries/signals";
-import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
+import { clockTime, firstName, getProject, KIND_LABEL, projectReader, todayIn, type ProjectView } from "@/queries/project";
+import { asksDrop } from "@/domain/machines/commitment";
+import { CommitmentButtons } from "@/components/chat/commitment";
+import { CoverAnswerButtons } from "@/components/chat/cover";
+import { describeCoverAsk } from "@/queries/cover";
 import { OUTCOME_ACT } from "@/queries/review";
 import { OUTCOMES, type ResolveOutcome } from "@/domain/machines/braid-entry";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
@@ -41,6 +45,9 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   owner_ask: "Asked of you",
   vocab_change: "Correction",
   signals: "Atlas noticed",
+  commitment_check: "Your promise",
+  commitment_stands: "Your promise",
+  cover_ask: "Cover",
 };
 
 /** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
@@ -52,7 +59,7 @@ function outcomeChoices(kind: keyof typeof OUTCOMES, said: readonly ResolveOutco
 // The small mark before an item's source line: a rule's check, someone's words, work, people
 function sourceIcon(item: InboxEntry): IconName {
   if (item.cause === "signals") return "sparkles-12";
-  if (item.cause === "leave_impact") return "users";
+  if (item.cause === "leave_impact" || item.cause === "cover_ask") return "users";
   if (item.cause === "done_no_change") return "git-commit";
   if (item.cause === "blocker_new" || item.cause === "confirm_clear" || item.cause === "blocked_without_blocker") return "alert";
   if (item.source === "Delivery check") return "check";
@@ -227,6 +234,40 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
           <LinkChangeForm workItemId={item.subject.id} />
         </DetailCard>
       );
+    case "commitment": {
+      // Phase E, M22: the viewer's own promise; answering it here is the same as in the chat
+      const [row] = await (await getDb()).select().from(t.commitments).where(eq(t.commitments.id, item.subject.id));
+      if (!row || row.ownerId !== viewerId) return null;
+      const check = item.cause === "commitment_check";
+      return (
+        <DetailCard label={label} title={item.title}>
+          <Explain>
+            Why it is here: {item.why}. Only you see your promises; nothing on a project changes when you answer.
+          </Explain>
+          <CommitmentButtons id={row.id} mode={check ? "check" : "stands"} today={todayIn(at)} dropFirst={check && asksDrop(row)} />
+        </DetailCard>
+      );
+    }
+    case "cover_request": {
+      // Phase P, M35: what a teammate asks the viewer to cover while away; answering here is the same as in the chat
+      const ask = await describeCoverAsk(await getDb(), viewerId, item.subject.id, at);
+      if (!ask || ask.state !== "asked") return null;
+      return (
+        <DetailCard label={label} title={item.title}>
+          <ul className="flex flex-col gap-1">
+            {ask.items.map((i) => (
+              <li key={i.key} className="type-body text-fg-1">
+                {i.label} <span className="type-caption text-fg-3">{i.when}</span>
+              </li>
+            ))}
+          </ul>
+          <Explain>
+            Why it is here: {item.why}. Accepting does not make the work yours: {firstName(ask.asker.name)} still owns it, and the handover lists each thing for you.
+          </Explain>
+          <CoverAnswerButtons id={ask.id} items={ask.items.map((i) => ({ key: i.key, label: i.label }))} />
+        </DetailCard>
+      );
+    }
     case "capture":
       return (
         <DetailCard label={label} title={item.title}>

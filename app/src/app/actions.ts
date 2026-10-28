@@ -41,6 +41,8 @@ import {
 } from "@/commands/capture";
 import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
 import { answerClarification } from "@/commands/clarification";
+import { answerCommitment, type CheckInAnswer } from "@/commands/commitment";
+import { answerCover, askCover, dismissCover, type CoverAnswer } from "@/commands/cover";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
@@ -173,6 +175,49 @@ export async function answerClarificationAction(clarificationId: string, option:
   return r.ok ? { ok: true, message } : r;
 }
 
+// ---- Commitments (phase E, M22) ----
+
+/**
+ * The owner answers a check-in or CM11's question, in the chat or the inbox, or acts on a promise from "What did I
+ * promise?": Done, a new date, Drop, or "it still stands". `commandId` is the buttons' own, so a second tap or a
+ * retried request changes nothing (rule 6); the command checks it is theirs and still live.
+ */
+export async function answerCommitmentAction(commitmentId: string, answer: CheckInAnswer, commandId: string): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await answerCommitment(ctx, commitmentId, answer, commandId)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
+// ---- Cover while away (phase P, M35) ----
+
+/**
+ * The person going on leave asks one teammate to cover one or several of their things on one project (LV8); only
+ * their tap sends it (rule 9). `commandId` is the form's own, so a second tap or a retried request asks once (rule 6).
+ */
+export async function askCoverAction(leaveId: string, toId: string, keys: string[], commandId: string): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await askCover(ctx, leaveId, toId, keys, commandId)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
+/** No cover needed: the offer the button was shown with ends, and nothing is asked; the command id makes a repeat change nothing. */
+export async function dismissCoverAction(leaveId: string, offerId: string | null, commandId: string): Promise<ActionResult> {
+  return run((ctx) => dismissCover(ctx, leaveId, offerId, commandId), "No cover asked.");
+}
+
+/** The teammate asked accepts, declines, or says they can't do one item of several; checked when it runs. */
+export async function answerCoverAction(requestId: string, answer: CoverAnswer, commandId: string): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await answerCover(ctx, requestId, answer, commandId)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
 // ---- Standup with Atlas (phase J, M28) ----
 
 /**
@@ -297,7 +342,7 @@ export async function undoUpdate(captureId: string, commandId: string): Promise<
   let reply = "";
   const r = await run(async (ctx) => {
     const done = await undoSave(ctx, { commandId, captureId });
-    const body = await undoReply(ctx.db, ctx.actorId, done.kind === "job" ? done.job.id : null, ctx.now);
+    const body = await undoReply(ctx.db, ctx.actorId, done.kind === "job" ? done.job.id : null, ctx.now, captureId);
     reply = body.text;
     if (done.kind !== "job" || done.job.state !== "undone") throw new CommandRefused(body.text);
   });

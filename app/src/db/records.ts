@@ -12,6 +12,8 @@ import type { Status } from "../domain/status/status";
 import type { Conn, Tx } from "./conn";
 import type { KindRequestRecord } from "../domain/machines/kind-request";
 import type { OwnerAskRecord } from "../domain/machines/owner-ask";
+import type { CommitmentRecord } from "../domain/machines/commitment";
+import type { CoverRecord } from "../domain/machines/cover-request";
 import type { LeaveRecord } from "../domain/machines/leave";
 import * as t from "./schema";
 
@@ -395,6 +397,85 @@ export async function persistOwnerAsk(tx: Tx, r: OwnerAskRecord, version: number
     .where(and(eq(t.ownerAsks.id, id), eq(t.ownerAsks.version, version)))
     .returning({ id: t.ownerAsks.id });
   expectOne(rows, `ask ${id}`);
+}
+
+type CommitmentRow = typeof t.commitments.$inferSelect;
+
+/** M22, phase E: a commitment row as its machine reads it. */
+export function commitmentOf(row: CommitmentRow): CommitmentRecord {
+  return {
+    id: row.id,
+    ownerId: row.ownerId,
+    captureId: row.captureId,
+    extractionId: row.extractionId,
+    what: row.what,
+    dueOn: row.dueOn,
+    link: row.linkType && row.linkId && row.linkProjectId ? { type: row.linkType, id: row.linkId, projectId: row.linkProjectId } : null,
+    state: row.state,
+    moves: row.moves,
+    checkIns: row.checkIns,
+    checkInOut: row.checkInOut,
+    checkInOn: row.checkInOn,
+    stands: row.stands,
+    savedOn: row.savedOn,
+    endedOn: row.endedOn,
+    endedBy: row.endedBy,
+  };
+}
+
+/** Inserts a new commitment (version null), or writes a move against the version it was read at. */
+export async function persistCommitment(tx: Tx, r: CommitmentRecord, version: number | null, now: Date): Promise<void> {
+  const { id, link, ...rest } = r;
+  const columns = { ...rest, linkType: link?.type ?? null, linkId: link?.id ?? null, linkProjectId: link?.projectId ?? null };
+  if (version === null) {
+    await tx.insert(t.commitments).values({ id, ...columns, createdAt: now, updatedAt: now });
+    return;
+  }
+  const rows = await tx
+    .update(t.commitments)
+    .set({ ...columns, version: nextVersion(t.commitments.version), updatedAt: now })
+    .where(and(eq(t.commitments.id, id), eq(t.commitments.version, version)))
+    .returning({ id: t.commitments.id });
+  expectOne(rows, `commitment ${id}`);
+}
+
+type CoverRow = typeof t.coverRequests.$inferSelect;
+
+/** M35, phase P: a cover request row as its machine reads it. */
+export function coverOf(row: CoverRow): CoverRecord {
+  return {
+    id: row.id,
+    leaveId: row.leaveId,
+    askerId: row.askerId,
+    captureId: row.captureId,
+    projectId: row.projectId,
+    toId: row.toId,
+    items: row.items,
+    declined: row.declined,
+    state: row.state,
+    handover: row.handover,
+    handoverId: row.handoverId,
+    endedWhy: row.endedWhy,
+    askedAt: row.askedAt,
+  };
+}
+
+/**
+ * Inserts a new cover request (version null), or writes a move against the version it was read at. commands: the
+ * PICK's or the answer's command id, kept so a repeat changes nothing (rule 6).
+ */
+export async function persistCover(tx: Tx, r: CoverRecord, version: number | null, now: Date, commands: { askCommandId?: string; answerCommandId?: string } = {}): Promise<void> {
+  const { id, ...rest } = r;
+  if (version === null) {
+    await tx.insert(t.coverRequests).values({ id, ...rest, ...commands, createdAt: now, updatedAt: now });
+    return;
+  }
+  const rows = await tx
+    .update(t.coverRequests)
+    .set({ ...rest, ...commands, version: nextVersion(t.coverRequests.version), updatedAt: now })
+    .where(and(eq(t.coverRequests.id, id), eq(t.coverRequests.version, version)))
+    .returning({ id: t.coverRequests.id });
+  expectOne(rows, `cover request ${id}`);
 }
 
 export function kindRequestOf(row: KindRequestRow): KindRequestRecord {

@@ -8,16 +8,34 @@ import { config } from "../../domain/config";
 import type { SavedRef } from "../../domain/machines/undo";
 import type { AnswerCard } from "../../domain/question";
 import { clockTime, firstName, projectReader } from "../project";
-import { readReceipt, toldUndone } from "../undo";
-import type { AnswerBuilder, Body } from "./shared";
+import { keptPromisesOfSave, lastSave, readReceipt, toldUndone } from "../undo";
+import { dayDate, type AnswerBuilder, type Body } from "./shared";
 
 const NOTHING: Body = { text: "There's nothing of yours to undo.", cards: [], more: null };
 
+/**
+ * Phase E with CD34: what an undo leaves of the save's promise changes, said so the asker is not left thinking
+ * they went back: "A promise you marked done or moved stays as you left it: Send Kyle the access request (done)."
+ */
+async function keptLine(conn: Conn, viewerId: string, captureId: string): Promise<string> {
+  const kept = await keptPromisesOfSave(conn, viewerId, captureId);
+  if (!kept.length) return "";
+  const said = kept.map((k) => `${k.what} (${k.act === "done" ? "done" : `due ${dayDate(k.dueOn)}`})`).join("; ");
+  return `A promise you marked done or moved stays as you left it: ${said}.`;
+}
+
 export const undo: AnswerBuilder = async (conn, viewerId, question, now) => undoReply(conn, viewerId, question.made?.[0] ?? null, now);
 
-/** The reply for one undo job, or for none (UN4). Only the asker's own job is read. */
-export async function undoReply(conn: Conn, viewerId: string, jobId: string | null, now: Date): Promise<Body> {
-  if (!jobId) return NOTHING;
+/**
+ * The reply for one undo job, or for none (UN4). Only the asker's own job is read. With no job, the save asked
+ * about (captureId, or their last save for "Undo that") may still have changed a promise of theirs, which stays.
+ */
+export async function undoReply(conn: Conn, viewerId: string, jobId: string | null, now: Date, captureId?: string): Promise<Body> {
+  if (!jobId) {
+    const save = captureId ? await readReceipt(conn, captureId) : await lastSave(conn, viewerId);
+    const kept = save && save.authorId === viewerId ? await keptLine(conn, viewerId, save.captureId) : "";
+    return kept ? { text: `There's nothing to undo there. ${kept}`, cards: [], more: null } : NOTHING;
+  }
   const [job] = await conn.select().from(t.undos).where(and(eq(t.undos.id, jobId), eq(t.undos.ownerId, viewerId)));
   const receipt = job ? await readReceipt(conn, job.captureId) : null;
   if (!job || !receipt) return NOTHING;
@@ -36,7 +54,8 @@ export async function undoReply(conn: Conn, viewerId: string, jobId: string | nu
     const told = await toldUndone(conn, job.id);
     const names = told.length ? (await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(inArray(t.people.id, told))).map((p) => firstName(p.name)).sort() : [];
     const tell = names.length ? ` I told ${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} it's undone.` : "";
-    return { text: `Done. I undid your ${saved} update: ${what}.${tell}`, cards: projectCards, more: null };
+    const kept = await keptLine(conn, viewerId, job.captureId);
+    return { text: `Done. I undid your ${saved} update: ${what}.${tell}${kept ? ` ${kept}` : ""}`, cards: projectCards, more: null };
   }
   const refusal = job.refusal;
   switch (refusal?.why) {

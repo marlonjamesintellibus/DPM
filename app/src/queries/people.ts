@@ -12,7 +12,7 @@ import { leaveRecordOf } from "../db/records";
 import * as t from "../db/schema";
 import type { IsoDate } from "../domain/dates";
 import { isMember } from "../domain/machines/membership";
-import { leaveAhead, leaveImpactOwners, onLeaveUntil, type LeaveRange } from "../domain/machines/leave";
+import { DECIDED_LEAVE, leaveAhead, leaveImpactOwners, onLeaveUntil, type LeaveRange } from "../domain/machines/leave";
 import { namesPerson } from "../domain/names";
 import { milestonesOf, projectsAsked, workOf } from "./answers/shared";
 import { projectReader, todayIn, type PersonRef, type ProjectBraidEntry, type ProjectMilestone, type ProjectReader, type ProjectView, type ProjectWorkItem } from "./project";
@@ -143,6 +143,27 @@ export async function leaveShownTo(
   if (!showsLeave(viewerId, personId, projectIds, r)) return null;
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, personId));
   return leaveOf(viewerId, personId, projectIds, now, r, leave).onLeaveUntil;
+}
+
+/**
+ * Phase P, LV2: the decided leave of each of these people that overlaps the given days, only where one of these
+ * projects shows the viewer that person's leave (D6, as PP7); someone whose leave the viewer is not shown is not in it.
+ * A request still waiting on the admin is not their leave yet.
+ */
+export async function awayDuring(conn: Conn, viewerId: string, personIds: readonly string[], projectIds: readonly string[], days: LeaveRange, reader?: ProjectReader): Promise<Map<string, LeaveRange>> {
+  const out = new Map<string, LeaveRange>();
+  if (!personIds.length) return out;
+  const r = reader ?? (await projectReader(conn, viewerId));
+  const rows = await conn.select().from(t.leave).where(inArray(t.leave.personId, [...personIds]));
+  for (const personId of personIds) {
+    if (!showsLeave(viewerId, personId, projectIds, r)) continue;
+    const overlap = rows
+      .filter((l) => l.personId === personId)
+      .map(leaveRecordOf)
+      .find((l) => DECIDED_LEAVE.includes(l.state) && l.start <= days.end && days.start <= l.end);
+    if (overlap) out.set(personId, { start: overlap.start, end: overlap.end });
+  }
+  return out;
 }
 
 /** PP7, D6: whether one of these projects shows the viewer what this person's leave touches. */
