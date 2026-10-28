@@ -6,10 +6,14 @@
 //   blocking you?", which always has the last place. "Stuck" asks "What's it waiting on?" next, and "No, it
 //   moves" asks "When do you now expect it?"; neither counts in the n.
 //   A tap answer is a proposal at high confidence with its question as the quote ("Done" on #208 is #208
-//   In progress to Done). Typed answers DPM cannot read as a tap are Atlas's, each read with its question.
-import type { RawProposal } from "./atlas-checks/types";
+//   In progress to Done), compared at save with what the question showed (SU3). Typed answers DPM cannot read
+//   as a tap are Atlas's, each read with its question. A question about a project the person can no longer
+//   read is left out of everything shown or read after it, with its answer (P10).
+import type { CheckContext, RawProposal } from "./atlas-checks/types";
 import { daysBetween, weekday, type IsoDate } from "./dates";
+import { WORD_ACTS } from "./machines/chat-command";
 import { TAP_LABEL, TAPS, workAsked, type QuestionKind, type StandupAnswer, type StandupQuestion, type StandupStep, type StandupSubject, type TapAnswer } from "./machines/standup";
+import { ruleQuestion } from "./question";
 import type { SourceSpan } from "./shared";
 import type { WorkItemState } from "./status/rules";
 
@@ -61,16 +65,18 @@ export function questionText(kind: QuestionKind, w: Pick<OpenWork, "label" | "du
 }
 
 /**
- * SU8: the next question, from their open work as read now. Work already asked about today is not asked again,
- * nor work a same-day update already speaks to (`covered`: the standup only fills the gaps). At most `max`
- * questions, and "Anything new blocking you?" always has the last place; null once it has been asked.
+ * SU8: the next question, from their open work as read now. Work already asked about today is not asked again.
+ * A standup the person starts asks from all of it, whatever they said earlier today (CD12: it does not ask
+ * only about what a same-day update left out). At most `max` questions, and "Anything new blocking you?"
+ * always has the last place; null once it has been asked.
  */
-export function nextQuestion(open: readonly OpenWork[], steps: readonly Pick<StandupStep, "kind" | "subject">[], today: IsoDate, max: number, covered: ReadonlySet<string> = new Set()): QuestionDraft | null {
+export function nextQuestion(open: readonly OpenWork[], steps: readonly Pick<StandupStep, "kind" | "subject">[], today: IsoDate, max: number): QuestionDraft | null {
   if (steps.some((s) => s.kind === "new")) return null;
   const asked = new Set(steps.flatMap((s) => (s.subject ? [s.subject.id] : [])));
   if (workAsked(steps) < max - 1) {
-    const soon = (w: OpenWork) => w.due !== null && daysBetween(today, w.due) <= 1;
-    const fresh = open.filter((w) => !asked.has(w.id) && !covered.has(w.id));
+    // Section 12: due today or tomorrow; work already late is not "still on" for a day gone by
+    const soon = (w: OpenWork) => w.due !== null && daysBetween(today, w.due) >= 0 && daysBetween(today, w.due) <= 1;
+    const fresh = open.filter((w) => !asked.has(w.id));
     for (const kind of ["blocked", "in_progress", "due"] as const) {
       const w = fresh.filter((x) => AS_ASKED[kind](x) && (kind !== "due" || soon(x))).sort(byDue)[0];
       if (w) return { kind, subject: subjectOf(w), text: questionText(kind, w) };
@@ -88,7 +94,7 @@ export function followUp(step: Pick<StandupStep, "kind" | "subject">, answer: St
 }
 
 function subjectOf(w: OpenWork): StandupSubject {
-  return { type: w.type, id: w.id, projectId: w.projectId, label: w.label, number: w.number };
+  return { type: w.type, id: w.id, projectId: w.projectId, label: w.label, number: w.number, saw: w.saw };
 }
 
 // ---- Typed words ----
@@ -127,6 +133,26 @@ export function readTypedReply(text: string, kind: QuestionKind): TypedReply {
   return { act: "answer", answer: { tap, words: tap ? null : text.trim(), by: null } };
 }
 
+// Phase B's word acts as a reply starts them ("Approve the second one", "Yes, decline it")
+const WORD_ACT = /^(?:(?:yes|yeah|ok|okay|please|pls)[\s,]+)?(?:approve|accept|decline|reject|turn down|resolve|close)\b/;
+
+/**
+ * SU4: their own question or command while a standup asks is read as itself, never as the answer, so it gets
+ * its reply and runs: a question ("What am I working on?"), "Undo that", a correction ("GQ also means the
+ * Guild"), or a word act on the answer open in the chat (phase B: "Approve the second one"). By the rules, as
+ * "Start my standup" is: what they cannot tell is an answer, read with its question (SU4: "Not that, but #212
+ * is done"). Words that say a tap, "skip" or "that's all" are read before this, so "No" stays an answer.
+ */
+export function isOwnMessage(ctx: Pick<CheckContext, "text" | "projects" | "openAnswer">): boolean {
+  const t = ctx.text.trim().toLowerCase().replace(/[‘’]/g, "'");
+  if (t.endsWith("?")) return true;
+  // Without the conversation before it: "and #212 is done" follows nothing here, so it is an answer
+  const asked = ruleQuestion({ text: ctx.text, projects: ctx.projects });
+  if (asked && asked.topic !== "small_talk" && asked.topic !== "other" && asked.topic !== "unclear") return true;
+  const acts = ctx.openAnswer?.lines.some((l) => l.acts.some((a) => (WORD_ACTS as readonly string[]).includes(a))) ?? false;
+  return acts && WORD_ACT.test(t);
+}
+
 // ---- The composed capture ----
 
 /** One answered question in the composed text: where its line starts ("Atlas: "), and where its question and its answer are. */
@@ -158,6 +184,36 @@ export function composeText(firstName: string, steps: readonly StandupStep[]): C
   return { text, lines };
 }
 
+/**
+ * P10: the lines about work on a project the person may read now, and those about no record. A question about
+ * a project they have since left is left out with its answer, as the chat leaves it out (SU8): not shown in
+ * the review, and never read by Atlas. Positions stay those of the stored text.
+ */
+export function readableLines({ text, lines }: Composed, mayRead: (projectId: string) => boolean): Composed {
+  return { text, lines: lines.filter((l) => !l.step.subject || mayRead(l.step.subject.projectId)) };
+}
+
+/** The text as it is shown: its lines only, and where a span of the stored text is in it (null for one in a line left out). */
+export type ShownText = { text: string; at: (span: SourceSpan) => SourceSpan | null };
+
+/** What a composed text shows of its lines (readableLines): the stored text itself when every line is kept. */
+export function shownText({ text, lines }: Composed): ShownText {
+  let shown = "";
+  const moves: { from: number; to: number; by: number }[] = [];
+  for (const line of lines) {
+    if (shown) shown += "\n";
+    moves.push({ from: line.start, to: line.answer.end, by: shown.length - line.start });
+    shown += text.slice(line.start, line.answer.end);
+  }
+  return {
+    text: shown,
+    at: (span) => {
+      const m = moves.find((x) => x.from <= span.start && span.end <= x.to);
+      return m ? { start: span.start + m.by, end: span.end + m.by } : null;
+    },
+  };
+}
+
 /** What DPM proposes from the taps, the typed answers Atlas reads, and where the checks look for quotes. */
 export type StandupRead = {
   tapped: RawProposal[];
@@ -167,6 +223,8 @@ export type StandupRead = {
   quoteIn: SourceSpan[];
   /** Section 20, U1: the words they typed; only these can be set aside as not used, never DPM's questions or a tap. */
   ownWords: SourceSpan[];
+  /** SU3: what the questions Atlas reads answers to showed of their records, by record id and field. */
+  saw: Record<string, Record<string, string | null>>;
 };
 
 const said = (text: string, span: SourceSpan) => text.slice(span.start, span.end);
@@ -175,18 +233,21 @@ const said = (text: string, span: SourceSpan) => text.slice(span.start, span.end
  * Section 12: a tap answer is a proposal at high confidence with its question as the quote. "Stuck" is
  * Blocked, with what it waits on as the note when they said it (then those words are the quote, so a blocker
  * report from them is linked to the work, M5); "No, it moves" is a forecast read from when they now expect it
- * (check 5 reads the date from those words). Still going, still stuck, yes and no change nothing. Typed words
- * go to Atlas with their question, and so does what a wait answer names, for a blocker report.
+ * (check 5 reads the date from those words). Still going, still stuck, yes and no change nothing. Each is
+ * compared at save with what its question showed (SU3). Typed words go to Atlas with their question, and so
+ * does what a wait answer names, for a blocker report.
  */
 export function readComposed({ text, lines }: Composed): StandupRead {
   const tapped: RawProposal[] = [];
   const typed: SourceSpan[] = [];
   const quoteIn: SourceSpan[] = [];
+  const saw: StandupRead["saw"] = {};
   const followed = (i: number, kind: QuestionKind) => (lines[i + 1]?.step.kind === kind && lines[i + 1].step.subject?.id === lines[i].step.subject?.id ? lines[i + 1] : null);
   lines.forEach((line, i) => {
     const { step } = line;
     const s = step.subject;
     const tap = step.answer!.tap;
+    if (s && (!tap || step.kind === "wait")) saw[s.id] = s.saw;
     const proposal = (quote: SourceSpan, field: string, newValue: string | null, rationale: string, note?: string): RawProposal => ({
       kind: "update",
       projectId: s!.projectId,
@@ -195,6 +256,7 @@ export function readComposed({ text, lines }: Composed): StandupRead {
       field,
       newValue,
       ...(note ? { note } : {}),
+      ...(field in s!.saw ? { shownValue: s!.saw[field] } : {}),
       quote: said(text, quote),
       confidence: "high",
       rationale,
@@ -231,7 +293,25 @@ export function readComposed({ text, lines }: Composed): StandupRead {
     quoteIn.push(line.question);
   });
   const ownWords = lines.filter((l) => l.step.answer!.words).map((l) => l.answer);
-  return { tapped, typed: typed.length ? typed.map((sp) => said(text, sp)).join("\n") : null, quoteIn, ownWords };
+  return { tapped, typed: typed.length ? typed.map((sp) => said(text, sp)).join("\n") : null, quoteIn, ownWords, saw };
+}
+
+const fieldKey = (p: Pick<RawProposal, "targetId" | "field">) => `${p.targetId}.${p.field}`;
+
+/**
+ * What Atlas proposes from the typed answers, as DPM takes it. A field DPM's own taps already propose a change
+ * to is DPM's: Atlas reading "Stuck" again from a wait answer's context is dropped, since two items on one
+ * field never save together (S3), and so is a blocked note DPM's Blocked already carries. A change to a record
+ * a question was about is compared at save with what that question showed (SU3).
+ */
+export function atlasProposals(read: Pick<StandupRead, "tapped" | "saw">, proposals: readonly RawProposal[]): RawProposal[] {
+  const taken = new Set(read.tapped.flatMap((p) => [fieldKey(p), ...(p.note ? [fieldKey({ targetId: p.targetId, field: "blocked_note" })] : [])]));
+  return proposals
+    .filter((p) => p.kind !== "update" || !taken.has(fieldKey(p)))
+    .map((p) => {
+      const shown = p.kind === "update" && p.targetId && p.field ? read.saw[p.targetId] : undefined;
+      return shown && p.field! in shown ? { ...p, shownValue: shown[p.field!] } : p;
+    });
 }
 
 /** The question an answer was given to, for the chat: "Done", or nothing when the words are their own message. */

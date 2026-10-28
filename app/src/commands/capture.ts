@@ -414,13 +414,14 @@ export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number
 /**
  * Phase J, M28: a reply in the conversation where the author's standup is asking is its answer (SU4, SU5),
  * and its read ends here with nothing to propose: the answer is read with its question once the standup is
- * composed. null when no standup asks there. A standup past its idle time ends instead, and the reply is read
- * as a new message (answered false). composed: the capture the standup's answers became, to read next.
+ * composed. null when no standup asks there, or when the reply is their own question or command, read from
+ * `context` (SU4). A standup past its idle time ends instead, and the reply is read as a new message
+ * (answered false). composed: the capture the standup's answers became, to read next.
  */
-export function readAsStandupAnswer(ctx: CommandCtx, captureId: string, attempt: number): Promise<{ answered: boolean; composed: string | null } | null> {
+export function readAsStandupAnswer(ctx: CommandCtx, captureId: string, attempt: number, context: Pick<CheckContext, "text" | "projects" | "openAnswer">): Promise<{ answered: boolean; composed: string | null } | null> {
   return runCommand(ctx, async (tx) => {
     const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
-    const r = await answerStandupInWords(tx, ctx.now, row);
+    const r = await answerStandupInWords(tx, ctx.now, row, context);
     if (!r?.answered) return r && { answered: false, composed: r.composed };
     const moved_ = moveCapture(record, { type: "PROPOSALS_READY", count: 0, asked: true });
     await persistCapture(tx, captureId, row.version, moved_.record, ctx.now);
@@ -1504,7 +1505,7 @@ type Decider = { ask: string | null; refused: boolean; reason: string };
 async function deciderNow(tx: Tx, item: ExtractedItem, authorId: string, world: World): Promise<Decider | null> {
   const target = item.draft.target;
   if (item.draft.kind !== "update" || !target || target.type === "leave") return null;
-  let record: { ownerId: string | null; projectId: string; label: string } | null = null;
+  let record: { ownerId: string; projectId: string; label: string } | null = null;
   if (target.type === "work_item") {
     const [row] = await tx.select().from(t.workItems).where(eq(t.workItems.id, target.id));
     record = row ? { ownerId: row.ownerId, projectId: row.projectId, label: row.number ?? row.title } : null;
@@ -1523,8 +1524,9 @@ async function deciderNow(tx: Tx, item: ExtractedItem, authorId: string, world: 
   if (mayChangeField(target.type, target.field, { isOwner: record.ownerId === authorId, role: roleOf(authorId) })) {
     return { ask: null, refused: false, reason: `You can change ${record.label} yourself now, so saving changes it instead of asking ${await nameOf(item.draft.ask?.ownerId ?? null)}. Accept it to change it, or reject it` };
   }
+  // Every work item, milestone and handover has an owner (the columns are not null), so there is always one to name
   const owner = await nameOf(record.ownerId);
-  if (!record.ownerId || !roleOf(record.ownerId)) return { ask: null, refused: true, reason: `${record.label} is ${owner}'s, who is not on the project now, so it can't be asked or changed. Reject it` };
+  if (!roleOf(record.ownerId)) return { ask: null, refused: true, reason: `${record.label} is ${owner}'s, who is not on the project now, so you can't ask them or change it yourself. Reject it` };
   return { ask: record.ownerId, refused: false, reason: `${record.label} is ${owner}'s now, so saving asks ${owner} instead of changing it. Accept it to ask, or reject it` };
 }
 

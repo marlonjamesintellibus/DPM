@@ -13,7 +13,7 @@ import { weekday } from "../domain/dates";
 import { clockTime, daysAgo, NOT_YOURS, projectReader, shortDate, todayIn, type NotYours } from "./project";
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 import { undoReply } from "./answers/undo";
-import { composedFrom, standupViewOf, type StandupView } from "./standup";
+import { composedRead, standupViewOf, type StandupView } from "./standup";
 import { undoViewOf, type UndoView } from "./undo";
 
 export type ChatSummaryRow = {
@@ -320,10 +320,12 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     }))
     .sort((a, b) => order.indexOf(a.projectId) - order.indexOf(b.projectId));
   const commands = await commandsOf(conn, capture);
+  // Phase J: a standup's answers, as its author may read them now (P10)
+  const standupText = (await composedRead(conn, capture.id))?.shown.text ?? null;
 
   return {
     id: capture.id,
-    text: capture.text,
+    text: standupText ?? capture.text,
     channel: capture.channel,
     kind: capture.kind,
     durationSeconds: capture.durationSeconds,
@@ -345,7 +347,7 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     undo: capture.state === "saved" ? await undoOf(conn, capture, now) : null,
     ...(await clarificationsOf(conn, capture, commands.commands.length > 0)),
     standup: await standupViewOf(conn, capture),
-    fromStandup: (await composedFrom(conn, capture.id)) !== null,
+    fromStandup: standupText !== null,
   };
 }
 

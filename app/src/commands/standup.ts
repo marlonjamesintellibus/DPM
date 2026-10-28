@@ -1,24 +1,26 @@
 // M28 Standup (conversational plan, phase J): "Start my standup", or its button, starts the person's standup
 // in their own chat. Atlas asks two to four short questions from their open work, rebuilt at each step (SU8),
 // with tap answers where it can; a typed reply in that conversation is the answer to the question waiting
-// (SU4, SU5: a voice note is transcribed first), "Skip" moves on and "That's all" ends it (SU6). The last
-// answer, STOP or the idle timer composes what was answered into one capture (M1, M2), read as usual and
-// reviewed and saved by the person; with nothing answered it is abandoned (SU7). The save checks rights and
-// versions as for any update (SU3), and asks the owner of a record that is no longer theirs (rule 10). One
+// unless it is their own question or command (SU4, SU5: a voice note is transcribed first), "Skip" moves on
+// and "That's all" ends it (SU6). The last answer, STOP or the idle timer composes what was answered into one
+// capture (M1, M2), read as usual and reviewed and saved by the person; with nothing answered it is abandoned
+// (SU7). The save checks rights, and compares each answer with what its question showed (SU3), and asks the
+// owner of a record that is no longer theirs (rule 10). One
 // standup per person per day (SU10). Atlas starting one by itself waits on phase F: nothing sends SCHEDULE or
 // TIMER yet. Nothing here changes a record (rule 1).
 import { and, eq, isNull, lte, ne, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import * as t from "../db/schema";
+import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Moved } from "../domain/machine";
 import { isOwnChat } from "../domain/machines/clarification";
 import { applyStandupEvent, draftStandup, TAPS, type StandupAnswer, type StandupEvent, type StandupQuestion, type StandupRecord, type StandupState, type StandupStep, type TapAnswer } from "../domain/machines/standup";
-import { composeText, followUp, nextQuestion, readTypedReply } from "../domain/standup";
+import { composeText, followUp, isOwnMessage, nextQuestion, readTypedReply } from "../domain/standup";
 import { standup as standupTopic } from "../domain/topics/standup";
 import { firstName } from "../queries/project";
-import { coveredToday, openWorkOf, standupOf } from "../queries/standup";
+import { openWorkOf, standupOf } from "../queries/standup";
 import { createCaptureIn } from "./capture";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, todayOf, type CommandCtx } from "./core";
 
@@ -49,7 +51,7 @@ async function nextFor(tx: Tx, now: Date, r: StandupRecord, steps: readonly Stan
   const open = await openWorkOf(tx, r.personId, now);
   const last = steps.at(-1);
   const follow = last?.answer ? followUp(last, last.answer) : null;
-  const draft = follow && open.some((w) => w.id === follow.subject?.id) ? follow : nextQuestion(open, steps, r.day, config.standupMaxQuestions, await coveredToday(tx, r.personId, now));
+  const draft = follow && open.some((w) => w.id === follow.subject?.id) ? follow : nextQuestion(open, steps, r.day, config.standupMaxQuestions);
   return draft ? { ...draft, n: steps.length + 1, askedIn } : null;
 }
 
@@ -156,11 +158,17 @@ export type TypedRun = { standupId: string; answered: boolean; composed: string 
 /**
  * A reply in the conversation where their standup is asking is the answer to the question waiting: a tap's
  * words are that tap, "skip" skips, "that's all" stops, and anything else is their own words, read by Atlas
- * with the question when the standup is composed (SU4). "Start my standup" again is read as itself. A standup
- * past its idle time ends when touched, as the timer would a minute later, and the reply is read as a new
- * message (answered false). null when no standup asks there.
+ * with the question when the standup is composed (SU4). Their own question or command ("What am I working
+ * on?", "Undo that", "Start my standup" again) is read as itself, and the question keeps waiting (SU4,
+ * isOwnMessage). A standup past its idle time ends when touched, as the timer would a minute later, and the
+ * reply is read as a new message (answered false). null when no standup takes it.
  */
-export async function answerStandupInWords(tx: Tx, now: Date, reply: { id: string; authorId: string; conversationId: string | null; text: string }): Promise<TypedRun | null> {
+export async function answerStandupInWords(
+  tx: Tx,
+  now: Date,
+  reply: { id: string; authorId: string; conversationId: string | null; text: string },
+  context: Pick<CheckContext, "text" | "projects" | "openAnswer">,
+): Promise<TypedRun | null> {
   if (!reply.conversationId || standupTopic.rule.test(reply.text.trim().toLowerCase())) return null;
   const [row] = await tx
     .select()
@@ -173,6 +181,7 @@ export async function answerStandupInWords(tx: Tx, now: Date, reply: { id: strin
     return { standupId: row.id, answered: false, composed: ended.composed };
   }
   const said = readTypedReply(reply.text, row.current.kind);
+  if (said.act === "answer" && !said.answer.tap && isOwnMessage(context)) return null;
   const by: Actor = { actorType: "person", actorId: reply.authorId };
   const event: StandupEvent =
     said.act === "stop" ? { type: "STOP" } : said.act === "skip" ? { type: "SKIP", n: row.current.n } : { type: "ANSWER", n: row.current.n, answer: { ...(said.answer as StandupAnswer), by: reply.id } };

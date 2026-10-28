@@ -12,7 +12,7 @@ import * as t from "../db/schema";
 import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Confidence } from "../domain/shared";
-import type { StandupRead } from "../domain/standup";
+import { atlasProposals, type StandupRead } from "../domain/standup";
 import { composedRead } from "../queries/standup";
 import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, readAsAnswer, readAsStandupAnswer, ReadSuperseded, type Proposed } from "./capture";
 import { audit, runCommand, type CommandCtx } from "./core";
@@ -72,12 +72,14 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
       // Phase J, M28: a standup's answers are the taps DPM reads and the typed answers Atlas reads with their questions
       const standup = await composedRead(ctx.db, captureId);
       if (!standup) {
-        // Phase J: a reply while the author's standup asks is its answer; the answers are read once it is composed
-        const typed = await readAsStandupAnswer(at(), captureId, readAttempt);
+        // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them. First, so
+        // a standup asking in the same chat does not take "#152" as its own answer (SU4)
+        if (await readAsAnswer(at(), captureId, readAttempt)) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
+        // Phase J: a reply while the author's standup asks is its answer, unless it is their own question or
+        // command (SU4); the answers are read once it is composed
+        const typed = await readAsStandupAnswer(at(), captureId, readAttempt, context);
         if (typed?.composed) await readCapture(ctx, typed.composed, extractor, options);
         if (typed?.answered) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "standup" };
-        // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them
-        if (await readAsAnswer(at(), captureId, readAttempt)) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
       }
       let extraction: Extraction;
       try {
@@ -116,7 +118,7 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
  */
 async function readStandup(extractor: Extractor, context: CheckContext, standup: StandupRead, attempt: number): Promise<Extraction> {
   const read = standup.typed ? await extractor.extract({ ...context, text: standup.typed, earlier: undefined, openAnswer: null }, { attempt }) : { proposals: [], malformed: [], model: "standup", usage: null };
-  return { ...read, proposals: [...standup.tapped, ...read.proposals], question: null, commands: [] };
+  return { ...read, proposals: [...standup.tapped, ...atlasProposals(standup, read.proposals)], question: null, commands: [] };
 }
 
 /** Captures waiting for a read: never started, or waiting to try again. A worker runs readCapture on each. */

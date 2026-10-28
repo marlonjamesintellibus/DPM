@@ -82,7 +82,13 @@ describe("START: \"Start my standup\" in his own chat", () => {
     expect(start.read).toMatchObject({ outcome: "proposed", state: "answered" });
     const row = await standup();
     expect(row).toMatchObject({ day: "2026-10-20", state: "asking", conversationId: start.conversationId, startedBy: start.captureId, shownIn: start.captureId, steps: [] });
-    expect(row.current).toEqual({ n: 1, kind: "in_progress", subject: { type: "work_item", id: "wi-145", projectId: "forager", label: "#145 Google Trends connector", number: "#145" }, text: Q145, askedIn: start.captureId });
+    expect(row.current).toEqual({
+      n: 1,
+      kind: "in_progress",
+      subject: { type: "work_item", id: "wi-145", projectId: "forager", label: "#145 Google Trends connector", number: "#145", saw: { state: "in_progress", forecast: "2026-10-21" } },
+      text: Q145,
+      askedIn: start.captureId,
+    });
     const shown = await turn("kemar", start.conversationId, start.captureId);
     expect(shown.answer?.text).toBe("Let's do your standup. Tap an answer or type your own. Skip moves on, and That's all ends it.");
     expect(shown.standup).toEqual({
@@ -201,10 +207,11 @@ describe("edge cases SU1 to SU10", () => {
     expect(await db.select().from(t.captures).where(eq(t.captures.authorId, "andre"))).toHaveLength(2);
   });
 
-  it("SU2: work an update of his today already speaks to is not asked; the standup only fills the gaps", async () => {
+  it("SU2, CD12: a standup he starts after an update of his today asks from all his open work, not only what the update left out", async () => {
     await say("kemar", "Finished #145.", 0, null, reads([{ kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#145", label: "#145" }, targetId: "wi-145", field: "state", newValue: "done", quote: "Finished #145", confidence: "high", rationale: "" }]).extractor);
     await say("kemar", "Start my standup", 1, null, createFixtureExtractor());
-    expect((await standup()).current).toMatchObject({ subject: { id: "wi-151" } });
+    // His update is not saved, so #145 is still In progress and first in line
+    expect((await standup()).current).toMatchObject({ subject: { id: "wi-145" } });
   });
 
   it("SU3: someone else changed #145 while he answered: the save compares versions and the card shows the conflict", async () => {
@@ -217,6 +224,29 @@ describe("edge cases SU1 to SU10", () => {
     expect((await work("wi-145")).state).toBe("blocked");
   });
 
+  it("SU3: Alicia set #145 Blocked after it was asked and before he answered: his Done is compared with the In progress he was shown, never applied over her Blocked", async () => {
+    await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    expect((await standup()).current).toMatchObject({ text: Q145 });
+    await db.update(t.workItems).set({ state: "blocked", blockedNote: "waiting on QA" }).where(eq(t.workItems.id, "wi-145"));
+    await tap("kemar", answer("done"), 1);
+    const done = await tap("kemar", { act: "stop" }, 2);
+    const [item] = await items(done.composed!);
+    expect(item).toMatchObject({ saw: "in_progress", value: "done", draft: { target: { id: "wi-145", oldValue: "in_progress" } } });
+    await openReview(as("kemar", 3), done.composed!);
+    expect(await saveCapture(as("kemar", 3), done.composed!)).toMatchObject({ outcome: "conflict", conflicts: [{ saw: "in_progress", current: "blocked" }] });
+    expect(await work("wi-145")).toMatchObject({ state: "blocked", blockedNote: "waiting on QA" });
+  });
+
+  it("SU3: someone else marked it Done before he answered Done: nothing to change", async () => {
+    await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    await db.update(t.workItems).set({ state: "done" }).where(eq(t.workItems.id, "wi-145"));
+    await tap("kemar", answer("done"), 1);
+    const done = await tap("kemar", { act: "stop" }, 2);
+    await openReview(as("kemar", 3), done.composed!);
+    expect((await saveCapture(as("kemar", 3), done.composed!)).outcome).toBe("saved");
+    expect((await items(done.composed!))[0].state).toBe("no_change");
+  });
+
   it("SU4: an answer about another item is his own words, read by Atlas with the question; a quote from DPM's question is dropped", async () => {
     const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
     await say("kemar", "Not that, but #208 is done", 1, start.conversationId, noModel);
@@ -226,6 +256,47 @@ describe("edge cases SU1 to SU10", () => {
     expect(atlas.seen[0].text).toBe(`Atlas: ${Q145}\nKemar: Not that, but #208 is done`);
     const proposed = await items(done.composed!);
     expect(proposed.map((i) => [i.draft.target?.id, i.draft.projectId])).toEqual([["wi-208", "insights"]]);
+  });
+
+  it("SU4: his own question while it asks gets its answer, and the question keeps waiting for his answer", async () => {
+    const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    const asked = await say("kemar", "What am I working on?", 1, start.conversationId);
+    expect(asked.read).toMatchObject({ state: "answered" });
+    expect(asked.read.outcome === "proposed" && asked.read.model).not.toBe("standup");
+    expect(await capture(asked.captureId)).toMatchObject({ question: { topic: "my_work" } });
+    expect((await capture(asked.captureId)).answer?.text).toBeTruthy();
+    expect(await standup()).toMatchObject({ state: "asking", steps: [], current: { n: 1, text: Q145, askedIn: start.captureId } });
+    // His next words answer it
+    await say("kemar", "Done", 2, start.conversationId, noModel);
+    expect((await standup()).steps).toEqual([expect.objectContaining({ n: 1, answer: { tap: "done", words: null, by: expect.any(String) } })]);
+  });
+
+  it("SU4: \"Undo that\" while it asks runs as Undo, never as the answer", async () => {
+    const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    const undo = await say("kemar", "Undo that", 1, start.conversationId);
+    expect(await capture(undo.captureId)).toMatchObject({ question: { topic: "undo" } });
+    expect((await capture(undo.captureId)).answer?.text).toBeTruthy();
+    expect(await standup()).toMatchObject({ state: "asking", steps: [], current: { n: 1 } });
+  });
+
+  it("SU4: words that answer Atlas's open question in the same chat answer that question, not the standup's", async () => {
+    // "Worked on the store feed" fits #151 and #152, so Atlas asks which (phase D) before he starts his standup
+    const vague = await say("kemar", "Worked on the store feed today.", 0, null, createFixtureExtractor());
+    expect(await db.select().from(t.clarifications)).toEqual([expect.objectContaining({ state: "asked" })]);
+    await say("kemar", "Start my standup", 1, vague.conversationId, createFixtureExtractor());
+    const which = await say("kemar", "#152", 2, vague.conversationId, noModel);
+    expect(which.read).toMatchObject({ model: "clarification" });
+    expect(await db.select().from(t.clarifications)).toEqual([expect.objectContaining({ state: "resolved", chosen: "wi-152", answeredBy: which.captureId })]);
+    expect(await standup()).toMatchObject({ steps: [], current: { n: 1 } });
+  });
+
+  it("the Stuck follow-up: Atlas reading Blocked again from its context is dropped, so one Blocked is proposed (S3)", async () => {
+    const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    await tap("kemar", answer("stuck"), 1);
+    await say("kemar", "Kyle hasn't sent the key", 2, start.conversationId, noModel);
+    const again: RawProposal = { kind: "update", projectId: "forager", routingReason: { basis: "target", evidence: "#145", label: "#145" }, targetId: "wi-145", field: "state", newValue: "blocked", note: "waiting on Kyle", quote: "Kyle hasn't sent the key", confidence: "high", rationale: "" };
+    const done = await tap("kemar", { act: "stop" }, 3, reads([again]).extractor);
+    expect((await items(done.composed!)).map((i) => [i.draft.target?.id, i.draft.target?.field, i.value, i.draft.target?.note])).toEqual([["wi-145", "state", "blocked", "Kyle hasn't sent the key"]]);
   });
 
   it("U1: words he typed that fed nothing are set aside as not used; DPM's questions and his taps never are", async () => {
@@ -296,6 +367,45 @@ describe("edge cases SU1 to SU10", () => {
     expect((await turn("kemar", start.conversationId, start.captureId)).standup?.current).toEqual({ n: 1, text: null, taps: [] });
   });
 
+  it("P10: after he leaves Store Insights, his review and Atlas no longer show or read the question about #208, nor what he typed to it", async () => {
+    await db.update(t.workItems).set({ state: "done" }).where(eq(t.workItems.projectId, "forager"));
+    const start = await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    expect((await standup()).current).toMatchObject({ subject: { id: "wi-208" } });
+    // He leaves while the question about #208 waits, and types to it anyway
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    const Q208 = "#208 Weekly sales export is In progress. Done, still going, or stuck?";
+    await say("kemar", "Waiting on the export fix from Andre's team", 1, start.conversationId, noModel);
+    expect((await standup()).current).toMatchObject({ kind: "new", text: "Anything new blocking you?" });
+    // His answer to the last question composes the standup, and its answers are read
+    const atlas = reads([]);
+    await say("kemar", "The GPU quota for the scoring runs", 2, start.conversationId, atlas.extractor);
+    const done = { composed: (await standup()).captureId };
+    // Atlas reads only the line about no record: nothing of the question about #208, nor what he typed to it
+    expect(atlas.seen.map((c) => c.text)).toEqual(["Atlas: Anything new blocking you?\nKemar: The GPU quota for the scoring runs"]);
+    const review = (await getReview(db, "kemar", done.composed!)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(review.capture.text).toBe("Atlas: Anything new blocking you?\nKemar: The GPU quota for the scoring runs");
+    expect(review.setAside.unused.map((u) => u.text)).toEqual(["The GPU quota for the scoring runs"]);
+    // Nor in what a later message in the chat reads as earlier
+    const later = reads([]);
+    await say("kemar", "Worked on the backfill with Jodian today", 4, start.conversationId, later.extractor);
+    expect(later.seen[0].earlier?.map((e) => e.text).join("\n")).not.toContain("#208");
+    // The stored capture is never edited
+    expect((await capture(done.composed!)).text).toContain(Q208);
+  });
+
+  it("P10: a tap answer about #208 saved in the review keeps showing, but not the question, once he has left", async () => {
+    await db.update(t.workItems).set({ state: "done" }).where(eq(t.workItems.projectId, "forager"));
+    await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    await tap("kemar", answer("still_going"), 1);
+    const done = await tap("kemar", answer("nothing"), 2);
+    const before = (await getReview(db, "kemar", done.composed!)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(before.capture.text).toContain("#208 Weekly sales export is In progress");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    const after = (await getReview(db, "kemar", done.composed!)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(after.capture.text).toBe("Atlas: Anything new blocking you?\nKemar: No");
+    expect(after.highlights.every((h) => after.capture.text.slice(h.start, h.end) === h.text)).toBe(true);
+  });
+
   it("SU9: on leave, a standup is never scheduled (phase F), but one he asks for still runs", async () => {
     // Nothing sends SCHEDULE yet; asking for one on leave is his own choice
     await db.update(t.leave).set({ startDate: "2026-10-19" }).where(eq(t.leave.personId, "kemar"));
@@ -335,6 +445,19 @@ describe("the model check's fix: at save, an answer about a record that is not h
     expect((await saveCapture(as("kemar", 4), done.composed!)).outcome).toBe("saved");
     expect((await work("wi-145")).state).toBe("in_progress");
     expect(await db.select().from(t.ownerAsks)).toEqual([expect.objectContaining({ ownerId: "jodian", authorId: "kemar", value: "done", state: "asked" })]);
+  });
+
+  it("M37 at save: #145 moved to Jodian, who then left Forager: nobody to ask, and the card says so in plain words", async () => {
+    await say("kemar", "Start my standup", 0, null, createFixtureExtractor());
+    await tap("kemar", answer("done"), 1);
+    const done = await tap("kemar", { act: "stop" }, 2);
+    await db.update(t.workItems).set({ ownerId: "jodian" }).where(eq(t.workItems.id, "wi-145"));
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "jodian")));
+    await openReview(as("kemar", 3), done.composed!);
+    expect(await saveCapture(as("kemar", 3), done.composed!)).toMatchObject({ outcome: "conflict" });
+    const review = (await getReview(db, "kemar", done.composed!)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(review.groups[0].items[0]).toMatchObject({ markLabel: "Can't apply", conflict: { refused: true, reason: "#145 is Jodian's, who is not on the project now, so you can't ask them or change it yourself. Reject it" } });
+    expect((await work("wi-145")).state).toBe("in_progress");
   });
 
   it("the other way: an Ask to Jodian about #160, which is his since, is written by him once he accepts it again", async () => {

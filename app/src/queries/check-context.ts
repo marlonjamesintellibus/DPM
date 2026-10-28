@@ -141,7 +141,8 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
     turns.push({
       captureId: r.id,
       at: r.messageAt,
-      text: r.text,
+      // Phase J, P10: a standup's answers without the questions about a project the author has since left
+      text: (await composedRead(conn, r.id))?.shown.text ?? r.text,
       asked: r.question ? { topic: r.question.topic, projectId: r.question.projectId } : null,
       openItems: items.map((i) => ({
         id: i.id,

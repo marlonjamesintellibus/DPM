@@ -410,7 +410,7 @@ describe("review and save (5.2)", () => {
     await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "jodian")));
     expect(await saveCapture(kemar(), CAP)).toMatchObject({ outcome: "conflict" });
     const card = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
-    expect(card.groups.flatMap((g) => g.items).find((i) => i.ordinal === 4)).toMatchObject({ markLabel: "Can't apply", conflict: { refused: true, reason: "Trend model is Jodian's, who is not on the project now, so it can't be asked or changed. Reject it" } });
+    expect(card.groups.flatMap((g) => g.items).find((i) => i.ordinal === 4)).toMatchObject({ markLabel: "Can't apply", conflict: { refused: true, reason: "Trend model is Jodian's, who is not on the project now, so you can't ask them or change it yourself. Reject it" } });
     // Accepting it again changes nothing: it still has nobody to ask
     await decideExtraction(kemar(), item(4), { type: "accept" });
     expect(await saveCapture(kemar(), CAP)).toMatchObject({ outcome: "conflict" });

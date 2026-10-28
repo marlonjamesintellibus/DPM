@@ -431,6 +431,8 @@ const oldValueFromDatabase: Check = [
   (w) => {
     const t = w.target;
     w.oldValue = t?.type === "record" ? (t.record.values[w.field] ?? null) : t?.type === "entry" ? t.entry.state : null;
+    // Phase J, SU3: a standup answer is compared at save with what its question showed, not what is there now
+    if (t?.type === "record" && t.record.id === w.p.targetId && w.p.shownValue !== undefined) w.oldValue = w.p.shownValue;
     return null;
   },
 ];

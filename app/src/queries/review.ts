@@ -178,9 +178,14 @@ export async function readSetAside(
     .orderBy(desc(t.auditEntries.id))
     .limit(1);
   const dropped = (read?.detail?.dropped ?? []) as StoredDrop[];
-  // Phase J: in a standup's answers only the words the author typed are theirs to list
+  // Phase J: in a standup's answers only the words the author typed are theirs to list, in the text as it is
+  // shown (P10: a question about a project they have left is not, nor a refusal's words from it)
   const standup = await composedRead(conn, capture.id);
-  return setAside({ text: capture.text, used: items.flatMap((i) => i.draft.spans), dropped, asked: capture.question?.asked ?? null, ...(standup ? { onlyIn: standup.ownWords } : {}) });
+  if (standup) {
+    const at = (spans: readonly SourceSpan[]) => spans.flatMap((s) => standup.shown.at(s) ?? []);
+    return setAside({ text: standup.shown.text, used: at(items.flatMap((i) => i.draft.spans)), dropped, asked: null, onlyIn: at(standup.ownWords) });
+  }
+  return setAside({ text: capture.text, used: items.flatMap((i) => i.draft.spans), dropped, asked: capture.question?.asked ?? null });
 }
 
 /** "1 part not used", for the chat's summary line; empty when nothing was set aside. */
@@ -335,6 +340,10 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const rows = await conn.select().from(t.extractions).where(eq(t.extractions.captureId, captureId)).orderBy(t.extractions.ordinal);
   const items = rows.map(itemOf);
   const drafts = items.map((i) => i.draft);
+  // Phase J, P10: a standup's answers show only the questions about projects the author may read now, as the
+  // chat does; a quote from a question left out has nowhere to show
+  const shown = (await composedRead(conn, capture.id))?.shown ?? { text: capture.text, at: (s: SourceSpan) => s };
+  const spansOf = (d: ExtractedItemDraft) => d.spans.flatMap((s) => shown.at(s) ?? []);
   const ids = (pick: (d: (typeof drafts)[number]) => string | null | undefined) => [...new Set(drafts.map(pick).filter((x): x is string => !!x))];
 
   const entryIds = [...new Set([...ids((d) => d.braid?.matchEntryId), ...ids((d) => d.braid?.supersedes)])];
@@ -464,8 +473,8 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
         reason: d.routingReason,
         options: (d.options ?? []).map((id) => ({ id, name: projectName(id) })),
       },
-      spans: d.spans,
-      quotes: d.spans.map((s) => capture.text.slice(s.start, s.end)),
+      spans: spansOf(d),
+      quotes: spansOf(d).map((s) => shown.text.slice(s.start, s.end)),
       rationale: d.rationale,
       conflict: item.conflict,
       withdrawnNote: item.state === "withdrawn" && item.withdrawn ? WITHDRAWN_NOTE[item.withdrawn] : null,
@@ -515,7 +524,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   for (const r of reviewItems) {
     for (const s of r.spans) {
       const key = `${s.start}:${s.end}`;
-      const h = highlightMap.get(key) ?? { start: s.start, end: s.end, text: capture.text.slice(s.start, s.end), ordinals: [] };
+      const h = highlightMap.get(key) ?? { start: s.start, end: s.end, text: shown.text.slice(s.start, s.end), ordinals: [] };
       h.ordinals.push(r.ordinal);
       highlightMap.set(key, h);
     }
@@ -527,7 +536,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     found: true,
     capture: {
       id: capture.id,
-      text: capture.text,
+      text: shown.text,
       channel: capture.channel,
       kind: capture.kind,
       durationSeconds: capture.durationSeconds,

@@ -332,22 +332,26 @@ test("Phase D. A typed answer is read against the options only (CL2)", async () 
   await expect(page.getByRole("group", { name: "Choose one" })).toHaveCount(0);
 });
 
-test("Phase J. Kemar's standup asks only about the work his updates today left out; Done on #147 becomes an update he reviews", async () => {
+test("Phase J. Kemar's standup asks from all his open work, blocked first; Done on his work In progress becomes an update he reviews", async () => {
   await viewAs("kemar", "/?view=chat&c=new&ask=1");
   await page.getByRole("button", { name: "Start my standup" }).click();
   await expect(page.getByText("Let's do your standup. Tap an answer or type your own. Skip moves on, and That's all ends it.")).toBeVisible();
-  // His 8:58 note spoke to #145, #151, #208 and the Trend model, and #152 is done: #147 is the gap (M28, SU8)
-  await expect(page.getByText("#147 Trend scoring model is In progress. Done, still going, or stuck?")).toBeVisible();
+  // His 8:58 note blocked #151 on Kyle; a standup he starts asks about it all the same (CD12), blocked work first (M28)
+  await expect(page.getByText(/^#151 Store sales feed access is Blocked/)).toBeVisible();
+  await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: "Still stuck", exact: true }).click();
+  // Then his work In progress, soonest due first; #145 is done and #152 was marked done from an answer
+  const asked = page.getByText(/is In progress\. Done, still going, or stuck\?$/).last();
+  await expect(asked).toBeVisible();
+  const question = (await asked.textContent())!;
   await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page.getByText("Anything new blocking you?")).toBeVisible();
-  await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: "No", exact: true }).click();
+  await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: /^That.s all$/ }).click();
   await expect(page.getByText("That's your standup. I put your answers together below for you to review.")).toBeVisible();
-  // The answers are one update, read as usual: Done on #147, with its question as the words it came from
+  // The answers are one update, read as usual: Done, with its question as the words it came from
   await expect(page.getByText("Your standup answers, as one update")).toBeVisible();
   await page.getByRole("button", { name: /^Review/ }).click();
   await expect(page).toHaveURL(/\/review\//);
-  await expect(card("#147 Trend scoring model")).toBeVisible();
-  await expect(page.getByText("#147 Trend scoring model is In progress. Done, still going, or stuck?").first()).toBeVisible();
+  await expect(card(question.replace(/ is In progress\..*$/, ""))).toBeVisible();
+  await expect(page.getByText(question).first()).toBeVisible();
 });
 
 test("Phase J. One standup a day: asking again says it is done (SU10)", async () => {

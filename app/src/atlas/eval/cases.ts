@@ -1102,8 +1102,9 @@ export const EVAL_CASES: EvalCase[] = [
     text: "Atlas: #145 Google Trends connector is In progress. Done, still going, or stuck?\nKemar: Stuck\nAtlas: What's it waiting on?\nKemar: Kyle hasn't sent the Google Trends API key",
     standup: true,
     expect: [["new:blocker:forager", "new:blocker:none", "new:dependency:forager"]],
-    allow: ["upd:wi-145.state=blocked", "upd:wi-145.blocked_note=*"],
-    forbid: ["upd:wi-145.state=done", "upd:wi-145.state=in_progress"],
+    // DPM's Blocked from the "Stuck" tap carries the note; a second Blocked from Atlas is dropped by DPM (S3), and the prompt says not to
+    allow: ["upd:wi-145.blocked_note=*"],
+    forbid: ["upd:wi-145.state=*"],
   },
   {
     id: "j-new-blocker",

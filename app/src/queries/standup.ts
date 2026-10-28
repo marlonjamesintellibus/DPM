@@ -2,11 +2,11 @@
 // reads as "What am I working on?" (getProject per project they can read), so a question only names work of
 // theirs on a project they can open now (P10, SU8). The chat shows each question under the message it was
 // asked after, and only the person's own standup is ever read (M1).
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import * as t from "../db/schema";
 import { STANDUP_FINAL, TAP_LABEL, TAPS, type StandupRecord, type StandupState, type TapAnswer } from "../domain/machines/standup";
-import { answerLabel, composeText, readComposed, type OpenWork, type StandupRead } from "../domain/standup";
+import { answerLabel, composeText, readableLines, readComposed, shownText, type OpenWork, type ShownText, type StandupRead } from "../domain/standup";
 import { milestonesOf, projectsAsked, workOf, workTitle } from "./answers/shared";
 import { firstName, projectReader, todayIn } from "./project";
 
@@ -40,46 +40,47 @@ export async function openWorkOf(conn: Conn, personId: string, now: Date): Promi
   return views.flatMap((v) => [
     ...workOf(v)
       .filter((w) => w.owner?.id === personId && (w.state === "to_do" || w.state === "in_progress" || w.state === "blocked"))
-      .map((w): OpenWork => ({ type: "work_item", id: w.id, projectId: v.project.id, label: workTitle(w), number: w.number, state: w.state, due: w.forecastDate ?? w.dueDate, blockedNote: w.blockedNote })),
+      .map(
+        (w): OpenWork => ({
+          type: "work_item",
+          id: w.id,
+          projectId: v.project.id,
+          label: workTitle(w),
+          number: w.number,
+          // SU3: what the question shows, as the checks read it (a work forecast starts from the due date)
+          saw: { state: w.state, forecast: w.forecastDate ?? w.dueDate },
+          state: w.state,
+          due: w.forecastDate ?? w.dueDate,
+          blockedNote: w.blockedNote,
+        }),
+      ),
     ...milestonesOf(v)
       .filter((m) => m.owner?.id === personId && m.state !== "done")
-      .map((m): OpenWork => ({ type: "milestone", id: m.id, projectId: v.project.id, label: m.name, number: null, state: "milestone", due: m.forecastDate, blockedNote: null })),
+      .map((m): OpenWork => ({ type: "milestone", id: m.id, projectId: v.project.id, label: m.name, number: null, saw: { forecast: m.forecastDate }, state: "milestone", due: m.forecastDate, blockedNote: null })),
   ]);
-}
-
-/**
- * The records a same-day update of theirs already speaks to: an item of it, still standing, targets them.
- * The standup only fills the gaps, so it does not ask about these (section 12).
- */
-export async function coveredToday(conn: Conn, personId: string, now: Date): Promise<Set<string>> {
-  const day = todayIn(now);
-  const since = new Date(now.getTime() - 2 * 86_400_000);
-  const captures = (await conn.select({ id: t.captures.id, at: t.captures.messageAt }).from(t.captures).where(and(eq(t.captures.authorId, personId), gte(t.captures.messageAt, since)))).filter((c) => todayIn(c.at) === day);
-  const covered = new Set<string>();
-  for (const c of captures) {
-    for (const x of await conn.select({ draft: t.extractions.draft, state: t.extractions.state }).from(t.extractions).where(eq(t.extractions.captureId, c.id))) {
-      if (x.state !== "withdrawn" && x.state !== "rejected" && x.draft.target) covered.add(x.draft.target.id);
-    }
-  }
-  return covered;
 }
 
 /**
  * Phase J: the capture a standup composed, read as its answers: what the taps propose, the typed answers
- * Atlas reads with their questions, and where check 2 looks for quotes. null for any other capture.
+ * Atlas reads with their questions, and where check 2 looks for quotes; and the text as its author may read
+ * it now (P10: a question about a project they have since left is left out, with its answer, everywhere it
+ * would be shown or read). null for any other capture.
  */
-export async function composedRead(conn: Conn, captureId: string): Promise<StandupRead | null> {
+export async function composedRead(conn: Conn, captureId: string): Promise<(StandupRead & { shown: ShownText }) | null> {
   const [row] = await conn.select().from(t.standups).where(eq(t.standups.captureId, captureId));
   if (!row) return null;
-  const [[capture], [person]] = await Promise.all([
+  const [[capture], [person], reader] = await Promise.all([
     conn.select({ text: t.captures.text }).from(t.captures).where(eq(t.captures.id, captureId)),
     conn.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, row.personId)),
+    projectReader(conn, row.personId),
   ]);
   const composed = composeText(firstName(person?.name ?? ""), row.steps);
   // The capture holds what was composed; were it ever different, Atlas reads it all as their words
-  const all = [{ start: 0, end: capture?.text.length ?? 0 }];
-  if (composed.text !== capture?.text) return { tapped: [], typed: capture?.text ?? "", quoteIn: all, ownWords: all };
-  return readComposed(composed);
+  const text = capture?.text ?? "";
+  const all = [{ start: 0, end: text.length }];
+  if (composed.text !== text) return { tapped: [], typed: text, quoteIn: all, ownWords: all, saw: {}, shown: { text, at: (span) => span } };
+  const readable = readableLines(composed, reader.mayRead);
+  return { ...readComposed(readable), shown: shownText(readable) };
 }
 
 /**
@@ -120,10 +121,4 @@ export async function standupViewOf(conn: Conn, capture: Pick<typeof t.captures.
   const ended = STANDUP_FINAL.includes(row.state) && row.shownIn === capture.id ? standupEndText(row) : null;
   if (!steps.length && !current && !ended) return null;
   return { id: row.id, state: row.state, steps, current, ended };
-}
-
-/** Phase J: the standup this capture holds the answers of, if it is one; the chat shows it as Atlas's, not theirs. */
-export async function composedFrom(conn: Conn, captureId: string): Promise<string | null> {
-  const [row] = await conn.select({ id: t.standups.id }).from(t.standups).where(eq(t.standups.captureId, captureId));
-  return row?.id ?? null;
 }

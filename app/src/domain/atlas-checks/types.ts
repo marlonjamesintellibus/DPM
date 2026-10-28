@@ -40,6 +40,11 @@ export type RawProposal = {
   newValue?: string | null;
   /** Ignored: the old value is always read from the database (check 7). */
   oldValue?: string | null;
+  /**
+   * Phase J, SU3: set by DPM, never by the model (the tool's schema has no such field). A standup answer is
+   * compared with what its question showed when it was asked, so check 7 takes this as the old value instead.
+   */
+  shownValue?: string | null;
   /** braid_new and braid_same: the BRAID kind as the model gave it. */
   braidKind?: string | null;
   /** braid_new: a short title for the new entry. */

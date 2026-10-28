@@ -18,7 +18,7 @@ import {
 const ASKED = new Date("2026-10-20T14:10:00Z");
 const later = (minutes: number) => new Date(ASKED.getTime() + minutes * 60_000);
 
-const W208 = { type: "work_item" as const, id: "wi-208", projectId: "insights", label: "#208 Weekly sales export", number: "#208" };
+const W208 = { type: "work_item" as const, id: "wi-208", projectId: "insights", label: "#208 Weekly sales export", number: "#208", saw: { state: "in_progress", forecast: "2026-10-23" } };
 const q = (n: number, fields: Partial<StandupQuestion> = {}): StandupQuestion => ({ n, kind: "in_progress", subject: W208, text: "#208 Weekly sales export is In progress. Done, still going, or stuck?", askedIn: "cap-1", ...fields });
 const NEW = q(2, { kind: "new", subject: null, text: "Anything new blocking you?" });
 const DONE = { tap: "done" as const, words: null, by: null };

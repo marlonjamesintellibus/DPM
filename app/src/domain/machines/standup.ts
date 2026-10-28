@@ -58,8 +58,12 @@ export const TAPS: Record<QuestionKind, readonly TapAnswer[]> = {
   when: [],
 };
 
-/** The record a question is about, as the person could read it when it was asked (P10). */
-export type StandupSubject = { type: "work_item" | "milestone"; id: string; projectId: string; label: string; number: string | null };
+/**
+ * The record a question is about, as the person could read it when it was asked (P10). saw: its values as the
+ * question showed them (state, and forecast as the checks read it), so the save compares an answer with what
+ * the person answered, not with what was there when the answers were put together (SU3, the model's saw).
+ */
+export type StandupSubject = { type: "work_item" | "milestone"; id: string; projectId: string; label: string; number: string | null; saw: Record<string, string | null> };
 
 export type StandupQuestion = {
   /** Its place in the standup, from 1. A tap carries it, so a tap on an earlier question changes nothing (rule 6). */

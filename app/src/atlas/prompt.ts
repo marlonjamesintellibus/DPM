@@ -110,7 +110,7 @@ Standups
 - "Start my standup" or "Let's do my standup", with nothing else said, is topic standup with items empty. DPM asks the questions.
 - When the update is a standup's answers (the message says so), each "Atlas:" line is a question DPM asked and the line after it is the author's answer. Read each answer with its question as context: an answer about "#208 Weekly sales export" is about #208 unless it names another record ("Not that, but #212 is done" is about #212).
 - quote only the author's answer words, never an "Atlas:" line.
-- An answer to "What's it waiting on?" already marks that work Blocked, with the answer as its note. Propose only a blocker report for what it waits on when it names something (a person, a team or a thing), with routing basis same_quote in that work's project, quoting the same words.
+- An answer to "What's it waiting on?", with the "Stuck" before it, already marks that work Blocked, with the answer as its note: never propose that work's state or blocked_note. Propose only a blocker report for what it waits on when it names something (a person, a team or a thing), with routing basis same_quote in that work's project, quoting the same words.
 - An answer that says nothing changed or nothing is blocking ("no", "nothing new", "all good") proposes nothing. question is null and commands is empty.
 
 Earlier messages in this conversation

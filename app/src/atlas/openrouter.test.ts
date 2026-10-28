@@ -120,6 +120,8 @@ describe("the request", () => {
     expect(section).toContain('("Not that, but #212 is done" is about #212)'); // SU4
     expect(section).toContain('quote only the author\'s answer words, never an "Atlas:" line'); // the model check's questionAsQuote
     expect(section).toContain("Propose only a blocker report for what it waits on when it names something");
+    // S3: DPM's Blocked from the tap is the only one; DPM drops a second from Atlas as well (atlasProposals)
+    expect(section).toContain("never propose that work's state or blocked_note");
     const answers = { ...KEMAR_CONTEXT, text: "Atlas: Anything new blocking you?\nKemar: The GPU quota", standup: { quoteIn: [] } };
     expect(userMessage(answers)).toContain("This update is the author's answers to their standup questions.");
     expect(userMessage(KEMAR_CONTEXT)).not.toContain("standup questions");
