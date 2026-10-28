@@ -27,8 +27,8 @@ export function ContactsCard({ projectId, projectName, contacts, isPm }: { proje
       {contacts.length === 0 && <p className="type-caption text-fg-3">No contacts on this project yet. A PM or Lead adds one by approving a correction to an update.</p>}
       {outside && (
         <p className="type-caption text-fg-3">
-          With the client view, an outside contact can ask Atlas what {projectName} is and hears only its name, customer, dates and releases with their target dates. Never its
-          status, people, work or decisions.
+          With the client view, an outside contact can ask Atlas what {projectName} is and hears only its name, customer and dates, and for each release its target date or
+          that it is done. Never its status, people, work or decisions.
         </p>
       )}
     </Card>

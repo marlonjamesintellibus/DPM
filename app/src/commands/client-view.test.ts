@@ -5,12 +5,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import * as t from "../db/schema";
+import { switchClientView } from "../domain/machines/client-view";
 import { answerFor } from "../queries/answer";
 import { NOT_FOUND } from "../queries/answers/explain-project";
+import { getAuditTrail } from "../queries/audit";
 import { contactsOf } from "../queries/client-view";
 import { at, seededDb } from "../test/seeded-db";
-import { setClientView } from "./client-view";
-import { CommandRefused } from "./core";
+import { setClientView, writeClientView } from "./client-view";
+import { CommandRefused, StaleVersion } from "./core";
 import { decideVocabularyChange, proposeVocabularyChange } from "./vocabulary";
 
 let db: Db;
@@ -44,11 +46,50 @@ describe("a PM turns a contact's client view on or off (CD49)", () => {
     expect(await kyleAsks("Forager", 2)).toBe(NOT_FOUND);
     await setClientView(as("alicia", 3), "forager", "kyle", true);
     expect(await kyleAsks("Forager", 4)).toMatch(new RegExp(`^${FORAGER_VIEW}`));
-    // Every move is on the project's trail, with whom it was for
+    // Every move is audited, its subject the contact on the project
     expect((await trail()).map((a) => [a.actorId, a.action, a.subjectType, a.subjectId, a.fromState, a.toState, a.detail])).toEqual([
-      ["alicia", "TURN_OFF", "project_contact", "forager", "on", "off", { personId: "kyle" }],
-      ["alicia", "TURN_ON", "project_contact", "forager", "off", "on", { personId: "kyle" }],
+      ["alicia", "TURN_OFF", "project_contact", "forager@kyle", "on", "off", { projectId: "forager", personId: "kyle" }],
+      ["alicia", "TURN_ON", "project_contact", "forager@kyle", "off", "on", { projectId: "forager", personId: "kyle" }],
     ]);
+  });
+
+  it("rule 5: a move over a flag that changed since it was read is stale; nothing is written or audited", async () => {
+    // A screen read Kyle's as off, but it is on now (another tab, or another PM, moved it first)
+    const stale = switchClientView({ projectId: "forager", personId: "kyle", state: "off" }, { type: "TURN_ON" }, "alicia", { byPm: true, outside: true });
+    await expect(db.transaction((tx) => writeClientView(tx, at(1), stale, "Kyle's client view on Forager 2.0"))).rejects.toBeInstanceOf(StaleVersion);
+    expect(await flag("forager")).toBe(true);
+    expect(await trail()).toEqual([]);
+    // The same move over the flag as it is goes through, once
+    const fresh = switchClientView({ projectId: "forager", personId: "kyle", state: "on" }, { type: "TURN_OFF" }, "alicia", { byPm: true, outside: true });
+    await db.transaction((tx) => writeClientView(tx, at(2), fresh, "Kyle's client view on Forager 2.0"));
+    await expect(db.transaction((tx) => writeClientView(tx, at(3), fresh, "Kyle's client view on Forager 2.0"))).rejects.toBeInstanceOf(StaleVersion);
+    expect(await flag("forager")).toBe(false);
+    expect((await trail()).map((a) => [a.action, a.fromState, a.toState])).toEqual([["TURN_OFF", "on", "off"]]);
+  });
+
+  it("each contact's switch is its own subject, on its own project's trail only", async () => {
+    await db.insert(t.people).values({ id: "dana", name: "Dana Reid", initials: "DR", title: "Sprouts Ops", orgRole: null });
+    await db.insert(t.projectContacts).values([
+      { projectId: "forager", personId: "dana", tie: "contact (Sprouts Ops)" },
+      { projectId: "insights", personId: "kyle", tie: "contact (Sprouts IT)" },
+    ]);
+    await setClientView(as("alicia", 1), "forager", "dana", true);
+    await setClientView(as("alicia", 2), "forager", "kyle", false);
+    await setClientView(as("andre", 3), "insights", "kyle", true);
+    expect((await trail()).map((a) => a.subjectId)).toEqual(["forager@dana", "forager@kyle", "insights@kyle"]);
+    // Read by subject, as whatChanged and onlyBookkeepingSince read one: Dana's switch is not Kyle's
+    const kyleOnForager = await db
+      .select()
+      .from(t.auditEntries)
+      .where(and(eq(t.auditEntries.subjectType, "project_contact"), eq(t.auditEntries.subjectId, "forager@kyle")));
+    expect(kyleOnForager.map((a) => [a.action, a.detail])).toEqual([["TURN_OFF", { projectId: "forager", personId: "kyle" }]]);
+    // The project's trail has its own contacts' moves, for its members; never another project's
+    const ofProject = async (viewer: string, projectId: string) => {
+      const r = await getAuditTrail(db, viewer, { type: "project", id: projectId });
+      return r.found ? r.entries.filter((e) => e.machine === "client_view").map((e) => e.subject.id) : r;
+    };
+    expect(await ofProject("kemar", "forager")).toEqual(["forager@kyle", "forager@dana"]);
+    expect(await ofProject("andre", "insights")).toEqual(["insights@kyle"]);
   });
 
   it("rule 6: turning it on when it is on changes nothing and says so", async () => {

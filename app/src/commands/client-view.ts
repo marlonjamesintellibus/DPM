@@ -5,9 +5,10 @@
 // found and names nothing (P10). Turning it off takes effect on the contact's next question: their answers
 // read the flag every time.
 import { and, eq } from "drizzle-orm";
+import type { Tx } from "../db/conn";
 import { loadWorld, orgTagsOf } from "../db/records";
 import * as t from "../db/schema";
-import { clientViewState, switchClientView, type ClientViewRecord } from "../domain/machines/client-view";
+import { clientViewState, contactSubject, switchClientView, type ClientViewRecord, type ClientViewResult } from "../domain/machines/client-view";
 import { isCandidate } from "../domain/machines/membership";
 import { audit, CommandRefused, expectOne, moved, runCommand, type CommandCtx } from "./core";
 
@@ -28,27 +29,35 @@ export function setClientView(ctx: CommandCtx, projectId: string, personId: stri
     const before: ClientViewRecord = { projectId, personId, state: clientViewState(row.clientView) };
     const r = switchClientView(before, { type: on ? "TURN_ON" : "TURN_OFF" }, ctx.actorId, { byPm: role === "pm", outside: row.orgRole === null });
     if (!r.outcome.ok) throw new CommandRefused(r.outcome.reason.replace(/^it is/, `${row.name.split(" ")[0]}'s client view is`), role === "pm" ? "refused" : "not_allowed");
-    const outcome = moved(r.outcome);
-
-    // The flag as read: a PM who moved it first since makes this one stale, never overwritten
-    const updated = await tx
-      .update(t.projectContacts)
-      .set({ clientView: r.record.state === "on" })
-      .where(and(eq(t.projectContacts.projectId, projectId), eq(t.projectContacts.personId, personId), eq(t.projectContacts.clientView, row.clientView)))
-      .returning({ personId: t.projectContacts.personId });
-    expectOne(updated, `${row.name}'s client view on ${row.project}`);
-    // On the project's trail (its members already see its contacts, CD9), with who it was for
-    await audit(tx, ctx.now, {
-      actorType: "person",
-      actorId: ctx.actorId,
-      action: r.audit!.action,
-      machine: "client_view",
-      subjectType: "project_contact",
-      subjectId: projectId,
-      fromState: outcome.from,
-      toState: outcome.to,
-      detail: { personId },
-    });
+    await writeClientView(tx, ctx.now, r, `${row.name}'s client view on ${row.project}`);
     return r.record;
+  });
+}
+
+/**
+ * Writes one move of the switch over the flag as it was read (outcome.from): a PM who moved it first since
+ * makes this one stale, never overwritten, and nothing is written (rule 5; model clientView, TrailTellsTheTruth).
+ * The audit entry's subject is the contact on the project; it is on the project's trail (its members already
+ * see its contacts, CD9).
+ */
+export async function writeClientView(tx: Tx, now: Date, r: ClientViewResult, what: string): Promise<void> {
+  const outcome = moved(r.outcome);
+  const { projectId, personId, by } = r.audit!;
+  const updated = await tx
+    .update(t.projectContacts)
+    .set({ clientView: outcome.to === "on" })
+    .where(and(eq(t.projectContacts.projectId, projectId), eq(t.projectContacts.personId, personId), eq(t.projectContacts.clientView, outcome.from === "on")))
+    .returning({ personId: t.projectContacts.personId });
+  expectOne(updated, what);
+  await audit(tx, now, {
+    actorType: "person",
+    actorId: by,
+    action: outcome.event,
+    machine: "client_view",
+    subjectType: "project_contact",
+    subjectId: contactSubject(projectId, personId),
+    fromState: outcome.from,
+    toState: outcome.to,
+    detail: { projectId, personId },
   });
 }

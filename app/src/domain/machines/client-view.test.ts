@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { CLIENT_VIEW_STATES, clientViewMachine, clientViewState, switchClientView, type ClientViewEvent, type ClientViewRecord, type ClientViewState } from "./client-view";
+import { CLIENT_VIEW_STATES, clientViewMachine, clientViewState, contactSubject, switchClientView, type ClientViewEvent, type ClientViewRecord, type ClientViewState } from "./client-view";
 
 const kyle = (state: ClientViewState): ClientViewRecord => ({ projectId: "forager", personId: "kyle", state });
 const PM = { byPm: true, outside: true };
@@ -44,13 +44,15 @@ describe("client view arrows (CD49)", () => {
   });
 
   it("rule 6: a repeat changes nothing and says so; someone without the right hears that first", () => {
-    expect(switchClientView(kyle("on"), { type: "TURN_ON" }, "alicia", PM).outcome).toMatchObject({ ok: false, reason: "it is already on" });
+    // A refusal of this machine, from the state it was in, in its own words (not the engine's "no arrow")
+    expect(switchClientView(kyle("on"), { type: "TURN_ON" }, "alicia", PM).outcome).toEqual({ ok: false, machine: "client_view", event: "TURN_ON", from: "on", reason: "it is already on" });
     expect(switchClientView(kyle("off"), { type: "TURN_OFF" }, "alicia", PM).outcome).toMatchObject({ ok: false, reason: "it is already off" });
     expect(switchClientView(kyle("on"), { type: "TURN_ON" }, "kemar", { byPm: false, outside: true }).outcome).toMatchObject({ ok: false, reason: "only the project's PM turns a contact's client view on or off" });
   });
 
-  it("the stored flag reads as the state", () => {
+  it("the stored flag reads as the state; its subject on the trail is the contact on the project", () => {
     expect([clientViewState(true), clientViewState(false)]).toEqual(["on", "off"]);
+    expect(contactSubject("forager", "kyle")).toBe("forager@kyle");
   });
 });
 

@@ -1,10 +1,10 @@
 // A contact's client view (Switch), decision CD49 (W3-D11): whether an outside contact tied to a project
 // reads its client view (KB A7.3; queries/client-view.ts, phase Q, EX4). One switch per contact per project,
 // stored as project_contacts.client_view. A contact added or restored starts off; only the project's PM turns
-// it on or off, the right read when the command runs (rule 7). Two states and two arrows, with nothing
-// waiting and no timer, so it has no model in research/state-machines (as the map's other two-state
-// Switches, "Blocked" and "On leave today", have none).
-import { defineMachine, transition, type Outcome } from "../machine";
+// it on or off, the right read when the command runs (rule 7). Its model is clientView.mjs in
+// research/state-machines/js/models: the right is read when it runs, it is on only for an outside contact,
+// a tie added back starts off, and the trail says what the flag was (the write is over the flag as read).
+import { defineMachine, eventsFrom, transition, type Outcome } from "../machine";
 
 export const CLIENT_VIEW_STATES = ["off", "on"] as const;
 export type ClientViewState = (typeof CLIENT_VIEW_STATES)[number];
@@ -19,6 +19,9 @@ export type ClientViewEvent = { type: "TURN_ON" } | { type: "TURN_OFF" };
  * all, never through a client view.
  */
 export type ClientViewCtx = { byPm: boolean; outside: boolean };
+
+/** The switch's subject on the audit trail: one contact on one project, as project_contacts keys it. */
+export const contactSubject = (projectId: string, personId: string) => `${projectId}@${personId}`;
 
 export type ClientViewAudit = {
   action: ClientViewEvent["type"];
@@ -51,12 +54,13 @@ export type ClientViewResult = {
 
 /** Applies an event to one contact's switch. A refused event returns the record unchanged and no audit entry. */
 export function switchClientView(record: ClientViewRecord, event: ClientViewEvent, by: string, ctx: ClientViewCtx): ClientViewResult {
-  const outcome = transition(clientViewMachine, record.state, event, ctx);
-  if (!outcome.ok) {
-    // Rule 6: a repeat (on when it is on) changes nothing; it says so in words, after the right is checked
-    const already = outcome.reason.startsWith("no arrow") ? (pm(ctx) ?? `it is already ${record.state}`) : outcome.reason;
-    return { outcome: { ...outcome, reason: already }, record, audit: null };
+  // Rule 6: a repeat (on when it is on) has no arrow, so it changes nothing; it says so in words, after the right
+  if (!eventsFrom(clientViewMachine, record.state).includes(event.type)) {
+    const reason = pm(ctx) ?? `it is already ${record.state}`;
+    return { outcome: { ok: false, machine: clientViewMachine.name, event: event.type, from: record.state, reason }, record, audit: null };
   }
+  const outcome = transition(clientViewMachine, record.state, event, ctx);
+  if (!outcome.ok) return { outcome, record, audit: null };
   const next = { ...record, state: outcome.to };
   return { outcome, record: next, audit: { action: event.type, projectId: record.projectId, personId: record.personId, by, from: record.state, to: next.state } };
 }

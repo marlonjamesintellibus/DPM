@@ -18,8 +18,8 @@ import { contactsOf } from "@/queries/client-view";
 import { getProject } from "@/queries/project";
 
 // A project as the viewer reads it, in two views (A8): the Dashboard (L14d: the plan, the BRAID summary
-// and the milestones, and its contacts with the PM's client view switch, CD49) and the Table (L14c: the BRAID log, where kinds are switched and entries approved).
-// Someone not in the project gets nothing.
+// and the milestones, and its contacts with the PM's client view switch, CD49) and the Table (L14c: the
+// BRAID log, where kinds are switched and entries approved). Someone not in the project gets nothing.
 export default function ProjectPage({ params, searchParams }: PageProps<"/projects/[projectId]">) {
   return (
     <Suspense fallback={<div className="min-h-screen bg-canvas" aria-busy="true" />}>
