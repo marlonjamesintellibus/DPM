@@ -8,6 +8,7 @@ import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
+import { aboutAsker, aboutOther, aboutProject } from "./topics/people";
 import { GREETING, smallTalk } from "./topics/small-talk";
 import { subjectById, subjectIn, type WhySubject } from "./topics/why";
 import { standup } from "./topics/standup";
@@ -38,21 +39,63 @@ export type AskedQuestion = {
  * QA3, QA6: only the asker's own projects; QA5: an unknown topic is "other"; the words must be theirs.
  * CQ13: small talk only when the whole message is, so a greeting with an update is the update alone.
  */
-export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<CheckContext, "text" | "projects" | "earlier">): AskedQuestion | null {
+export function checkQuestion(
+  raw: RawQuestion | null | undefined,
+  ctx: Pick<CheckContext, "text" | "projects" | "earlier"> & Partial<Pick<CheckContext, "author">>,
+): AskedQuestion | null {
   if (!raw) return null;
-  const topic = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
-  if (topic === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
+  const said = (QUESTION_TOPICS as readonly string[]).includes(raw.topic) ? (raw.topic as QuestionTopic) : "other";
+  if (said === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
   // Phase L: "Undo that" is the asker's command only as the whole message, whatever Atlas read
-  if (topic === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
+  if (said === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
   // Phase J: and "Start my standup" is the person's own command too
-  if (topic === "standup" && !standup.rule.test(ctx.text.trim().toLowerCase())) return null;
-  const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
+  if (said === "standup" && !standup.rule.test(ctx.text.trim().toLowerCase())) return null;
+  const named = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
+  const { topic, projectId } = ctx.author ? aboutWhom(said, asked, named, ctx.author, ctx.projects) : { topic: said, projectId: named };
   const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
   // Phase C, WY1: a subject outside the asker's lists is no subject, never a sign that it exists
   const subject = topic === "why" ? subjectById(raw.subjectId, ctx.projects) : null;
   const correction = topic === "correction" ? checkCorrection(raw.correction, ctx) : null;
   return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(subject ? { subject } : {}), ...(correction ? { correction } : {}) };
+}
+
+/**
+ * Phase H: who the words are about decides between the asker's work and someone else's, whatever Atlas
+ * read. PP4: Kemar asking "What is Kemar working on?" asks about his own work, and Alicia asking it asks
+ * about his, never hers. "What is Forager doing?" asks how that project stands, not about a person.
+ */
+function aboutWhom(
+  said: QuestionTopic,
+  asked: string,
+  projectId: string | null,
+  author: CheckContext["author"],
+  projects: CheckContext["projects"],
+): { topic: QuestionTopic; projectId: string | null } {
+  if (said === "my_work" && aboutOther(asked, author, projects)) return { topic: "people", projectId };
+  if (said !== "people") return { topic: said, projectId };
+  if (aboutAsker(asked, author, projects)) return { topic: "my_work", projectId };
+  const project = aboutProject(asked, author, projects);
+  return project ? { topic: "project_status", projectId: projectId ?? project.id } : { topic: said, projectId };
+}
+
+/**
+ * CV8: what a follow-up asks beyond following up and saying where, or null when the words are not a
+ * follow-up. "and Jodian?" is "jodian" and "and the trend model?" is "the trend model"; "and on GQ?" is
+ * "" (the question before it, on GQ). `places` are the names and aliases of the asker's projects.
+ */
+export function followUpRest(words: string, places: readonly string[]): string | null {
+  const text = words.trim().toLowerCase().replace(/[‘’]/g, "'");
+  const lead = FOLLOW_UP.exec(text);
+  if (!lead) return null;
+  let rest = text.slice(lead[0].length).replace(/[?.!]+$/, "");
+  for (const place of places.map((p) => p.toLowerCase()).sort((a, b) => b.length - a.length)) {
+    rest = rest.replace(new RegExp(`\\b(?:on|in|pon|for|at|with)\\s+${place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\w)`, "g"), " ");
+  }
+  return rest
+    .replace(/\b(?:then|too|instead|now|there|only|just|please)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

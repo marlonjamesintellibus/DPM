@@ -181,3 +181,15 @@ export function leaveImpactOwners(personId: string, world: World): { ownerId: st
 export function leaveSeenByLead(row: LeaveRecord): LeaveRecord {
   return { id: row.id, personId: row.personId, start: row.start, end: row.end, state: row.state, ...(row.change ? { change: { start: row.change.start, end: row.change.end } } : {}) };
 }
+
+/** Leave someone is away on: approved, and every state after it while it lasts. A request is not leave yet. */
+const AWAY: readonly LeaveState[] = [...CHANGEABLE, "active"];
+
+/**
+ * Phase H, PP7: the last day of the leave the person is on today, or null. Approved dates only: a change
+ * still waiting on the admin is not their leave yet (D6).
+ */
+export function onLeaveUntil(leaves: readonly LeaveRecord[], today: IsoDate): IsoDate | null {
+  const away = leaves.filter((l) => AWAY.includes(l.state) && inside(today, l));
+  return away.length ? away.map((l) => l.end).sort().at(-1)! : null;
+}

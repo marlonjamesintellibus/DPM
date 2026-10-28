@@ -51,7 +51,9 @@ export const config = {
 
   // Phase J, M28 (conversational plan, section 23): a standup asks at most this many questions about the
   // person's work and "Anything new blocking you?" together; a question left this many minutes ends it,
-  // composing what was answered (SU7). standupTime is when Atlas would start one itself, which waits on phase F
+  // composing what was answered (SU7). standupTime (CD27, in the org time zone) is when Atlas would start one
+  // itself, which waits on phase F; phase N reads it too: "Who hasn't updated today?" asked before it says
+  // "It's early" (LD3)
   standupMaxQuestions: 4,
   standupIdleMinutes: 60,
   standupTime: "09:00",

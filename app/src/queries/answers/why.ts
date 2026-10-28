@@ -12,7 +12,6 @@ import { isIsoDate, type IsoDate } from "../../domain/dates";
 import type { AnswerCard } from "../../domain/question";
 import { explainPlan, milestoneWhy, workItemWhy, type MilestoneWhy, type WorkItemWhy } from "../../domain/status/rules";
 import type { Status } from "../../domain/status/status";
-import { namesPerson } from "../../domain/names";
 import { subjectIn, whyAsks, whyField, whyWords, type SubjectLists, type WhyField, type WhySubject } from "../../domain/topics/why";
 import { getAuditTrail, type AuditRow } from "../audit";
 import {
@@ -22,7 +21,6 @@ import {
   getProject,
   KIND_LABEL,
   MILESTONE_STATE_LABEL,
-  peopleById,
   projectReader,
   STATUS_LABEL,
   todayIn,
@@ -34,12 +32,13 @@ import {
   type ProjectView,
   type ProjectWorkItem,
 } from "../project";
+import { aboutSomeone } from "./people";
 import { capped, counted, dayDate, milestonesOf, projectsAsked, workOf, workTitle, type AnswerBuilder, type Body } from "./shared";
 
 /** WY1: the same words whether the subject is not theirs, gone, or never was. */
 export const NOT_FOUND = "I can't find that in your projects. Ask about a project, a piece of work, a milestone or an entry on the BRAID log.";
-/** WY8: a why about a person is not a why about a record (phase H decides what may be said of people). */
-export const NOT_PEOPLE = "I can tell you about records, not people. Ask about a project, a piece of work or an entry on the BRAID log instead.";
+/** WY8: a why about a person is not a why about a record; phase H says what they have instead (CD9). */
+export const NOT_WHY = "I can't tell you why about a person, only what is on record. ";
 
 const none = (text: string): Body => ({ text, cards: [], more: null });
 const days = (n: number) => counted(n, "day", "days");
@@ -99,7 +98,8 @@ export const why: AnswerBuilder = async (conn, viewerId, question, now) => {
   if (!subject) {
     // WY4: "When did we decide to drop the TikTok scrape?" names no record; its words search the decisions
     if (whyAsks(words, null) === "decided") return decided(views ?? [], [question.asked, words], null, null);
-    return none((await namesSomeone(conn, viewerId, question.asked)) ? NOT_PEOPLE : NOT_FOUND);
+    // WY8, phase H: a why about a person is answered with what they have, never a reason about them
+    return (await aboutSomeone(conn, viewerId, question, now, NOT_WHY)) ?? none(NOT_FOUND);
   }
   // Rule 4: read now, not when it was asked; a project they have left reads as one that never was
   const read = await getProject(conn, viewerId, subject.projectId, now);
@@ -121,16 +121,6 @@ export const why: AnswerBuilder = async (conn, viewerId, question, now) => {
       return changed(conn, viewerId, v, found, today, null);
   }
 };
-
-/** WY8: the words name someone in the asker's projects (members and contacts), by the one rule for names. */
-async function namesSomeone(conn: Conn, viewerId: string, asked: string): Promise<boolean> {
-  const { world, mayRead } = await projectReader(conn, viewerId);
-  const ids = world.projects.filter((p) => mayRead(p.id)).map((p) => p.id);
-  if (!ids.length) return false;
-  const contacts = await conn.select({ personId: t.projectContacts.personId }).from(t.projectContacts).where(inArray(t.projectContacts.projectId, ids));
-  const people = await peopleById(conn, [...world.memberships.filter((m) => ids.includes(m.projectId) && m.state === "member").map((m) => m.personId), ...contacts.map((c) => c.personId)]);
-  return [...people.values()].some((p) => namesPerson(asked, p.name, false));
-}
 
 // ---- Why a status ----
 

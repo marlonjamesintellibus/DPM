@@ -10,8 +10,8 @@ import { capped, counted, type AnswerBuilder, type DraftCard } from "./shared";
 
 const CONFIDENCE = { high: "High", medium: "Medium", low: "Low" } as const;
 
-/** Phase B: what an inbox line is for, as the inbox item's own screen offers it. */
-const OFFER: Partial<Record<InboxCause, readonly CommandAct[]>> = {
+/** Phase B: what an inbox line is for, as the inbox item's own screen offers it. Phase N's my_decisions reads it too. */
+export const OFFER: Partial<Record<InboxCause, readonly CommandAct[]>> = {
   approve: ["approve", "decline"],
   clear: ["approve", "decline"],
   confirm_outcome: ["approve", "decline"],
@@ -20,7 +20,7 @@ const OFFER: Partial<Record<InboxCause, readonly CommandAct[]>> = {
   blocked_without_blocker: ["unblock"],
 };
 
-function subjectOf(s: InboxSubject): CommandSubject | undefined {
+export function subjectOf(s: InboxSubject): CommandSubject | undefined {
   if (s.type === "braid_entry" || s.type === "work_item") return { type: s.type, id: s.id, projectId: s.projectId };
   return s.type === "project" ? { type: "project", id: s.id, projectId: s.id } : undefined;
 }

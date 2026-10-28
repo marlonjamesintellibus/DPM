@@ -106,10 +106,10 @@ describe("questions in the chat", () => {
   });
 
   it("other questions: said plainly, with what needs them today", async () => {
-    const { row } = await ask("kemar", "What did Andre say about pricing?");
-    // Section 18: it lists everything Atlas can answer now
+    const { row } = await ask("kemar", "What is the weather like in Kingston?");
+    // Section 18: it lists everything Atlas can answer now. Phase H: "What did Andre say about pricing?" is people now (PP8)
     expect(row.answer?.text).toBe(
-      "I can't answer that yet. I can tell you what you're working on, what's due, what needs you, what is blocked, how a project stands, any updates, who mentioned you, and why something is as it is. Here is what needs you today.",
+      "I can't answer that yet. I can tell you what you're working on, what's due, what needs you, what is blocked, how a project stands, any updates, who mentioned you, why something is as it is, what someone on your projects is working on, who could pick up some work, what needs your decision, what is at risk this week, which projects are off track, and who hasn't updated today. Here is what needs you today.",
     );
     expect(row.answer?.cards).toHaveLength(4);
   });

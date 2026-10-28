@@ -15,11 +15,16 @@ const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** A first name, as a whole word: written with its capital, or in any case when it is not also a word. */
 export function namesFirstName(words: string, first: string): boolean {
+  return firstNameAt(words, first) !== null;
+}
+
+/** Where namesFirstName finds the first name in the words, or null. */
+function firstNameAt(words: string, first: string): number | null {
   const word = NAMES_THAT_ARE_WORDS.has(first.toLowerCase());
   for (const m of words.matchAll(new RegExp(`(?<![\\w#])${escaped(first)}(?!\\w)`, "gi"))) {
-    if (!word || m[0][0] !== m[0][0].toLowerCase()) return true;
+    if (!word || m[0][0] !== m[0][0].toLowerCase()) return m.index;
   }
-  return false;
+  return null;
 }
 
 /**
@@ -28,8 +33,23 @@ export function namesFirstName(words: string, first: string): boolean {
  * shares it. A person with one name (an outside contact such as Kyle) is named by that name alone.
  */
 export function namesPerson(words: string, name: string, firstNameShared: boolean): boolean {
+  return whereNamed(words, name, firstNameShared) !== null;
+}
+
+/**
+ * The same rule, saying where: the place in the words the person is first named and whether by their
+ * full name, or null. Phase H reads who a question is about with it ("What are Jodian and Kemar Brown
+ * working on?" names Kemar Brown in full, Jodian by her first name).
+ */
+export function whereNamed(words: string, name: string, firstNameShared: boolean): { at: number; full: boolean } | null {
   const first = name.split(" ")[0];
-  if (first === name) return namesFirstName(words, name);
-  if (new RegExp(`(?<![\\w#])${escaped(name).replace(/\s+/g, "\\s+")}(?!\\w)`, "i").test(words)) return true;
-  return !firstNameShared && namesFirstName(words, first);
+  if (first === name) {
+    // One name is a first name only: another Kyle on the asker's projects makes "Kyle" unsure (phase H, PP2)
+    const at = firstNameAt(words, name);
+    return at === null ? null : { at, full: false };
+  }
+  const full = new RegExp(`(?<![\\w#])${escaped(name).replace(/\s+/g, "\\s+")}(?!\\w)`, "i").exec(words);
+  if (full) return { at: full.index, full: true };
+  const at = firstNameShared ? null : firstNameAt(words, first);
+  return at === null ? null : { at, full: false };
 }

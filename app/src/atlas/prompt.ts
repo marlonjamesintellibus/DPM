@@ -23,11 +23,15 @@ import { CONFIDENCES } from "../domain/shared";
 // commands, and a record change said about a line is an item. Each command says who decides it (rule 10):
 // a report of someone else's decision is never the author's. Phase C, the why topic and its subjectId (WY1
 // to WY8). Phase L, "Undo that", "Why did you file that?" and corrections that teach Atlas a name (M30, M31).
-// read-15 (W2-D2): with no answer open, nothing is a command. read-wave3-d, phase D: an update whose words
-// fit two or three listed records equally names them all in targetOptions, and DPM asks the author which (M21).
-// read-wave3-j, phase J: topic standup ("Start my standup"), and a standup's typed answers, each read with
-// the question before it, quoting only the author's words (M28).
-export const PROMPT_VERSION = "read-wave3-j";
+// read-15 (W2-D2): with no answer open, nothing is a command.
+// read-16, wave 3. Phase D: an update whose words fit two or three listed records equally names them all in
+// targetOptions, and DPM asks the author which (M21). Phase J: topic standup ("Start my standup"), and a
+// standup's typed answers, each read with the question before it, quoting only the author's words (M28).
+// Phase H: the people topic, what someone else has or who owns something (PP1 to PP8); about the author by
+// name it is my_work (PP4), and a why about a person is answered with what they have (WY8). Phase N:
+// questions for leads and executives, topics who_free, not_updated (today only, LD10), my_decisions,
+// at_risk_week and portfolio.
+export const PROMPT_VERSION = "read-16";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -87,7 +91,14 @@ Questions
 - projectId: the listed project the question names, or null. Never a project that is not listed.
 - A why question is topic why: why something has its status ("Why is Forager at risk?"), what holds it up ("What's holding up the trend model?"), when it was decided ("When did we decide to drop the TikTok scrape?") or why it changed ("Why was #145 moved to Friday?"). It asks, even when it names a change: it is never an update.
 - subjectId, for topic why only: the id of the listed project, record or BRAID entry the question is about (a decision is a BRAID entry). null when it names none of them; never an id that is not listed. For every other topic subjectId is null.
-- A why about a person ("Why is Kemar late?") is topic why with subjectId null. DPM answers about records, not people.
+- A why about a person ("Why is Kemar late?") is topic why with subjectId null. DPM answers with what they have on record, never a reason about them.
+- A question about another person's work ("What is Kemar working on?", "What's on Jodian's plate?", "Is Kemar overloaded?") or about who owns something ("Who owns the store feed?") is topic people, with the person or the thing in asked as they said it. DPM works out who is meant and shows only what the asker may see.
+- About the author by their own name ("What is Kemar working on?" from Kemar) it is my_work.
+- Asking what someone said, sent or wrote ("What did Andre say about pricing?") is topic people too. DPM never shares anyone's messages.
+- "Who can pick up #151?" or "Who's free to take the store feed?" is topic who_free, with the work in asked as they said it. DPM lists the teammates with the facts; it never picks one.
+- "Who hasn't updated today?" is topic not_updated, also when they ask about another day ("And last week?"): DPM answers for today only, and only to a PM or Lead.
+- "What needs a decision from me?" is topic my_decisions. "What needs me today?" stays needs_me.
+- "What's at risk this week?" is topic at_risk_week. "Which projects are off track?" is topic portfolio. "Is Forager at risk?" about one project stays project_status.
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.

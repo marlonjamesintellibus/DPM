@@ -3,16 +3,20 @@
 // Section 18: one named project also gives its next milestone with the forecast, its live blockers and
 // risks, and what needs the asker on it ("Tell me about Forager").
 import type { AnswerCard } from "../../domain/question";
+import type { ProjectView } from "../project";
 import { needsYou } from "./needs-me";
 import { capped, counted, forecastText, milestonesOf, projectsAsked, type AnswerBuilder } from "./shared";
 
+/** A project's card: its displayed status, and who set it and why, or that the plan works it out. Phase N's portfolio reads it too. */
+export function statusCard(v: ProjectView): AnswerCard {
+  const set = v.displayed.from === "set" && v.setStatus ? `Set by ${v.setStatus.setBy?.name.split(" ")[0] ?? "its owner"}${v.reason ? `: ${v.reason.text}` : ""}; the plan says ${v.calculated.label}` : null;
+  const waiting = v.setStatus?.waitingForReason ? `Set ${v.setStatus.label} with no reason yet; the plan says ${v.calculated.label}` : null;
+  return { title: v.project.name, detail: set ?? waiting ?? `Worked out from the plan`, tag: v.displayed.label, href: `/projects/${v.project.id}` };
+}
+
 export const standing: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
   const views = await projectsAsked(conn, viewerId, projectId, now);
-  const cards = views.map((v): AnswerCard => {
-    const set = v.displayed.from === "set" && v.setStatus ? `Set by ${v.setStatus.setBy?.name.split(" ")[0] ?? "its owner"}${v.reason ? `: ${v.reason.text}` : ""}; the plan says ${v.calculated.label}` : null;
-    const waiting = v.setStatus?.waitingForReason ? `Set ${v.setStatus.label} with no reason yet; the plan says ${v.calculated.label}` : null;
-    return { title: v.project.name, detail: set ?? waiting ?? `Worked out from the plan`, tag: v.displayed.label, href: `/projects/${v.project.id}` };
-  });
+  const cards = views.map(statusCard);
   if (!cards.length) return { text: "You are not in any projects yet.", cards: [], more: null };
   if (cards.length > 1) return { text: `Here is how your ${cards.length} projects stand.`, cards, more: null };
   const lead = `${cards[0].title} is ${cards[0].tag}.`;
