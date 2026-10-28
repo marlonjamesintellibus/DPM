@@ -301,11 +301,14 @@ export async function answerCheckInInWords(tx: Tx, now: Date, capture: { id: str
 
 // ---- The rules and the timer ----
 
+/** CD55: a notice that names the linked record belongs to its project, so it is hidden once the owner leaves it (P10). */
+const namedProject = (r: Pick<CommitmentRecord, "link">, label: string | null): string | null => (label && r.link ? r.link.projectId : null);
+
 /** CM11's question, or CD51's when the work is Done and the promise was only about it. */
 async function askStands(tx: Tx, now: Date, r: CommitmentRecord, linked: string | null): Promise<void> {
   const label = (await linkLabel(tx, r.ownerId, r.link)) ?? "The work it was about";
   const ended = linked === "done" ? "is Done" : "was cancelled";
-  await notice(tx, now, [r.ownerId], `${label} ${ended}. Does your promise still stand: ${r.what}?`, { type: "commitment", id: r.id, projectId: null, act: "stands" });
+  await notice(tx, now, [r.ownerId], `${label} ${ended}. Does your promise still stand: ${r.what}?`, { type: "commitment", id: r.id, projectId: namedProject(r, label), act: "stands" });
 }
 
 /** The check-in: "Did you send Kyle the access request? You said you would by Wed 21 Oct." (CD24 after 3 moves). */
@@ -341,8 +344,8 @@ async function followLinks(tx: Tx, now: Date, rows: readonly Row[], world: World
     if (record.link && !isCandidate(record.ownerId, await orgTagsOf(tx, record.ownerId), record.link.projectId, world)) await step({ type: "UNLINK" });
     if (!isLive(record)) continue;
     await step({ type: "DONE", by: "work_done" }, async (before) => {
-      const label = (await linkLabel(tx, before.ownerId, before.link, world)) ?? "Its work";
-      await notice(tx, now, [record.ownerId], `${label} is Done, so I marked your promise done: ${record.what}.`, { type: "commitment", id: record.id, projectId: null, act: "work_done" });
+      const named = await linkLabel(tx, before.ownerId, before.link, world);
+      await notice(tx, now, [record.ownerId], `${named ?? "Its work"} is Done, so I marked your promise done: ${record.what}.`, { type: "commitment", id: record.id, projectId: namedProject(before, named), act: "work_done" });
     });
     if (isLive(record)) await step({ type: "WORK_ENDED" }, async () => askStands(tx, now, record, await linkedState(tx, record.link)));
   }
@@ -376,7 +379,10 @@ export function runCommitmentTimers(ctx: { db: Db; now: Date }): Promise<{ id: s
         if (!r.outcome.ok) continue;
         await write(tx, ctx.now, row, r.record, r.outcome, rule);
         moves.push({ id: record.id, event: type, to: r.outcome.to });
-        if (type === "CHECK_IN") await notice(tx, ctx.now, [record.ownerId], await checkInText(tx, r.record), { type: "commitment", id: record.id, projectId: null, act: `check_in_${r.record.checkIns}` });
+        if (type === "CHECK_IN") {
+          const named = await linkLabel(tx, r.record.ownerId, r.record.link);
+          await notice(tx, ctx.now, [record.ownerId], await checkInText(tx, r.record), { type: "commitment", id: record.id, projectId: namedProject(r.record, named), act: `check_in_${r.record.checkIns}` });
+        }
         if (r.outcome.to === "lapsed") {
           await notice(tx, ctx.now, [record.ownerId], `No reply about "${record.what}", so I've stopped checking on it. It stays in your promises as closed.`, { type: "commitment", id: record.id, projectId: null, act: "lapsed" });
           break;

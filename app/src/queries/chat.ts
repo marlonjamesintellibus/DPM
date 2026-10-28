@@ -140,10 +140,10 @@ const NOTICES_SHOWN = 10;
 
 async function noticesFor(conn: Conn, viewerId: string, now: Date = new Date()): Promise<ChatNotice[]> {
   const all = await conn.select().from(t.notices).where(eq(t.notices.personId, viewerId)).orderBy(desc(t.notices.at), desc(t.notices.id)).limit(NOTICES_SHOWN);
-  // Phase O, P10: what a meeting note asked of someone names its project's records; once they cannot read that
-  // project (they left it, E77), the notice is no longer shown
-  const reader = all.some((n) => n.subjectType === "attributed_item") ? await projectReader(conn, viewerId) : null;
-  const rows = all.filter((n) => n.subjectType !== "attributed_item" || !n.projectId || reader!.mayRead(n.projectId));
+  // CD55 (W4-D14), P10: a notice about a project names its records; once the viewer cannot read that project
+  // (they left it), it is no longer shown, whatever it was about (a meeting's Ask, a cover, a promise's link)
+  const reader = all.some((n) => n.projectId) ? await projectReader(conn, viewerId) : null;
+  const rows = all.filter((n) => !n.projectId || reader!.mayRead(n.projectId));
   const out: ChatNotice[] = rows.map((n) => ({
     id: n.id,
     at: n.at,

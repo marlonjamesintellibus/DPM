@@ -396,6 +396,17 @@ describe("the rules on a commitment's link, and a later update (M22, CM6, CM9, C
     expect(await notices("kemar", id)).toEqual(["Did you send Kyle the access request? You said you would by Wed 21 Oct."]);
   });
 
+  it("CD55, P10: a check-in that named #151 is no longer shown once Kemar leaves Forager; the promise stays his", async () => {
+    const { id } = await kemarSays(PROMISE);
+    await timers(morning(2));
+    const named = "Did you send Kyle the access request (#151 Store sales feed access)? You said you would by Wed 21 Oct.";
+    expect(await notices("kemar", id)).toEqual([named]);
+    expect((await getChatSummary(db, "kemar", undefined, at(morning(2) + 1))).notices.map((x) => x.text)).toContain(named);
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "kemar")));
+    expect((await getChatSummary(db, "kemar", undefined, at(morning(2) + 2))).notices.map((x) => x.text)).not.toContain(named);
+    expect(await row(id)).toMatchObject({ state: "checking", ownerId: "kemar" });
+  });
+
   it("CM6: a later update that says it was done is proposed as done in its review, and saving it ends it", async () => {
     const { id } = await kemarSays(PROMISE);
     await timers(morning(2));
