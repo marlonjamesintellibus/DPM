@@ -16,11 +16,12 @@ async function viewAs(who: "kemar" | "alicia" | "andre" | "jodian", path = "/") 
 }
 const card = (text: string) => page.locator("article").filter({ hasText: text });
 
+// One context of its own, so a step can open a second tab in it (CD49's stale tab)
 test.beforeAll(async ({ browser }) => {
-  page = await browser.newPage();
+  page = await (await browser.newContext()).newPage();
 });
 test.afterAll(async () => {
-  await page.close();
+  await page.context().close();
 });
 
 test("1, 2. Kemar's voice note: Atlas proposes 9 updates for 2 projects, 4 need his OK", async () => {
@@ -679,11 +680,13 @@ test("Phase O. Kemar's meeting note: he says Alicia was there and knew it was re
   await viewAs("alicia", "/?view=chat");
   await expect(page.getByText("Kemar's meeting note on Forager 2.0 says this is yours: Send Kyle the buyer list, by Fri 23 Oct.", { exact: false })).toBeVisible();
   await page.goto("/?view=inbox");
-  await page.getByRole("link", { name: /Kemar's meeting note: Send Kyle the buyer list, by Fri 23 Oct/ }).first().click();
+  const asked = page.getByRole("link", { name: /Kemar's meeting note: Send Kyle the buyer list, by Fri 23 Oct/ });
+  await asked.first().click();
   await expect(page.getByText("“Alicia: I'll send Kyle the buyer list Friday.”")).toBeVisible();
   await expect(page.getByText("Forager sync with Alicia")).toHaveCount(0);
   await page.getByRole("group", { name: "Is this right?" }).getByRole("button", { name: "Confirm" }).click();
-  await expect(page.getByText("Saved as yours.")).toBeVisible();
+  // Answered, it leaves her inbox (its detail with it), as an answered cover ask does
+  await expect(asked).toHaveCount(0);
   // It is her own promise now, private to her (CD3)
   await viewAs("alicia", "/?view=chat&c=new&ask=1");
   await box.fill("What did I promise?");
@@ -705,5 +708,7 @@ test("Phase O, MT9. Kemar's Sprouts call could be about two of his projects: Atl
   // Only what the client may see (rule 8): the releases by their target date, never internal milestones or work
   const brief = page.getByRole("textbox", { name: "Your call brief" });
   await expect(brief).toHaveValue(/Buyer pilot · Release 1: planned Fri 30 Oct/);
-  await expect(brief).not.toHaveValue(/Trend model|#151|Data sources/);
+  await expect(brief).not.toHaveValue(/^- (Trend model|Data sources|#\d+)/m);
+  // Alicia shared Forager's status and its reason with the client in phase G's step, so the brief says them as she wrote them (DR4)
+  await expect(brief).toHaveValue(/Status:\n- Off track: /);
 });
