@@ -11,6 +11,7 @@ import { candidateProjects } from "../domain/machines/membership";
 import type { AnswerCard } from "../domain/question";
 import type { Confidence } from "../domain/shared";
 import { projectReader } from "./project";
+import { composedRead } from "./standup";
 
 export async function loadCheckContext(
   conn: Conn,
@@ -96,9 +97,12 @@ export async function loadCheckContext(
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, input.authorId));
   const earlier = input.captureId ? await loadEarlierTurns(conn, input.captureId) : [];
   const openAnswer = input.captureId ? await loadOpenAnswer(conn, input.captureId) : null;
+  // Phase J: a standup's answers are quoted only from the answers, and the questions taps answered
+  const standup = input.captureId ? await composedRead(conn, input.captureId) : null;
   return {
     ...(earlier.length ? { earlier } : {}),
     ...(openAnswer ? { openAnswer } : {}),
+    ...(standup ? { standup: { quoteIn: standup.quoteIn } } : {}),
     text: input.text,
     messageAt: input.messageAt,
     transcriptConfidence: input.transcriptConfidence,
@@ -137,7 +141,8 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
     turns.push({
       captureId: r.id,
       at: r.messageAt,
-      text: r.text,
+      // Phase J, P10: a standup's answers without the questions about a project the author has since left
+      text: (await composedRead(conn, r.id))?.shown.text ?? r.text,
       asked: r.question ? { topic: r.question.topic, projectId: r.question.projectId } : null,
       openItems: items.map((i) => ({
         id: i.id,

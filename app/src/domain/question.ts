@@ -10,6 +10,7 @@ import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
 import { GREETING, smallTalk } from "./topics/small-talk";
 import { subjectById, subjectIn, type WhySubject } from "./topics/why";
+import { standup } from "./topics/standup";
 import { undo } from "./topics/undo";
 
 // Each topic is defined in domain/topics, its answer in queries/answers
@@ -43,6 +44,8 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
   if (topic === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
   // Phase L: "Undo that" is the asker's command only as the whole message, whatever Atlas read
   if (topic === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
+  // Phase J: and "Start my standup" is the person's own command too
+  if (topic === "standup" && !standup.rule.test(ctx.text.trim().toLowerCase())) return null;
   const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
   const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
@@ -60,7 +63,7 @@ export function checkQuestion(raw: RawQuestion | null | undefined, ctx: Pick<Che
  * as the rule skips them.
  */
 function followed(text: string, asked: string, topic: QuestionTopic, earlier: readonly EarlierTurn[]): string[] {
-  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
+  if (topic === "other" || topic === "unclear" || topic === "undo" || topic === "standup" || topic === "correction" || (!FOLLOW_UP.test(text.trim()) && topicOf(asked) !== "other")) return [];
   const words: string[] = [];
   for (const turn of [...earlier].reverse()) {
     if (!turn.asked || turn.asked.topic === "small_talk") continue;
@@ -107,8 +110,9 @@ export function ruleQuestion(ctx: Pick<CheckContext, "text" | "projects" | "earl
   const text = ctx.text.trim();
   // CQ12, CQ13: small talk is the whole message or nothing ("Morning! Finished #145." is an update)
   if (smallTalk.rule.test(text.toLowerCase())) return { asked: text, topic: "small_talk", projectId: null };
-  // Phase L: "Undo that" and a correction are whole-message commands
+  // Phase L: "Undo that" and a correction are whole-message commands; phase J: so is "Start my standup"
   if (undo.rule.test(text.toLowerCase())) return { asked: text, topic: "undo", projectId: null };
+  if (standup.rule.test(text.toLowerCase())) return { asked: text, topic: "standup", projectId: null };
   const correction = ruleCorrection(ctx);
   if (correction) return { asked: text, topic: "correction", projectId: correction.projectId, correction };
   // CV8, CV9: "and on Store Insights?" takes its topic from the question before it in this conversation

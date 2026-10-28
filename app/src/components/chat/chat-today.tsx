@@ -15,6 +15,8 @@ import { clockTime } from "@/queries/project";
 import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
+import { ClarifyButtons } from "./clarify";
+import { StandupButtons } from "./standup";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
 import { RefreshWhile } from "./refresh-while";
@@ -73,8 +75,13 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
             </>
           ) : (
             <AtlasLine>
-              Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what needs
-              you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, or how a project stands.
+              <span>
+                Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what
+                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, or how a project stands. Or I can ask you, in a short
+                standup.
+              </span>
+              {/* Phase J: the standup's button sends what typing it would */}
+              <Suggestions asks={["Start my standup"]} />
             </AtlasLine>
           )}
         </ChatSession>
@@ -231,11 +238,13 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
   const line = waiting && capture.needsOk ? capture.line.replace(/;/, ", and") : capture.line;
   const thinking = reading || wording(capture.answer, at);
   const since = at.getTime() - capture.receivedAt.getTime();
+  // Phase J: a standup's answers were put together by DPM; they are not a message the person typed
+  const yours = capture.fromStandup ? null : <YourMessage capture={capture} />;
   if (thinking) {
     // Section 17: never "Reading your update": a message may be a question
     return (
       <>
-        <YourMessage capture={capture} />
+        {yours}
         <ThinkingLine label={since > STILL_WORKING_MS ? "Still working on it" : "Thinking"} />
       </>
     );
@@ -243,16 +252,20 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
   if (capture.state === "answered") {
     return (
       <>
-        <YourMessage capture={capture} />
+        {yours}
         {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
+        {capture.answered && <AtlasLine>{capture.answered}</AtlasLine>}
         <CommandsBlock capture={capture} />
+        <ClarifyBlock capture={capture} />
+        <StandupBlock capture={capture} />
       </>
     );
   }
   return (
     <>
-      <YourMessage capture={capture} />
+      {yours}
       <AtlasLine>
+        {capture.fromStandup && <span className="type-caption text-fg-3">Your standup answers, as one update</span>}
         <span>{line}</span>
         {rows.length > 0 && (
           <ul className="overflow-hidden rounded-panel border border-line">
@@ -297,7 +310,48 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
       </AtlasLine>
       {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
       <CommandsBlock capture={capture} />
+      <ClarifyBlock capture={capture} />
+      <StandupBlock capture={capture} />
     </>
+  );
+}
+
+/**
+ * Phase J, M28: the standup questions asked after this message, each with the tap that answered it (typed
+ * words show as the next message), the one waiting with its buttons, and how it ended.
+ */
+function StandupBlock({ capture }: { capture: ChatCapture }) {
+  const s = capture.standup;
+  if (!s) return null;
+  return (
+    <>
+      {s.steps.map((step) => (
+        <AtlasLine key={step.n}>
+          <span>{step.text}</span>
+          {step.answer && <span className="self-start rounded-full bg-panel-2 px-2.5 py-0.5 type-caption text-fg-2">{step.answer}</span>}
+        </AtlasLine>
+      ))}
+      {s.current && (
+        <AtlasLine>
+          {/* P10: a question about a project they can no longer read is not named */}
+          <span>{s.current.text ?? "I can't ask about that one any more."}</span>
+          <StandupButtons id={s.id} n={s.current.n} taps={s.current.taps} />
+        </AtlasLine>
+      )}
+      {s.ended && <AtlasLine>{s.ended}</AtlasLine>}
+    </>
+  );
+}
+
+/** Phase D, M21: Atlas asks which one it means, with the options as buttons; once answered, what came of it. */
+function ClarifyBlock({ capture }: { capture: ChatCapture }) {
+  const c = capture.clarification;
+  if (!c) return null;
+  return (
+    <AtlasLine>
+      <span>{c.question}</span>
+      {c.state === "asked" ? <ClarifyButtons id={c.id} options={c.options} /> : c.outcome && <span className="type-caption text-fg-3">{c.outcome}</span>}
+    </AtlasLine>
   );
 }
 

@@ -301,3 +301,64 @@ test("Phase B. Kemar marks his own work done from an answer line, in one tap", a
   await expect(page.getByRole("button", { name: "Copy" })).toHaveCount(2);
   await expect(page.getByRole("link", { name: /#152 Store feed connector/ })).toHaveCount(1);
 });
+
+test("Phase D. Kemar's vague update gets one question; he taps #152 and the review shows his choice", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Worked on the store feed today.");
+  await box.press("Enter");
+  // The recorded read fits #151 and #152, so Atlas asks which, with both as buttons (M21)
+  await expect(page.getByText('For "Worked on the store feed today", do you mean #151 Store sales feed access or #152 Store feed connector?')).toBeVisible();
+  const options = page.getByRole("group", { name: "Choose one" });
+  await expect(options.getByRole("button")).toHaveCount(2);
+  await options.getByRole("button", { name: "#152 Store feed connector" }).click();
+  await expect(page.getByText("Got it: #152 Store feed connector. It's in your review, waiting for your OK.").first()).toBeVisible();
+  // Answering only chose: the update still waits for his OK in the review, which shows where he chose it
+  await page.getByRole("button", { name: /^Review/ }).click();
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(card("Issue #152 Store feed connector")).toContainText("You chose this one in the chat");
+  await expect(card("Issue #152 Store feed connector").getByRole("button", { name: "Save" })).toBeVisible();
+});
+
+test("Phase D. A typed answer is read against the options only (CL2)", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Worked on the store feed today.");
+  await box.press("Enter");
+  await expect(page.getByRole("group", { name: "Choose one" })).toBeVisible();
+  await box.fill("the sales feed access one");
+  await box.press("Enter");
+  await expect(page.getByText("Got it: #151 Store sales feed access. It's in your review, waiting for your OK.").first()).toBeVisible();
+  await expect(page.getByRole("group", { name: "Choose one" })).toHaveCount(0);
+});
+
+test("Phase J. Kemar's standup asks from all his open work, blocked first; Done on his work In progress becomes an update he reviews", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  await page.getByRole("button", { name: "Start my standup" }).click();
+  await expect(page.getByText("Let's do your standup. Tap an answer or type your own. Skip moves on, and That's all ends it.")).toBeVisible();
+  // His 8:58 note blocked #151 on Kyle; a standup he starts asks about it all the same (CD12), blocked work first (M28)
+  await expect(page.getByText(/^#151 Store sales feed access is Blocked/)).toBeVisible();
+  await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: "Still stuck", exact: true }).click();
+  // Then his work In progress, soonest due first; #145 is done and #152 was marked done from an answer
+  const asked = page.getByText(/is In progress\. Done, still going, or stuck\?$/).last();
+  await expect(asked).toBeVisible();
+  const question = (await asked.textContent())!;
+  await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("group", { name: "Your answer" }).getByRole("button", { name: /^That.s all$/ }).click();
+  await expect(page.getByText("That's your standup. I put your answers together below for you to review.")).toBeVisible();
+  // The answers are one update, read as usual: Done, with its question as the words it came from
+  await expect(page.getByText("Your standup answers, as one update")).toBeVisible();
+  await page.getByRole("button", { name: /^Review/ }).click();
+  await expect(page).toHaveURL(/\/review\//);
+  await expect(card(question.replace(/ is In progress\..*$/, ""))).toBeVisible();
+  await expect(page.getByText(question).first()).toBeVisible();
+});
+
+test("Phase J. One standup a day: asking again says it is done (SU10)", async () => {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("Start my standup");
+  await box.press("Enter");
+  await expect(page.getByText("You've done your standup today. You can still send me an update any time.")).toBeVisible();
+  await expect(page.getByRole("group", { name: "Your answer" })).toHaveCount(0);
+});

@@ -32,6 +32,7 @@ import {
   decideExtraction,
   discardCapture,
   openReview,
+  pickRecordExtraction,
   rematchExtraction,
   routeExtraction,
   saveCapture,
@@ -39,6 +40,7 @@ import {
   type Rematch,
 } from "@/commands/capture";
 import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
+import { answerClarification } from "@/commands/clarification";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
@@ -46,6 +48,7 @@ import { giveFeedback, setHelpImproveAtlas } from "@/commands/learning";
 import { acceptOwnerAsk, declineOwnerAsk } from "@/commands/owner-ask";
 import { approveLeave, declineLeave } from "@/commands/leave";
 import { draftReasonFor, keepSetStatus, linkChange, saveReason, useCalculated } from "@/commands/status";
+import { tapStandup, type StandupTap } from "@/commands/standup";
 import { undoSave } from "@/commands/undo";
 import { decideVocabularyChange } from "@/commands/vocabulary";
 import { undoReply } from "@/queries/answers/undo";
@@ -158,6 +161,39 @@ export async function cancelChatCommand(commandId: string): Promise<ActionResult
   return command((ctx) => cancelCommand(ctx, commandId));
 }
 
+// ---- Asking when unsure (phase D, M21) ----
+
+/** A button under Atlas's question: the option is checked again now (CL5); a second tap says how it ended. */
+export async function answerClarificationAction(clarificationId: string, option: string): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await answerClarification(ctx, clarificationId, option)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
+// ---- Standup with Atlas (phase J, M28) ----
+
+/**
+ * A button under a standup question: a tap answer, Skip or That's all, for the question it was shown with
+ * (rule 6). When it ends the standup, the answers it composed are read after the reply, as a sent message is.
+ */
+export async function answerStandupAction(standupId: string, n: number, tap: StandupTap): Promise<ActionResult> {
+  let ran: { ctx: CommandCtx; composed: string | null } | null = null;
+  const r = await run(async (ctx) => {
+    ran = { ctx, composed: (await tapStandup(ctx, standupId, n, tap)).composed };
+  });
+  const done = ran as { ctx: CommandCtx; composed: string | null } | null;
+  if (r.ok && done?.composed) {
+    const captureId = done.composed;
+    after(async () => {
+      const atlas = atlasFromEnv();
+      await readCapture({ ...done.ctx, now: now() }, captureId, atlas.extractor, { clock: now, drafter: atlas.drafter });
+    });
+  }
+  return r;
+}
+
 // ---- Learning from use (phase S) ----
 
 /**
@@ -215,6 +251,11 @@ export async function decideItem(itemId: string, decision: ExtractionDecision): 
 
 export async function rematchItem(itemId: string, to: Rematch): Promise<ActionResult> {
   return run((ctx) => rematchExtraction(ctx, itemId, to));
+}
+
+/** Phase D: which record an unsure update means, chosen on the review; choosing is confirming. */
+export async function pickRecord(itemId: string, recordId: string): Promise<ActionResult> {
+  return run((ctx) => pickRecordExtraction(ctx, itemId, recordId));
 }
 
 export async function moveItem(itemId: string, to: { projectId: string } | "keep_private"): Promise<ActionResult> {

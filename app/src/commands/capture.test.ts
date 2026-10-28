@@ -361,12 +361,12 @@ describe("review and save (5.2)", () => {
     expect((await workItem("wi-151")).state).toBe("blocked");
   });
 
-  it("E27, D12 a record machine refuses (the milestone changed owner): the card says why, nothing is written, and it is audited", async () => {
+  it("E27, D12 a record's own rules refuse (the forecast now falls before the project starts): the card says why, nothing is written, and it is audited", async () => {
     await review();
-    await db.update(t.milestones).set({ ownerId: "alicia" }).where(eq(t.milestones.id, "ms-trend"));
+    await db.update(t.projects).set({ startDate: "2026-11-02" }).where(eq(t.projects.id, "forager"));
     const before = await projectsSnapshot();
     const r = await saveCapture(kemar(), CAP);
-    expect(r).toMatchObject({ outcome: "conflict", refused: [{ itemId: item(4), reason: expect.stringMatching(/^only the milestone owner changes its forecast.*Edit it or reject it$/) }] });
+    expect(r).toMatchObject({ outcome: "conflict", refused: [{ itemId: item(4), reason: expect.stringMatching(/^2026-10-26 is before Forager 2.0 starts.*Edit it or reject it$/) }] });
     expect(await projectsSnapshot()).toEqual(before);
     expect(await captureState()).toBe("reviewing");
     const card = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
@@ -379,6 +379,44 @@ describe("review and save (5.2)", () => {
     await decideExtraction(kemar(), item(4), { type: "reject" });
     expect((await saveCapture(kemar(), CAP)).outcome).toBe("saved");
     expect((await workItem("wi-145")).state).toBe("done");
+  });
+
+  it("phase J, rule 10: the milestone is Alicia's since the review, so Save stops and the card asks her; accepted again, saving asks her and writes nothing", async () => {
+    await review();
+    await db.update(t.milestones).set({ ownerId: "alicia" }).where(eq(t.milestones.id, "ms-trend"));
+    const before = await projectsSnapshot();
+    const r = await saveCapture(kemar(), CAP);
+    expect(r).toMatchObject({ outcome: "conflict", refused: [] });
+    expect(await projectsSnapshot()).toEqual(before);
+    const card = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    const four = card.groups.flatMap((g) => g.items).find((i) => i.ordinal === 4)!;
+    expect(four).toMatchObject({ state: "conflict", conflict: { reason: "Trend model is Alicia's now, so saving asks Alicia instead of changing it. Accept it to ask, or reject it" } });
+    expect(four.conflict?.refused).toBeUndefined();
+    const [logged] = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.extractionId, item(4)), eq(t.auditEntries.action, "DECIDER_CHANGED")));
+    expect(logged.detail).toMatchObject({ ask: "alicia", refused: false });
+
+    // Kemar sees it is Alicia's now and still wants it said: the save asks her (M37), and never writes it
+    await decideExtraction(kemar(), item(4), { type: "accept" });
+    expect((await saveCapture(kemar(), CAP)).outcome).toBe("saved");
+    expect((await db.select().from(t.milestones).where(eq(t.milestones.id, "ms-trend")))[0].forecastDate).toBe("2026-10-23");
+    const [ask] = await db.select().from(t.ownerAsks).where(eq(t.ownerAsks.extractionId, item(4)));
+    expect(ask).toMatchObject({ ownerId: "alicia", state: "asked", value: "2026-10-26" });
+    expect((await workItem("wi-145")).state).toBe("done");
+  });
+
+  it("phase J, rule 10: the milestone's owner left the project since the review, so nobody can be asked: the card can't apply and Kemar rejects it", async () => {
+    await review();
+    await db.update(t.milestones).set({ ownerId: "jodian" }).where(eq(t.milestones.id, "ms-trend"));
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "jodian")));
+    expect(await saveCapture(kemar(), CAP)).toMatchObject({ outcome: "conflict" });
+    const card = (await getReview(db, "kemar", CAP)) as Extract<Awaited<ReturnType<typeof getReview>>, { found: true }>;
+    expect(card.groups.flatMap((g) => g.items).find((i) => i.ordinal === 4)).toMatchObject({ markLabel: "Can't apply", conflict: { refused: true, reason: "Trend model is Jodian's, who is not on the project now, so you can't ask them or change it yourself. Reject it" } });
+    // Accepting it again changes nothing: it still has nobody to ask
+    await decideExtraction(kemar(), item(4), { type: "accept" });
+    expect(await saveCapture(kemar(), CAP)).toMatchObject({ outcome: "conflict" });
+    await decideExtraction(kemar(), item(4), { type: "reject" });
+    expect((await saveCapture(kemar(), CAP)).outcome).toBe("saved");
+    expect(await db.select().from(t.ownerAsks)).toEqual([]);
   });
 
   it("D3 a database error is retried with the same items, after 1s, and the save goes through", async () => {

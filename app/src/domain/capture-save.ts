@@ -21,6 +21,15 @@ export function targetKey(item: ExtractedItem): string | null {
   return null;
 }
 
+/**
+ * Phase D, E14: whether another item of the update, still in it, changes this field of `recordId`. Choosing
+ * that record for an unsure update would put two items on one field, which never save together (S3).
+ */
+export function fieldTaken(items: readonly ExtractedItem[], item: ExtractedItem, recordId: string): boolean {
+  const field = item.draft.target?.field;
+  return items.some((o) => o.id !== item.id && o.state !== "withdrawn" && o.draft.kind === "update" && o.draft.target?.id === recordId && o.draft.target.field === field);
+}
+
 /** Write `value` only while the field still holds `expected` (compare and set in the transaction). */
 export type PlannedWrite = {
   itemId: string;

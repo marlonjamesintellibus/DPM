@@ -18,6 +18,8 @@
 // commands (phase B): what a reply decides on the open answer, after the checks: "<act>@<line>" per card,
 //   or "note:<kind>[@<lines>]" when it made none ("note:which@1,2"). A case without it must decide nothing.
 // correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
+// unsure (phase D, M21): what DPM asks the author which of, after the checks: "records:<id>,<id>" for an
+//   update whose words fit 2 or 3 records. A case without it must leave no record unsure.
 import type { EarlierTurn, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
@@ -59,6 +61,10 @@ export type EvalCase = {
   answer?: OpenAnswer;
   /** Phase B: what the reply decides, after the checks (see the keys above). */
   commands?: string[];
+  /** Phase D: the records DPM asks the author to choose between (see the keys above). */
+  unsure?: string;
+  /** Phase J: the text is a standup's typed answers, each after its "Atlas:" question; quotes only from the answers (M28). */
+  standup?: true;
 };
 
 // Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
@@ -1054,5 +1060,66 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["*"],
     correct: { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" },
+  },
+  // Phase D: a vague update whose words fit two of the author's records names both; DPM asks which (M21).
+  // One that names its record never asks
+  {
+    id: "d-vague-feed",
+    about: "the store feed fits #151 and #152: both are options, the change is proposed once",
+    text: "Worked on the store feed today.",
+    expect: [["upd:wi-151.state=in_progress", "upd:wi-152.state=in_progress"]],
+    allow: ["same:br-feed-blocker"],
+    unsure: "records:wi-151,wi-152",
+  },
+  {
+    id: "d-vague-feed-patois",
+    about: "the same vague update in Patois",
+    text: "Mi did a work pon di store feed today.",
+    expect: [["upd:wi-151.state=in_progress", "upd:wi-152.state=in_progress"]],
+    allow: ["same:br-feed-blocker"],
+    unsure: "records:wi-151,wi-152",
+  },
+  {
+    id: "d-named-feed",
+    about: "words that name the record are never unsure",
+    text: "Worked on the store feed connector today, #152 is in progress.",
+    expect: ["upd:wi-152.state=in_progress"],
+  },
+  // Phase J: "Start my standup" starts it; a standup's typed answers are read each with the question before it,
+  // quoting only the author's words (M28). Taps never reach Atlas, so these are the answers DPM could not read
+  { id: "j-start", about: "M28 'Start my standup' is the standup command, nothing proposed", text: "Start my standup", expect: [], forbid: ["*"], ask: { topic: "standup", projectId: null } },
+  {
+    id: "j-not-that",
+    about: "SU4: an answer about another item than the one asked is about that item",
+    text: "Atlas: #145 Google Trends connector is In progress. Done, still going, or stuck?\nKemar: Not that one, but #152 is done",
+    standup: true,
+    expect: ["upd:wi-152.state=done"],
+    forbid: ["upd:wi-145.*"],
+  },
+  {
+    id: "j-waiting-on",
+    about: "what stuck work waits on is a blocker report; the work is already blocked by DPM",
+    text: "Atlas: #145 Google Trends connector is In progress. Done, still going, or stuck?\nKemar: Stuck\nAtlas: What's it waiting on?\nKemar: Kyle hasn't sent the Google Trends API key",
+    standup: true,
+    expect: [["new:blocker:forager", "new:blocker:none", "new:dependency:forager"]],
+    // DPM's Blocked from the "Stuck" tap carries the note; a second Blocked from Atlas is dropped by DPM (S3), and the prompt says not to
+    allow: ["upd:wi-145.blocked_note=*"],
+    forbid: ["upd:wi-145.state=*"],
+  },
+  {
+    id: "j-new-blocker",
+    about: "a new blocker named in answer to 'Anything new blocking you?'",
+    text: "Atlas: Anything new blocking you?\nKemar: The trend scoring model needs more GPU quota and Sprouts IT hasn't approved it yet",
+    standup: true,
+    expect: [["new:blocker:forager", "new:dependency:forager"]],
+    allow: ["upd:wi-147.state=blocked", "upd:wi-147.blocked_note=*", "new:risk:forager"],
+  },
+  {
+    id: "j-nothing",
+    about: "an answer that says nothing is blocking proposes nothing",
+    text: "Atlas: Anything new blocking you?\nKemar: Nope, all clear on my side today",
+    standup: true,
+    expect: [],
+    forbid: ["*"],
   },
 ];

@@ -4,6 +4,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
+import { fieldTaken } from "../domain/capture-save";
 import { weekday } from "../domain/dates";
 import * as t from "../db/schema";
 import { saveBlockers } from "../domain/machines/capture";
@@ -15,6 +16,7 @@ import { setAside, type SetAside, type StoredDrop } from "../domain/set-aside";
 import type { Confidence, ExtractedItemDraft, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
+import { composedRead } from "./standup";
 
 export type ReviewMark = ReturnType<typeof displayMark>;
 
@@ -62,6 +64,11 @@ export type ReviewItem = {
   edit: { input: "choice" | "date" | "text"; value: string; options: { value: string; label: string }[] } | null;
   /** D18: for a BRAID report, the project's other open entries of the same kind ("Pick an entry"). */
   matchOptions: { id: string; title: string; stateLabel: string }[];
+  /**
+   * Phase D: the update's words fit more than one record. others: the ones it is not about now, as "Did you
+   * mean"; chosen: where the author said which (the chat, CL3, or here). Only records they may still read.
+   */
+  closeMatches: { others: { id: string; label: string }[]; chosen: "chat" | "review" | null } | null;
 };
 
 export type ReviewGroup =
@@ -171,6 +178,13 @@ export async function readSetAside(
     .orderBy(desc(t.auditEntries.id))
     .limit(1);
   const dropped = (read?.detail?.dropped ?? []) as StoredDrop[];
+  // Phase J: in a standup's answers only the words the author typed are theirs to list, in the text as it is
+  // shown (P10: a question about a project they have left is not, nor a refusal's words from it)
+  const standup = await composedRead(conn, capture.id);
+  if (standup) {
+    const at = (spans: readonly SourceSpan[]) => spans.flatMap((s) => standup.shown.at(s) ?? []);
+    return setAside({ text: standup.shown.text, used: at(items.flatMap((i) => i.draft.spans)), dropped, asked: null, onlyIn: at(standup.ownWords) });
+  }
   return setAside({ text: capture.text, used: items.flatMap((i) => i.draft.spans), dropped, asked: capture.question?.asked ?? null });
 }
 
@@ -250,6 +264,22 @@ export async function loadTargetRecords(conn: Conn, drafts: readonly ExtractedIt
   return { workItems, milestones, steps, leave };
 }
 
+/** Phase D: "#152 Store feed connector" for each record an unsure update could mean, on projects the reader may read (P10). */
+async function recordLabels(conn: Conn, ids: string[], reader: { mayRead: (projectId: string) => boolean }): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  const [work, milestones, steps] = await Promise.all([
+    conn.select({ id: t.workItems.id, number: t.workItems.number, title: t.workItems.title, projectId: t.workItems.projectId }).from(t.workItems).where(inArray(t.workItems.id, ids)),
+    conn.select({ id: t.milestones.id, title: t.milestones.name, projectId: t.milestones.projectId }).from(t.milestones).where(inArray(t.milestones.id, ids)),
+    conn
+      .select({ id: t.handoverSteps.id, title: t.handoverSteps.title, projectId: t.handovers.projectId })
+      .from(t.handoverSteps)
+      .innerJoin(t.handovers, eq(t.handovers.id, t.handoverSteps.handoverId))
+      .where(inArray(t.handoverSteps.id, ids)),
+  ]);
+  const labels = [...work.map((w) => ({ ...w, title: w.number ? `${w.number} ${w.title}` : w.title })), ...milestones, ...steps];
+  return new Map(labels.filter((r) => reader.mayRead(r.projectId)).map((r) => [r.id, r.title]));
+}
+
 /** "Issue #145 Google Trends connector", "Milestone Trend model", "Handover Runbook", "Leave Kemar Brown". */
 export function targetTitle(target: NonNullable<ExtractedItemDraft["target"]>, records: TargetRecords, authorName: string): string {
   switch (target.type) {
@@ -310,6 +340,10 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const rows = await conn.select().from(t.extractions).where(eq(t.extractions.captureId, captureId)).orderBy(t.extractions.ordinal);
   const items = rows.map(itemOf);
   const drafts = items.map((i) => i.draft);
+  // Phase J, P10: a standup's answers show only the questions about projects the author may read now, as the
+  // chat does; a quote from a question left out has nowhere to show
+  const shown = (await composedRead(conn, capture.id))?.shown ?? { text: capture.text, at: (s: SourceSpan) => s };
+  const spansOf = (d: ExtractedItemDraft) => d.spans.flatMap((s) => shown.at(s) ?? []);
   const ids = (pick: (d: (typeof drafts)[number]) => string | null | undefined) => [...new Set(drafts.map(pick).filter((x): x is string => !!x))];
 
   const entryIds = [...new Set([...ids((d) => d.braid?.matchEntryId), ...ids((d) => d.braid?.supersedes)])];
@@ -343,6 +377,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const authorRole = (projectId: string | null): ProjectRole =>
     memberships.find((m) => m.projectId === projectId && m.personId === capture.authorId && m.state === "member")?.role ?? "member";
   const authorFirst = firstName(author?.name ?? capture.authorId);
+  const closeLabels = await recordLabels(conn, [...new Set(drafts.flatMap((d) => d.closeMatches?.ids ?? []))], reader);
 
   const titleOf = (item: ExtractedItem): string => {
     const d = item.draft;
@@ -438,8 +473,8 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
         reason: d.routingReason,
         options: (d.options ?? []).map((id) => ({ id, name: projectName(id) })),
       },
-      spans: d.spans,
-      quotes: d.spans.map((s) => capture.text.slice(s.start, s.end)),
+      spans: spansOf(d),
+      quotes: spansOf(d).map((s) => shown.text.slice(s.start, s.end)),
       rationale: d.rationale,
       conflict: item.conflict,
       withdrawnNote: item.state === "withdrawn" && item.withdrawn ? WITHDRAWN_NOTE[item.withdrawn] : null,
@@ -450,6 +485,13 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
               .filter((e) => e.projectId === d.projectId && e.kind === d.braid!.kind && e.id !== d.braid!.matchEntryId)
               .map((e) => ({ id: e.id, title: e.title, stateLabel: e.state.replace("_", " ") }))
           : [],
+      closeMatches: d.closeMatches
+        ? {
+            // Section 6: never one another item of the update already changes, which could not be chosen
+            others: d.closeMatches.ids.filter((id) => id !== d.target?.id && !fieldTaken(items, item, id)).flatMap((id) => (closeLabels.has(id) ? [{ id, label: closeLabels.get(id)! }] : [])),
+            chosen: d.closeMatches.chosen,
+          }
+        : null,
       // A same-as report or a resolution belongs to its entry's log, like an update to its record
       canMove: d.scope === "project" && (d.kind === "braid_new" || d.kind === "new_work" || (d.kind === "update" && !d.target)),
     };
@@ -482,7 +524,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   for (const r of reviewItems) {
     for (const s of r.spans) {
       const key = `${s.start}:${s.end}`;
-      const h = highlightMap.get(key) ?? { start: s.start, end: s.end, text: capture.text.slice(s.start, s.end), ordinals: [] };
+      const h = highlightMap.get(key) ?? { start: s.start, end: s.end, text: shown.text.slice(s.start, s.end), ordinals: [] };
       h.ordinals.push(r.ordinal);
       highlightMap.set(key, h);
     }
@@ -494,7 +536,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
     found: true,
     capture: {
       id: capture.id,
-      text: capture.text,
+      text: shown.text,
       channel: capture.channel,
       kind: capture.kind,
       durationSeconds: capture.durationSeconds,

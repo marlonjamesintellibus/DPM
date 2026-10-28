@@ -5,7 +5,7 @@ import type { IsoDate } from "../dates";
 import type { CommandAct, CommandSubject } from "../machines/chat-command";
 import type { LeaveState } from "../machines/leave";
 import type { BraidKind, ProjectRole } from "../rights";
-import type { Confidence, ExtractedItemDraft, ItemKind, TargetType } from "../shared";
+import type { Confidence, ExtractedItemDraft, ItemKind, SourceSpan, TargetType } from "../shared";
 
 /**
  * Why Atlas filed a proposal in its project. `basis` names the kind of evidence so check 14 can
@@ -40,6 +40,11 @@ export type RawProposal = {
   newValue?: string | null;
   /** Ignored: the old value is always read from the database (check 7). */
   oldValue?: string | null;
+  /**
+   * Phase J, SU3: set by DPM, never by the model (the tool's schema has no such field). A standup answer is
+   * compared with what its question showed when it was asked, so check 7 takes this as the old value instead.
+   */
+  shownValue?: string | null;
   /** braid_new and braid_same: the BRAID kind as the model gave it. */
   braidKind?: string | null;
   /** braid_new: a short title for the new entry. */
@@ -60,6 +65,11 @@ export type RawProposal = {
   options?: readonly string[] | null;
   /** Section 16: an item of an unsaved update earlier in this conversation that this one corrects. */
   replacesItemId?: string | null;
+  /**
+   * Phase D, update only: when the words fit two or three listed records equally ("Worked on the feed"),
+   * every record they could mean, targetId among them. DPM asks the author which (M21).
+   */
+  targetOptions?: readonly string[] | null;
   /** The exact words, found in the capture text by check 2. */
   quote: string;
   confidence: Confidence;
@@ -119,6 +129,12 @@ export type CheckContext = {
   earlier?: readonly EarlierTurn[];
   /** Phase B: the answer open in this conversation, whose lines a reply may act on ("Approve the Kyle risk"). */
   openAnswer?: OpenAnswer | null;
+  /**
+   * Phase J: the message is a standup's answers (M28). Check 2 looks for a quote only in these spans, each
+   * answer and each question a tap answered, so words Atlas reads are never quoted from DPM's own question.
+   * Atlas is told it reads a standup's answers.
+   */
+  standup?: { quoteIn: readonly SourceSpan[] };
 };
 
 /** One line of the open answer as Atlas is shown it: what it is, and what the asker may do on it. */

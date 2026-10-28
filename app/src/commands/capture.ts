@@ -8,9 +8,9 @@ import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, loadItems, loadWorld, orgTagsOf, persistBraidLog, persistCapture, persistItems, setStatusRecordOf } from "../db/records";
 import * as t from "../db/schema";
-import { runChecks } from "../domain/atlas-checks/checks";
+import { mayChangeField, retarget, runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
-import { planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
+import { fieldTaken, planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
 import type { Moved } from "../domain/machine";
@@ -59,10 +59,12 @@ import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, today
 import { evaluateProjects, type Evaluation } from "./evaluate";
 import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
+import { answeredByCards, answerInWords, askIfUnsure, closeWithCapture, closeWithItem, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 import { createOwnerAsks } from "./owner-ask";
+import { answerStandupInWords, startStandup } from "./standup";
 import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
 import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
 
@@ -179,48 +181,51 @@ export type Created = { captureId: string; duplicate: boolean; conversationId: s
 
 /** Stores a message as received. A repeat of one already received (same dedup key) is dropped and changes nothing (E1). */
 export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Created> {
-  return runCommand(ctx, async (tx) => {
-    // D14: Atlas always sends its message id; without it a resend could not be told from a new message
-    if (input.channel === "atlas" && !input.messageId) throw new CommandRefused("a message from Atlas needs its message id");
-    const dedupKey = captureDedupKey({ channel: input.channel, author: ctx.actorId, text: input.text, sentAt: input.messageAt, messageId: input.messageId });
-    const seen = await tx
-      .select({ id: t.captures.id, dedupKey: t.captures.dedupKey, conversationId: t.captures.conversationId })
-      .from(t.captures)
-      .where(eq(t.captures.dedupKey, dedupKey));
-    const received = receiveCapture({ dedupKey, kind: input.kind }, new Set(seen.map((s) => s.dedupKey)));
-    // CV5: the same message again is one capture, in the conversation it is already in
-    if (!received.ok) return { captureId: seen[0].id, duplicate: true, conversationId: seen[0].conversationId };
-    const conversationId = await conversationFor(tx, ctx, input);
-    const id = `cap-${randomUUID()}`;
-    await tx.insert(t.captures).values({
-      id,
-      authorId: ctx.actorId,
-      conversationId,
-      channel: input.channel,
-      kind: input.kind,
-      text: input.text,
-      durationSeconds: input.durationSeconds ?? null,
-      messageAt: input.messageAt,
-      receivedAt: input.receivedAt,
-      dedupKey,
-      state: received.record.state,
-      // Kept until the transcript step reports it (TRANSCRIBED); a text message has none
-      transcriptConfidence: input.kind === "voice" ? (input.transcriptConfidence ?? null) : null,
-      createdAt: ctx.now,
-      updatedAt: ctx.now,
-    });
-    await audit(tx, ctx.now, {
-      actorType: "system",
-      action: "RECEIVED",
-      machine: "capture",
-      subjectType: "capture",
-      subjectId: id,
-      toState: "received",
-      captureId: id,
-      detail: { channel: input.channel, authorId: ctx.actorId, conversationId },
-    });
-    return { captureId: id, duplicate: false, conversationId };
+  return runCommand(ctx, (tx) => createCaptureIn(tx, ctx, input));
+}
+
+/** createCapture inside a command already running: phase J composes a standup's answers in the move that ends it. */
+export async function createCaptureIn(tx: Tx, ctx: By, input: NewCapture): Promise<Created> {
+  // D14: Atlas always sends its message id; without it a resend could not be told from a new message
+  if (input.channel === "atlas" && !input.messageId) throw new CommandRefused("a message from Atlas needs its message id");
+  const dedupKey = captureDedupKey({ channel: input.channel, author: ctx.actorId, text: input.text, sentAt: input.messageAt, messageId: input.messageId });
+  const seen = await tx
+    .select({ id: t.captures.id, dedupKey: t.captures.dedupKey, conversationId: t.captures.conversationId })
+    .from(t.captures)
+    .where(eq(t.captures.dedupKey, dedupKey));
+  const received = receiveCapture({ dedupKey, kind: input.kind }, new Set(seen.map((s) => s.dedupKey)));
+  // CV5: the same message again is one capture, in the conversation it is already in
+  if (!received.ok) return { captureId: seen[0].id, duplicate: true, conversationId: seen[0].conversationId };
+  const conversationId = await conversationFor(tx, ctx, input);
+  const id = `cap-${randomUUID()}`;
+  await tx.insert(t.captures).values({
+    id,
+    authorId: ctx.actorId,
+    conversationId,
+    channel: input.channel,
+    kind: input.kind,
+    text: input.text,
+    durationSeconds: input.durationSeconds ?? null,
+    messageAt: input.messageAt,
+    receivedAt: input.receivedAt,
+    dedupKey,
+    state: received.record.state,
+    // Kept until the transcript step reports it (TRANSCRIBED); a text message has none
+    transcriptConfidence: input.kind === "voice" ? (input.transcriptConfidence ?? null) : null,
+    createdAt: ctx.now,
+    updatedAt: ctx.now,
   });
+  await audit(tx, ctx.now, {
+    actorType: "system",
+    action: "RECEIVED",
+    machine: "capture",
+    subjectType: "capture",
+    subjectId: id,
+    toState: "received",
+    captureId: id,
+    detail: { channel: input.channel, authorId: ctx.actorId, conversationId },
+  });
+  return { captureId: id, duplicate: false, conversationId };
 }
 
 /**
@@ -228,7 +233,7 @@ export function createCapture(ctx: CommandCtx, input: NewCapture): Promise<Creat
  * conversation (CV4); an app message continues the one named (CV2: only the sender's own) or starts one
  * (CV1). Sending to an archived conversation brings it back (CV3).
  */
-async function conversationFor(tx: Tx, ctx: CommandCtx, input: NewCapture): Promise<string> {
+async function conversationFor(tx: Tx, ctx: By, input: NewCapture): Promise<string> {
   let row: typeof t.conversations.$inferSelect | undefined;
   if (input.channel === "atlas") {
     const chat = input.atlasChatId ?? "dm";
@@ -257,7 +262,7 @@ async function conversationFor(tx: Tx, ctx: CommandCtx, input: NewCapture): Prom
   return row.id;
 }
 
-async function startConversation(tx: Tx, ctx: CommandCtx, draft: ConversationRecord, input: NewCapture): Promise<string> {
+async function startConversation(tx: Tx, ctx: By, draft: ConversationRecord, input: NewCapture): Promise<string> {
   const r = applyConversationEvent(draft, { type: "FIRST_MESSAGE", text: input.text }, ctx.actorId);
   const outcome = moved(r.outcome);
   const c = r.record;
@@ -270,7 +275,7 @@ export function conversationOf(row: typeof t.conversations.$inferSelect): Conver
   return { id: row.id, ownerId: row.ownerId, state: row.state, title: row.title, titleBy: row.titleBy, channel: row.channel, atlasChatId: row.atlasChatId };
 }
 
-export function auditConversation(tx: Tx, ctx: CommandCtx, id: string, outcome: Moved<ConversationState>, detail: Record<string, unknown> = {}) {
+export function auditConversation(tx: Tx, ctx: By, id: string, outcome: Moved<ConversationState>, detail: Record<string, unknown> = {}) {
   return audit(tx, ctx.now, {
     actorType: "person",
     actorId: ctx.actorId,
@@ -388,6 +393,43 @@ export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" 
   });
 }
 
+/**
+ * Phase D, CL2: a reply whose words answer Atlas's open question in this conversation (M21) ends its read
+ * here, before any model is asked: nothing to propose, and it was answered. False when the words are not an
+ * answer; they are then read as a new message and the question stays (CL1).
+ */
+export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number): Promise<boolean> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
+    const answered = await answerInWords(tx, ctx.now, row);
+    if (!answered) return false;
+    const r = moveCapture(record, { type: "PROPOSALS_READY", count: 0, asked: true });
+    await persistCapture(tx, captureId, row.version, r.record, ctx.now);
+    if (answered.note) await tx.update(t.captures).set({ commandNote: answered.note }).where(eq(t.captures.id, captureId));
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { items: 0, clarification: answered.id, attempt });
+    return true;
+  });
+}
+
+/**
+ * Phase J, M28: a reply in the conversation where the author's standup is asking is its answer (SU4, SU5),
+ * and its read ends here with nothing to propose: the answer is read with its question once the standup is
+ * composed. null when no standup asks there, or when the reply is their own question or command, read from
+ * `context` (SU4). A standup past its idle time ends instead, and the reply is read as a new message
+ * (answered false). composed: the capture the standup's answers became, to read next.
+ */
+export function readAsStandupAnswer(ctx: CommandCtx, captureId: string, attempt: number, context: Pick<CheckContext, "text" | "projects" | "openAnswer">): Promise<{ answered: boolean; composed: string | null } | null> {
+  return runCommand(ctx, async (tx) => {
+    const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
+    const r = await answerStandupInWords(tx, ctx.now, row, context);
+    if (!r?.answered) return r && { answered: false, composed: r.composed };
+    const moved_ = moveCapture(record, { type: "PROPOSALS_READY", count: 0, asked: true });
+    await persistCapture(tx, captureId, row.version, moved_.record, ctx.now);
+    await auditCapture(tx, ctx.now, captureId, moved_.outcome, atlasActor, { items: 0, standup: r.standupId, attempt });
+    return { answered: true, composed: r.composed };
+  });
+}
+
 export type Proposed = { state: CaptureState; items: ExtractedItem[]; dropped: DroppedProposal[]; moreFound: boolean; answer?: Answer | null };
 
 /**
@@ -472,14 +514,20 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
         extractionId: replaced,
         detail: { because: "replaced", by: item.id },
       });
+      // Rule 5: a question Atlas asked about the withdrawn item could never be answered now (M21)
+      await closeWithItem(tx, ctx.now, replaced);
     }
     // Phase B: one card per line it decides, each only on a line the asker may still read (AC6 to AC9)
-    if (decides) {
-      const { note } = await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer);
-      if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
-    }
+    const decided = decides ? await commandsFromWords(tx, ctx.now, { id: captureId, authorId: row.authorId }, commands, checkCtx.openAnswer) : null;
+    // Phase D, CL1: a card made for one of an open line question's options answers that question
+    if (decided?.made.length) await answeredByCards(tx, ctx.now, { id: captureId, authorId: row.authorId }, decided.made);
+    // Phase D, M21 CHECKS_DONE: unsure which project, record or line it means, DPM asks in the author's own chat
+    const clarified = await askIfUnsure(tx, ctx.now, row, items, decided?.which ?? null, checkCtx);
+    // Words that could mean several lines are said only when no question asks which (AC6, AC7)
+    const note = [decided?.note, clarified?.about === "line" ? null : decided?.which?.text].filter(Boolean).join(" ");
+    if (note) await tx.update(t.captures).set({ commandNote: note }).where(eq(t.captures.id, captureId));
     // Phase L: "Undo that" and a correction are the asker's own commands; they run now, as the asker
-    const question = asked ? await actOn(tx, ctx.now, row.authorId, captureId, asked) : null;
+    const question = asked ? await actOn(tx, ctx.now, row, asked) : null;
     // Section 15: the answer is read from the asker's own data now, and kept with the message (QA10)
     const found = question ? await answerFor(tx, row.authorId, question, ctx.now) : null;
     // Section 18: small talk has no facts to word, so DPM's reply stands at once
@@ -517,9 +565,15 @@ export function proposeItems(ctx: CommandCtx, captureId: string, proposals: read
 /**
  * Phase L. "Undo that" (M30) runs the undo job on the asker's last save; its id goes with the question, so
  * the answer says what it did. A correction (M31) proposes each change it names to that project's PM or
- * Lead; one that cannot be proposed is left out, and the answer says how each part stands.
+ * Lead; one that cannot be proposed is left out, and the answer says how each part stands. Phase J: "Start
+ * my standup" starts today's standup (M28 START); its id goes with the question when it started.
  */
-async function actOn(tx: Tx, now: Date, authorId: string, captureId: string, asked: AskedQuestion): Promise<AskedQuestion> {
+async function actOn(tx: Tx, now: Date, capture: CaptureRow, asked: AskedQuestion): Promise<AskedQuestion> {
+  const { authorId, id: captureId } = capture;
+  if (asked.topic === "standup") {
+    const r = await startStandup(tx, now, capture);
+    return { ...asked, made: r.started ? [r.record.id] : [] };
+  }
   if (asked.topic === "undo") {
     const r = await undoInTx(tx, now, authorId, { commandId: `undo-${captureId}` });
     return { ...asked, made: r.kind === "job" ? [r.job.id] : [] };
@@ -544,6 +598,8 @@ export function openReview(ctx: CommandCtx, captureId: string): Promise<CaptureS
     const r = moveCapture(record, { type: "OPEN_REVIEW" }, { authorActive: await isActive(tx, row.authorId) });
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     await auditCapture(tx, ctx.now, captureId, r.outcome, { type: "person", id: ctx.actorId });
+    // Phase D, CL3: the review card holds the choice Atlas asked about in the chat (M21 REVIEW_OPENED)
+    await handToReview(tx, ctx.now, captureId, ctx.actorId);
     return r.record.state;
   });
 }
@@ -557,6 +613,7 @@ export function discardCapture(ctx: CommandCtx, captureId: string): Promise<{ wi
     const withdrawn = await withdrawAll(tx, ctx.now, captureId, "discarded", by);
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     await auditCapture(tx, ctx.now, captureId, r.outcome, by);
+    await closeWithCapture(tx, ctx.now, captureId, { actorType: "person", actorId: ctx.actorId });
     await syncReminder(tx, ctx.now, row.authorId, captureId, false, true);
     return { withdrawn };
   });
@@ -781,69 +838,125 @@ async function targetProjectOf(tx: Tx, draft: ExtractedItemDraft): Promise<strin
 export function routeExtraction(ctx: CommandCtx, extractionId: string, to: RouteTo): Promise<ExtractedItem> {
   return runCommand(ctx, async (tx) => {
     const { row, item, capture } = await reviewing(tx, extractionId, ctx.actorId);
-    if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
-    const { author, world } = await authorOf(tx, ctx.actorId);
-    const draft = item.draft;
-    const route = routeOf(draft);
-    const event: RoutingEvent =
-      to === "keep_private"
-        ? { type: "KEEP_PRIVATE" }
-        : route.state === "routed"
-          ? { type: "MOVE", projectId: to.projectId }
-          : route.state === "choose_project"
-            ? { type: "PICK", projectId: to.projectId }
-            : { type: "FILE", projectId: to.projectId };
-    const targetProjectId = await targetProjectOf(tx, draft);
-    // A related_to link points at an entry, not at a record, so it never pins the project
-    const pinned = draft.kind === "braid_new" ? null : targetProjectId;
-    const r = applyRouting(route, event, author, world, { kind: draft.kind, targetProjectId: pinned });
-    const outcome = moved(r.outcome);
-    const name = (id: string | null) => world.projects.find((p) => p.id === id)?.name ?? "that project";
-    // D13, E74: an update to a record stays in that record's project (G2); the review offers no Move for it
-    if (r.recheck === "pick_target") {
-      const what = draft.target?.type === "work_item" ? ((await tx.select({ n: t.workItems.number }).from(t.workItems).where(eq(t.workItems.id, draft.target.id)))[0]?.n ?? "That record") : "That record";
-      throw new CommandRefused(`${what} is in ${name(targetProjectId)}. To log this somewhere else, add it as a BRAID item in that project`);
-    }
-    if (r.recheck === "rematch") throw new CommandRefused(`that entry is on ${name(targetProjectId)}'s log; a same-as report can only join it there`);
-    if (draft.braid && r.route.projectId !== null) {
-      const role = actorIn(ctx.actorId, r.route.projectId, world.memberships).role;
-      if (role && !mayReport(role, draft.braid.kind)) throw new CommandRefused(`on ${name(r.route.projectId)}, a ${role} may not report a ${draft.braid.kind}`);
-    }
+    return routeItemIn(tx, ctx, row, item, capture.row.text, to);
+  });
+}
 
-    const { options: _options, ...rest } = draft;
-    const next: ExtractedItemDraft = { ...rest, projectId: r.route.projectId, routing: r.route.state, routingReason: r.route.reason };
-    if (r.route.state === "choose_project") next.options = [...r.route.options];
-    if (next.braid?.match === "related_to" && targetProjectId !== r.route.projectId) {
-      // Links never cross projects: in its new project the report starts as a new entry
-      const { seenState: _seen, ...braid } = next.braid;
-      next.braid = { ...braid, match: "new", matchEntryId: null };
+type ExtractionRow = typeof t.extractions.$inferSelect;
+/** Who acts on an item, and when: the author, as a command or Atlas's question in the chat (phase D) runs it. */
+type By = Pick<CommandCtx, "now" | "actorId">;
+
+/**
+ * M14 on one item, in the caller's transaction: the review's Move, Pick a project and Keep private, and
+ * phase D's answer in the chat (`chosenIn` "chat": the review then shows it as chosen there).
+ */
+export async function routeItemIn(tx: Tx, ctx: By, row: ExtractionRow, item: ExtractedItem, captureText: string, to: RouteTo, chosenIn?: "chat"): Promise<ExtractedItem> {
+  if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
+  const { author, world } = await authorOf(tx, ctx.actorId);
+  const draft = item.draft;
+  const route = routeOf(draft);
+  const event: RoutingEvent =
+    to === "keep_private"
+      ? { type: "KEEP_PRIVATE" }
+      : route.state === "routed"
+        ? { type: "MOVE", projectId: to.projectId }
+        : route.state === "choose_project"
+          ? { type: "PICK", projectId: to.projectId }
+          : { type: "FILE", projectId: to.projectId };
+  const targetProjectId = await targetProjectOf(tx, draft);
+  // A related_to link points at an entry, not at a record, so it never pins the project
+  const pinned = draft.kind === "braid_new" ? null : targetProjectId;
+  const r = applyRouting(route, event, author, world, { kind: draft.kind, targetProjectId: pinned });
+  const outcome = moved(r.outcome);
+  const name = (id: string | null) => world.projects.find((p) => p.id === id)?.name ?? "that project";
+  // D13, E74: an update to a record stays in that record's project (G2); the review offers no Move for it
+  if (r.recheck === "pick_target") {
+    const what = draft.target?.type === "work_item" ? ((await tx.select({ n: t.workItems.number }).from(t.workItems).where(eq(t.workItems.id, draft.target.id)))[0]?.n ?? "That record") : "That record";
+    throw new CommandRefused(`${what} is in ${name(targetProjectId)}. To log this somewhere else, add it as a BRAID item in that project`);
+  }
+  if (r.recheck === "rematch") throw new CommandRefused(`that entry is on ${name(targetProjectId)}'s log; a same-as report can only join it there`);
+  if (draft.braid && r.route.projectId !== null) {
+    const role = actorIn(ctx.actorId, r.route.projectId, world.memberships).role;
+    if (role && !mayReport(role, draft.braid.kind)) throw new CommandRefused(`on ${name(r.route.projectId)}, a ${role} may not report a ${draft.braid.kind}`);
+  }
+
+  const { options: _options, ...rest } = draft;
+  const next: ExtractedItemDraft = { ...rest, projectId: r.route.projectId, routing: r.route.state, routingReason: chosenIn === "chat" && r.route.state === "routed" ? "You chose it in the chat" : r.route.reason };
+  if (r.route.state === "choose_project") next.options = [...r.route.options];
+  if (next.braid?.match === "related_to" && targetProjectId !== r.route.projectId) {
+    // Links never cross projects: in its new project the report starts as a new entry
+    const { seenState: _seen, ...braid } = next.braid;
+    next.braid = { ...braid, match: "new", matchEntryId: null };
+  }
+  const after: ExtractedItem = { ...item, draft: next };
+  await persistItems(tx, [item], [after], new Map([[row.id, row.version]]), ctx.now);
+  await audit(tx, ctx.now, {
+    actorType: "person",
+    actorId: ctx.actorId,
+    action: outcome.event,
+    machine: "routing",
+    subjectType: "extraction",
+    subjectId: item.id,
+    fromState: outcome.from,
+    toState: outcome.to,
+    captureId: row.captureId,
+    extractionId: item.id,
+    // Phase L, CD14: the word Atlas routed it by, so moves of the same word can be counted
+    detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason, ...(draft.routedBy ? { word: draft.routedBy.word } : {}) },
+  });
+  // Phase S: Atlas put it in the wrong project, so the update is a candidate for the eval set (LF1)
+  if (outcome.event === "MOVE") {
+    const detail = { kind: draft.kind, fromProject: draft.projectId, toProject: next.projectId };
+    await logCandidate(tx, ctx.now, ctx.actorId, { cause: "moved", captureId: row.captureId, extractionId: item.id, text: captureText, detail });
+    // UN10, CD14: the second move of the same word to the same project proposes it as a correction
+    if (draft.routedBy && next.projectId) {
+      await proposeFromMoves(tx, ctx.now, ctx.actorId, { ...draft.routedBy, toProject: next.projectId, captureId: row.captureId });
     }
-    const after: ExtractedItem = { ...item, draft: next };
-    await persistItems(tx, [item], [after], new Map([[row.id, row.version]]), ctx.now);
-    await audit(tx, ctx.now, {
-      actorType: "person",
-      actorId: ctx.actorId,
-      action: outcome.event,
-      machine: "routing",
-      subjectType: "extraction",
-      subjectId: item.id,
-      fromState: outcome.from,
-      toState: outcome.to,
-      captureId: row.captureId,
-      extractionId: item.id,
-      // Phase L, CD14: the word Atlas routed it by, so moves of the same word can be counted
-      detail: { fromProject: draft.projectId, toProject: next.projectId, reason: next.routingReason, ...(draft.routedBy ? { word: draft.routedBy.word } : {}) },
-    });
-    // Phase S: Atlas put it in the wrong project, so the update is a candidate for the eval set (LF1)
-    if (outcome.event === "MOVE") {
-      const detail = { kind: draft.kind, fromProject: draft.projectId, toProject: next.projectId };
-      await logCandidate(tx, ctx.now, ctx.actorId, { cause: "moved", captureId: row.captureId, extractionId: item.id, text: capture.row.text, detail });
-      // UN10, CD14: the second move of the same word to the same project proposes it as a correction
-      if (draft.routedBy && next.projectId) {
-        await proposeFromMoves(tx, ctx.now, ctx.actorId, { ...draft.routedBy, toProject: next.projectId, captureId: row.captureId });
-      }
-    }
-    return after;
+  }
+  return after;
+}
+
+// ---- Which record (phase D) ----
+
+/**
+ * Phase D: the author says which record an unsure update means (M21 in the chat, or on the review). The item
+ * is read again for that record through the checks as they are now (rule 4, CL5). On the review choosing is
+ * confirming, as D18's Pick an entry; in the chat it only chooses, and the review still asks for the OK.
+ */
+export async function retargetItemIn(tx: Tx, ctx: By, row: ExtractionRow, item: ExtractedItem, capture: CaptureRow, recordId: string, chosen: "chat" | "review"): Promise<ExtractedItem> {
+  if (!(OPEN_ITEM_STATES as readonly ItemState[]).includes(item.state)) throw new CommandRefused(`this item is ${item.state}`);
+  // Section 6: never onto a field another item of this update already changes; the two could never both save
+  if (fieldTaken((await loadItems(tx, capture.id)).items, item, recordId)) throw new CommandRefused("another part of this update already changes that one");
+  const checkCtx = await loadCheckContext(tx, { authorId: capture.authorId, text: capture.text, messageAt: capture.messageAt, transcriptConfidence: capture.transcriptConfidence, captureId: capture.id });
+  const read = retarget(item.draft, recordId, checkCtx);
+  if ("refused" in read) throw new CommandRefused(read.refused);
+  const draft: ExtractedItemDraft = { ...read.draft, closeMatches: { ids: item.draft.closeMatches!.ids, chosen } };
+  let next: ExtractedItem = { ...item, draft, saw: draft.target?.oldValue ?? null, value: draft.target?.newValue ?? null, conflict: null };
+  // A decision on the record it was about is not a decision on this one (E23's Undo, then as chosen)
+  if (next.state === "accepted" || next.state === "edited" || next.state === "rejected") next = moveItem(next, { type: "UNDO" }).item;
+  if (chosen === "review") next = moveItem(next, { type: "ACCEPT" }).item;
+  await persistItems(tx, [item], [next], new Map([[row.id, row.version]]), ctx.now);
+  await audit(tx, ctx.now, {
+    actorType: "person",
+    actorId: ctx.actorId,
+    action: "PICK_RECORD",
+    machine: "extracted_item",
+    subjectType: "extraction",
+    subjectId: item.id,
+    fromState: item.state,
+    toState: next.state,
+    captureId: row.captureId,
+    extractionId: item.id,
+    detail: { from: item.draft.target?.id ?? null, to: recordId, chosen },
+  });
+  return next;
+}
+
+/** Phase D on the review: "Did you mean" one of the other records the words could mean. */
+export function pickRecordExtraction(ctx: CommandCtx, extractionId: string, recordId: string): Promise<ExtractedItem> {
+  return runCommand(ctx, async (tx) => {
+    const { row, item, capture } = await reviewing(tx, extractionId, ctx.actorId);
+    return retargetItemIn(tx, ctx, row, item, capture.row, recordId, "review");
   });
 }
 
@@ -1253,6 +1366,15 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       if (wi?.state === "cancelled") withdraw(item.id, "target_cancelled", { workItemId: target.id });
     }
 
+    // Phase J, the model check's fix to M28, for every update (rule 10): who may change a record is read again
+    // now. An item whose decider changed since the author confirmed it goes back to them, all or nothing
+    // (S3): someone else's record is asked of its owner (M37), never written; one they may change now is written
+    const deciders = new Map<string, Decider>();
+    for (const item of items.filter(isReady)) {
+      const d = await deciderNow(tx, item, authorId, world);
+      if (d && (d.refused || d.ask !== (item.draft.ask?.ownerId ?? null))) deciders.set(item.id, d);
+    }
+
     const current: Record<string, string | null> = {};
     for (const item of items.filter(isReady)) {
       const key = targetKey(item);
@@ -1265,6 +1387,8 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
     const refusals = new Map<string, string>();
     if (plan.outcome === "apply") {
       for (const w of plan.writes) {
+        // Phase J: a write that goes back as an ask is not the author's to apply, so its record's rules do not run
+        if (deciders.has(w.itemId)) continue;
         const reason = (await editRule(tx, s0(items, w.itemId), authorId))(w.value);
         if (reason) refusals.set(w.itemId, `${reason}. Edit it or reject it`);
       }
@@ -1272,6 +1396,11 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
         const refused = plan.writes.filter((w) => refusals.has(w.itemId));
         plan = { outcome: "conflict", conflicts: refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null })) };
       }
+    }
+    if (deciders.size) {
+      const others = plan.outcome === "conflict" ? plan.conflicts : [];
+      const changed = items.filter((i) => deciders.has(i.id) && !others.some((c) => c.itemId === i.id));
+      plan = { outcome: "conflict", conflicts: [...others, ...changed.map((i) => ({ itemId: i.id, key: targetKey(i)!, saw: i.saw, current: current[targetKey(i)!] ?? null }))] };
     }
     const finish = saveOutcome(plan)!;
     const settled = settleItems(items, plan);
@@ -1293,6 +1422,8 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       await extra(s);
       const final = settled.map((i) => {
         if (i.state !== "conflict" || !i.conflict) return i;
+        const decider = deciders.get(i.id);
+        if (decider) return { ...withAsk(i, decider.ask), conflict: { ...i.conflict, reason: decider.reason, ...(decider.refused ? { refused: true } : {}) } };
         const refusal = refusals.get(i.id);
         return { ...i, conflict: refusal ? { ...i.conflict, reason: refusal, refused: true } : { ...i.conflict, reason: conflictReason(i) } };
       });
@@ -1313,6 +1444,9 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       await writeAll(async () => {});
       for (const [itemId, reason] of refusals) {
         await audit(tx, ctx.now, { actorType: "person", actorId: authorId, action: "SAVE_REFUSED", machine: "extracted_item", subjectType: "extraction", subjectId: itemId, captureId, extractionId: itemId, detail: { reason } });
+      }
+      for (const [itemId, d] of deciders) {
+        await audit(tx, ctx.now, { actorType: "person", actorId: authorId, action: "DECIDER_CHANGED", machine: "extracted_item", subjectType: "extraction", subjectId: itemId, captureId, extractionId: itemId, detail: { ask: d.ask, refused: d.refused, reason: d.reason } });
       }
       const refused = [...refusals].map(([itemId, reason]) => ({ itemId, reason }));
       return { outcome: "conflict", conflicts: plan.conflicts, refused, withdrawn: itemMoves.map((m) => m.item.id) };
@@ -1358,6 +1492,48 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       evaluations,
     };
   });
+}
+
+/** Who decides an update to a record now: the author (ask null), the record's owner (ask), or nobody they may ask (refused). */
+type Decider = { ask: string | null; refused: boolean; reason: string };
+
+/**
+ * Phase J, the model check's fix to M28 (rule 10, section 20's U5), read when Save runs: an update to a record
+ * the author may no longer change themselves is asked of its owner, when the owner is on the project; one
+ * they may change now is theirs to write. null when nothing here decides it (leave, BRAID items, new work).
+ */
+async function deciderNow(tx: Tx, item: ExtractedItem, authorId: string, world: World): Promise<Decider | null> {
+  const target = item.draft.target;
+  if (item.draft.kind !== "update" || !target || target.type === "leave") return null;
+  let record: { ownerId: string; projectId: string; label: string } | null = null;
+  if (target.type === "work_item") {
+    const [row] = await tx.select().from(t.workItems).where(eq(t.workItems.id, target.id));
+    record = row ? { ownerId: row.ownerId, projectId: row.projectId, label: row.number ?? row.title } : null;
+  } else if (target.type === "milestone") {
+    const [row] = await tx.select().from(t.milestones).where(eq(t.milestones.id, target.id));
+    record = row ? { ownerId: row.ownerId, projectId: row.projectId, label: row.name } : null;
+  } else {
+    const [step] = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.id, target.id));
+    const [handover] = step ? await tx.select().from(t.handovers).where(eq(t.handovers.id, step.handoverId)) : [];
+    record = handover ? { ownerId: handover.fromPersonId, projectId: handover.projectId, label: step.title } : null;
+  }
+  if (!record) return null; // gone: readCurrent says so
+  const { projectId } = record;
+  const roleOf = (personId: string | null) => world.memberships.find((m) => m.projectId === projectId && m.personId === personId && m.state === "member")?.role ?? null;
+  const nameOf = async (personId: string | null) => (personId ? ((await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, personId)))[0]?.name.split(" ")[0] ?? "its owner") : "its owner");
+  if (mayChangeField(target.type, target.field, { isOwner: record.ownerId === authorId, role: roleOf(authorId) })) {
+    return { ask: null, refused: false, reason: `You can change ${record.label} yourself now, so saving changes it instead of asking ${await nameOf(item.draft.ask?.ownerId ?? null)}. Accept it to change it, or reject it` };
+  }
+  // Every work item, milestone and handover has an owner (the columns are not null), so there is always one to name
+  const owner = await nameOf(record.ownerId);
+  if (!roleOf(record.ownerId)) return { ask: null, refused: true, reason: `${record.label} is ${owner}'s, who is not on the project now, so you can't ask them or change it yourself. Reject it` };
+  return { ask: record.ownerId, refused: false, reason: `${record.label} is ${owner}'s now, so saving asks ${owner} instead of changing it. Accept it to ask, or reject it` };
+}
+
+/** The item with the person saving asks now (section 20, U5), or with none when the author writes it. */
+function withAsk(item: ExtractedItem, ask: string | null): ExtractedItem {
+  const { ask: _was, ...draft } = item.draft;
+  return { ...item, draft: ask ? { ...draft, ask: { ownerId: ask } } : draft };
 }
 
 function conflictReason(item: ExtractedItem): string {
@@ -1412,7 +1588,10 @@ export function runCaptureTimers(ctx: { db: Db; now: Date }): Promise<{ reminded
       const record = captureRecordOf(row);
       const r = applyCaptureEvent(record, { type: record.reminded ? "EXPIRE" : "REMIND" }, { elapsed: elapsedSince(row.receivedAt, ctx.now) });
       if (!r.outcome.ok) continue; // not due yet
-      if (r.outcome.event === "EXPIRE") await withdrawAll(tx, ctx.now, row.id, "expired", rule);
+      if (r.outcome.event === "EXPIRE") {
+        await withdrawAll(tx, ctx.now, row.id, "expired", rule);
+        await closeWithCapture(tx, ctx.now, row.id, { actorType: "rule", actorId: null }); // CL6
+      }
       await persistCapture(tx, row.id, row.version, r.record, ctx.now);
       await auditCapture(tx, ctx.now, row.id, r.outcome, rule);
       await syncReminder(tx, ctx.now, row.authorId, row.id, r.outcome.event === "REMIND");

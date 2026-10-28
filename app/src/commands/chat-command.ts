@@ -9,7 +9,7 @@ import { and, eq, lte } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import * as t from "../db/schema";
-import { commandNoteText, noLinkText, OUT_OF_DATE_TEXT, type CheckedCommands } from "../domain/acting";
+import { commandNoteText, noLinkText, OUT_OF_DATE_TEXT, type CheckedCommands, type SaidCommand } from "../domain/acting";
 import type { OpenAnswer } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Outcome } from "../domain/machine";
@@ -25,6 +25,7 @@ import {
   type CommandAct,
   type CommandInput,
   type Standing,
+  type WordAct,
 } from "../domain/machines/chat-command";
 import { aboutOf, onlyBookkeepingSince, standingOf, whatChanged } from "../queries/acting";
 import { projectReader } from "../queries/project";
@@ -284,11 +285,67 @@ export function cancelCommand(ctx: CommandCtx, commandId: string): Promise<Comma
   });
 }
 
+/** Phase D: the lines a reply could mean (AC6, AC7), as the asker may read them now, for a clarification (M21). */
+export type WhichLines = { answerCaptureId: string; act: WordAct; reason: string | null; lines: { line: number; title: string; projectId: string }[]; text: string };
+
+/**
+ * PROPOSE on one line of the open answer: a card only when its record is one the asker may read now (the
+ * model check's fix lines_now, AC9). Returns the card, or the words the chat says when none was made; null
+ * when the line offers no such act, or the same reply already made it (once only).
+ */
+export async function proposeLine(
+  tx: Tx,
+  now: Date,
+  reply: { id: string; authorId: string },
+  answer: typeof t.captures.$inferSelect | undefined,
+  said: SaidCommand,
+  reader: { mayRead: (projectId: string) => boolean },
+): Promise<{ made: ChatCommandRecord } | { note: string } | null> {
+  const card = answer?.authorId === reply.authorId ? answer.answer?.cards[said.line - 1] : undefined;
+  const action = card?.actions?.find((a) => a.act === said.act);
+  if (!card?.subject || !action) return null;
+  const about = await aboutOf(tx, card.subject);
+  const readable = reader.mayRead(card.subject.projectId) && about !== null;
+  // A status reason links what DPM's draft links, so the card can say what it will link (M9, M11)
+  const input: CommandInput | null =
+    said.act === "give_reason" && readable
+      ? { reason: said.reason ?? "", entryIds: (await draftReason(tx, card.subject.projectId, now)).entryIds, draftedByAtlas: false, edited: true }
+      : said.reason
+        ? { reason: said.reason }
+        : null;
+  const draft = draftCommand({
+    id: `cmd-${randomUUID()}`,
+    askerId: reply.authorId,
+    via: "words",
+    captureId: reply.id,
+    answerCaptureId: answer!.id,
+    line: said.line,
+    act: said.act,
+    subject: card.subject,
+    proposal: action.proposal ?? null,
+    outcome: action.outcome ?? null,
+    about: about ?? { kind: null, name: card.title, project: "" },
+    seenVersion: action.version,
+    input,
+    createdAt: now,
+  });
+  const r = applyChatCommandEvent(draft, { type: "PROPOSE" }, { actorId: reply.authorId, now, readable, standing: { right: false, version: null } });
+  if (!r.outcome.ok) return { note: OUT_OF_DATE_TEXT };
+  // M9, D17: a reason links an entry on the log, and the card cannot add one; with nothing to link, a
+  // card could never be confirmed, so the chat says where to add one instead
+  if (said.act === "give_reason" && !input?.entryIds?.length) return { note: noLinkText(about!.project) };
+  // Once only: the same reply read again makes no second card
+  if (!(await insertCommand(tx, now, r.record, `words:${reply.id}:${said.line}:${said.act}`))) return null;
+  await auditMove(tx, now, r.record, r.outcome, { actorType: "person", actorId: reply.authorId });
+  return { made: r.record };
+}
+
 /**
  * A reply that decides lines of the open answer, read by Atlas and kept by checkCommands: one card per
  * line (AC8), each made by PROPOSE only when its record is one the asker may read now (the model check's
  * fix lines_now, AC9). Runs inside the read's transaction; returns what the chat says when a reply made
- * no card, naming only lines the asker may still read (P10).
+ * no card, naming only lines the asker may still read (P10). When it could mean more than one line, `which`
+ * holds them for phase D's question (M21), with the words to say instead when no question is asked.
  */
 export async function commandsFromWords(
   tx: Tx,
@@ -296,7 +353,7 @@ export async function commandsFromWords(
   reply: { id: string; authorId: string },
   checked: CheckedCommands,
   open: OpenAnswer | null | undefined,
-): Promise<{ made: ChatCommandRecord[]; note: string | null }> {
+): Promise<{ made: ChatCommandRecord[]; note: string | null; which: WhichLines | null }> {
   const made: ChatCommandRecord[] = [];
   const notes: string[] = [];
   const [answer] = open ? await tx.select().from(t.captures).where(eq(t.captures.id, open.captureId)) : [];
@@ -307,60 +364,33 @@ export async function commandsFromWords(
     return card;
   };
   for (const said of checked.kept) {
-    const card = answer?.authorId === reply.authorId ? answer.answer?.cards[said.line - 1] : undefined;
-    const action = card?.actions?.find((a) => a.act === said.act);
-    if (!card?.subject || !action) continue;
-    const about = await aboutOf(tx, card.subject);
-    const readable = reader.mayRead(card.subject.projectId) && about !== null;
-    // A status reason links what DPM's draft links, so the card can say what it will link (M9, M11)
-    const input: CommandInput | null =
-      said.act === "give_reason" && readable
-        ? { reason: said.reason ?? "", entryIds: (await draftReason(tx, card.subject.projectId, now)).entryIds, draftedByAtlas: false, edited: true }
-        : said.reason
-          ? { reason: said.reason }
-          : null;
-    const draft = draftCommand({
-      id: `cmd-${randomUUID()}`,
-      askerId: reply.authorId,
-      via: "words",
-      captureId: reply.id,
-      answerCaptureId: answer!.id,
-      line: said.line,
-      act: said.act,
-      subject: card.subject,
-      proposal: action.proposal ?? null,
-      outcome: action.outcome ?? null,
-      about: about ?? { kind: null, name: card.title, project: "" },
-      seenVersion: action.version,
-      input,
-      createdAt: now,
-    });
-    const r = applyChatCommandEvent(draft, { type: "PROPOSE" }, { actorId: reply.authorId, now, readable, standing: { right: false, version: null } });
-    if (!r.outcome.ok) {
-      notes.push(OUT_OF_DATE_TEXT);
-      continue;
-    }
-    // M9, D17: a reason links an entry on the log, and the card cannot add one; with nothing to link, a
-    // card could never be confirmed, so the chat says where to add one instead
-    if (said.act === "give_reason" && !input?.entryIds?.length) {
-      notes.push(noLinkText(about!.project));
-      continue;
-    }
-    // Once only: the same reply read again makes no second card
-    if (!(await insertCommand(tx, now, r.record, `words:${reply.id}:${said.line}:${said.act}`))) continue;
-    await auditMove(tx, now, r.record, r.outcome, { actorType: "person", actorId: reply.authorId });
-    made.push(r.record);
+    const r = await proposeLine(tx, now, reply, answer, said, reader);
+    if (r && "made" in r) made.push(r.made);
+    else if (r) notes.push(r.note);
   }
+  let which: WhichLines | null = null;
   if (checked.note) {
-    const lines = checked.note.kind === "which" ? checked.note.lines : checked.note.kind === "not_offered" ? [checked.note.line] : [];
+    const note = checked.note;
+    const lines = note.kind === "which" || note.kind === "not_offered" ? note.lines : [];
     const names: string[] = [];
     for (const n of lines) {
       const card = await readableLine(n);
       if (card) names.push(card.title);
     }
-    notes.push(commandNoteText(checked.note, names));
+    if (note.kind === "which" && open) {
+      // AC6: words that fit no line could mean any line that offers the act. Only such lines are options:
+      // one that does not offer it would be refused when chosen (section 6)
+      const offers = (n: number) => open.lines.some((l) => l.line === n && l.acts.includes(note.act));
+      const could = (note.lines.length ? note.lines : open.lines.map((l) => l.line)).filter(offers);
+      const readable: WhichLines["lines"] = [];
+      for (const n of could) {
+        const card = await readableLine(n);
+        if (card?.subject) readable.push({ line: n, title: card.title, projectId: card.subject.projectId });
+      }
+      which = { answerCaptureId: open.captureId, act: note.act, reason: note.reason, lines: readable, text: commandNoteText(note, names) };
+    } else notes.push(commandNoteText(note, names));
   }
-  return { made, note: notes.length ? [...new Set(notes)].join(" ") : null };
+  return { made, note: notes.length ? [...new Set(notes)].join(" ") : null, which };
 }
 
 /** Timer command_expiry (rule 5, AC10): a card nobody answered expires; nothing changes. */

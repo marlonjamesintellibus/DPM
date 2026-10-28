@@ -13,13 +13,15 @@ export const ROWS = [
     model: Standup({ Fixes: [] }),
     expectFail: ['StandupEnds', 'NoStandupAfterUpdate', 'ComposedHoldsAnswers', 'YourWordChangesOnlyYours', 'AskedStandupRuns'],
   },
-  { spec: 'Standup', setting: 'fixed (all five fixes)', model: Standup(), expectFail: [] },
+  { spec: 'Standup', setting: 'fixed (all six fixes)', model: Standup(), expectFail: [] },
   // Each fix is needed: leaving one out fails its property and only that one
   { spec: 'Standup', setting: 'fixed, but the timer does nothing when the M23 rules fail', model: Standup({ Fixes: without('timerSkips') }), expectFail: ['StandupEnds'] },
   { spec: 'Standup', setting: 'fixed, but the timer does not read the skip guard first', model: Standup({ Fixes: without('skipFirst') }), expectFail: ['NoStandupAfterUpdate'] },
   { spec: 'Standup', setting: 'fixed, but STOP with nothing answered composes', model: Standup({ Fixes: without('emptyAbandons') }), expectFail: ['ComposedHoldsAnswers'] },
   { spec: 'Standup', setting: "fixed, but the save checks membership, not the record's owner", model: Standup({ Fixes: without('ownerAsks') }), expectFail: ['YourWordChangesOnlyYours'] },
   { spec: 'Standup', setting: '"Start my standup" only from scheduled', model: Standup({ Fixes: without('startAfterSkip') }), expectFail: ['AskedStandupRuns'] },
+  // Found building phase J: the save turned an item into an Ask the moment the record changed hands, an Ask Kemar never saw
+  { spec: 'Standup', setting: 'fixed, but the save asks the new owner without showing Kemar first', model: Standup({ Fixes: without('askSeen') }), expectFail: ['OutwardConfirmed'] },
 ];
 
 // Planted bugs on the fixed design: each one must make a full check fail

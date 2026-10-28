@@ -39,6 +39,20 @@ describe("evaluation cases", () => {
     }
   });
 
+  it("phase J: a standup case is quoted only from its answers, as the app reads one, and 'Start my standup' is the rule's", async () => {
+    const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
+    const notThat = EVAL_CASES.find((c) => c.id === "j-not-that")!;
+    const ctx = caseContext(notThat, contexts);
+    expect(ctx.standup?.quoteIn.map((sp) => notThat.text.slice(sp.start, sp.end))).toEqual(["Not that one, but #152 is done"]);
+    const said = (quote: string, targetId: string) => ({ kind: "update" as const, projectId: "forager", routingReason: { basis: "target" as const, evidence: quote, label: quote }, targetId, field: "state", newValue: "done", quote, confidence: "high" as const, rationale: "" });
+    expect(scoreCase(notThat, [said("#152 is done", "wi-152")], ctx, null).pass).toBe(true);
+    // The model check's questionAsQuote: DPM's question is never the quote, so its #145 never passes
+    expect(scoreCase(notThat, [said("#152 is done", "wi-152"), said("#145 Google Trends connector", "wi-145")], ctx, null).forbidden).toEqual([]);
+    const start = EVAL_CASES.find((c) => c.id === "j-start")!;
+    const startCtx = caseContext(start, contexts);
+    expect(scoreCase(start, [], startCtx, ruleQuestion(startCtx)).pass).toBe(true);
+  });
+
   it("Andre's data has nothing of Forager's, and Alicia's has her two projects", async () => {
     const contexts = await evalContexts(await seededDb({ kemarNote: false, aliciaSetsStatus: false }));
     expect(contexts.andre.projects.map((p) => p.id)).toEqual(["insights"]);

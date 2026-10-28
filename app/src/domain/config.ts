@@ -45,6 +45,16 @@ export const config = {
   // Phase B, M20 and CD2 (conversational plan, section 23): a confirm card for a command said in words
   // ("Approve the Kyle risk") expires unanswered after this many minutes, and nothing changes (AC10)
   commandExpiryMinutes: 30,
+  // Phase D, M21 and CD2 (conversational plan, section 23): a question Atlas asks in the chat ("#151 or #152?")
+  // nobody answers goes to the review after this many hours, or closes when it is about a command
+  clarifyExpiryHours: 2,
+
+  // Phase J, M28 (conversational plan, section 23): a standup asks at most this many questions about the
+  // person's work and "Anything new blocking you?" together; a question left this many minutes ends it,
+  // composing what was answered (SU7). standupTime is when Atlas would start one itself, which waits on phase F
+  standupMaxQuestions: 4,
+  standupIdleMinutes: 60,
+  standupTime: "09:00",
 
   // Phase S, M36 (conversational plan, section 23): a candidate for the eval set nobody accepts or
   // dismisses is deleted after this many days, with the person's words in it

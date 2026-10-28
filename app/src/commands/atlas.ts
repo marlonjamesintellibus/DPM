@@ -1,7 +1,9 @@
 // Atlas reads a capture (build plan 5.1 steps 2 to 5, phase 4): start the try, transcribe a voice
 // note, ask the model with no transaction open, then store what passes the checks or record the
 // failure and try again. After config.captureMaxTries the capture fails and the author is asked to
-// send a new voice note (D1) or to try again or type it (E18).
+// send a new voice note (D1) or to try again or type it (E18). Phase J: a reply while the author's
+// standup asks is its answer, and a standup's composed answers are read as taps DPM proposes itself
+// and typed answers Atlas reads, each with its question (M28).
 import { eq, inArray } from "drizzle-orm";
 import { wordAnswer } from "../atlas/answer";
 import { AtlasReadFailed, type Drafter, type Extraction, type Extractor, type ReadFailure } from "../atlas/extractor";
@@ -10,7 +12,9 @@ import * as t from "../db/schema";
 import type { CheckContext } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
 import type { Confidence } from "../domain/shared";
-import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, ReadSuperseded, type Proposed } from "./capture";
+import { atlasProposals, type StandupRead } from "../domain/standup";
+import { composedRead } from "../queries/standup";
+import { beginRead, failRead, failTranscribe, finishTranscribe, proposeItems, readAsAnswer, readAsStandupAnswer, ReadSuperseded, type Proposed } from "./capture";
 import { audit, runCommand, type CommandCtx } from "./core";
 
 type Failure = { step: "transcribe" | "read"; why: string; message: string };
@@ -65,9 +69,21 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
 
       // A voice note that was just transcribed is on its first read
       const readAttempt = started.voice ? 1 : attempt;
+      // Phase J, M28: a standup's answers are the taps DPM reads and the typed answers Atlas reads with their questions
+      const standup = await composedRead(ctx.db, captureId);
+      if (!standup) {
+        // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them. First, so
+        // a standup asking in the same chat does not take "#152" as its own answer (SU4)
+        if (await readAsAnswer(at(), captureId, readAttempt)) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
+        // Phase J: a reply while the author's standup asks is its answer, unless it is their own question or
+        // command (SU4); the answers are read once it is composed
+        const typed = await readAsStandupAnswer(at(), captureId, readAttempt, context);
+        if (typed?.composed) await readCapture(ctx, typed.composed, extractor, options);
+        if (typed?.answered) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "standup" };
+      }
       let extraction: Extraction;
       try {
-        extraction = await extractor.extract(context, { attempt: readAttempt });
+        extraction = standup ? await readStandup(extractor, context, standup, readAttempt) : await extractor.extract(context, { attempt: readAttempt });
       } catch (e) {
         const why: ReadFailure = e instanceof AtlasReadFailed ? e.why : "model_error";
         const message = e instanceof Error ? e.message : String(e);
@@ -92,6 +108,17 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
     if (e instanceof ReadSuperseded) return { outcome: "superseded", failures };
     throw e;
   }
+}
+
+/**
+ * Phase J, section 12: a tap answer is DPM's own proposal, at high confidence with its question as the quote,
+ * so it needs no model. Only the answers DPM could not read as a tap go to Atlas, each with its question, and
+ * with nothing earlier in the conversation: the standup is the whole message. What it asks or decides is not
+ * read here; the answers are an update.
+ */
+async function readStandup(extractor: Extractor, context: CheckContext, standup: StandupRead, attempt: number): Promise<Extraction> {
+  const read = standup.typed ? await extractor.extract({ ...context, text: standup.typed, earlier: undefined, openAnswer: null }, { attempt }) : { proposals: [], malformed: [], model: "standup", usage: null };
+  return { ...read, proposals: [...standup.tapped, ...atlasProposals(standup, read.proposals)], question: null, commands: [] };
 }
 
 /** Captures waiting for a read: never started, or waiting to try again. A worker runs readCapture on each. */

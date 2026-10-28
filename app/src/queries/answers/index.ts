@@ -11,6 +11,7 @@ import { other } from "./other";
 import { standing } from "./project-status";
 import type { AnswerBuilder } from "./shared";
 import { smallTalk } from "./small-talk";
+import { standup } from "./standup";
 import { unclear } from "./unclear";
 import { undo } from "./undo";
 import { updates } from "./updates";
@@ -29,6 +30,7 @@ export const ANSWERS: Record<QuestionTopic, AnswerBuilder> = {
   why_filed: whyFiled,
   correction,
   undo,
+  standup,
   small_talk: smallTalk,
   other,
   unclear,

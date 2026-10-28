@@ -6,6 +6,7 @@ import { createFixtureExtractor } from "./atlas/fixture";
 import { readCapture } from "./commands/atlas";
 import { reportBraidEntry } from "./commands/braid";
 import { beginRead, createCapture } from "./commands/capture";
+import { tapStandup } from "./commands/standup";
 import type { Db } from "./db/client";
 import * as t from "./db/schema";
 import { at, seededDb } from "./test/seeded-db";
@@ -55,5 +56,18 @@ describe("the timer loop", () => {
     expect(await cards()).toEqual([{ state: "proposed" }]);
     expect((await runTimers({ db, now: () => at(31), extractor: createFixtureExtractor() })).failed).toEqual([]);
     expect(await cards()).toEqual([{ state: "expired" }]);
+  });
+
+  it("phase J, SU7: a standup left 60 minutes composes what was answered, and the answers are read at once", async () => {
+    const ctx = { db, now: at(0), actorId: "kemar" };
+    const c = await createCapture(ctx, { channel: "app", messageId: "t-su", kind: "text", text: "Start my standup", messageAt: at(0), receivedAt: at(0) });
+    await readCapture(ctx, c.captureId, createFixtureExtractor(), { retryDelayMs: () => 0 });
+    const [row] = await db.select().from(t.standups);
+    await tapStandup({ ...ctx, now: at(1) }, row.id, 1, { act: "answer", tap: "done" });
+    const run = await runTimers({ db, now: () => at(61), extractor: createFixtureExtractor() });
+    const [composed] = await db.select().from(t.standups);
+    expect(composed.state).toBe("composed");
+    expect(run.read).toEqual([composed.captureId]);
+    expect(await stateOf(composed.captureId!)).toBe("proposed");
   });
 });

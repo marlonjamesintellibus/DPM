@@ -7,7 +7,7 @@ import { AtlasReadFailed } from "./extractor";
 import { createFixtureExtractor } from "./fixture";
 import { atlasFromEnv, withFallback } from "./index";
 import { createOpenRouter, DEFAULT_MODEL, OPENROUTER_URL, parseItems } from "./openrouter";
-import { PROMPT_VERSION, proposeItemsTool, questionSchema, SYSTEM_PROMPT, userMessage } from "./prompt";
+import { PROMPT_VERSION, proposalSchema, proposeItemsTool, questionSchema, SYSTEM_PROMPT, userMessage } from "./prompt";
 
 const KEY = "sk-or-test-not-a-real-key";
 
@@ -69,10 +69,10 @@ describe("the request", () => {
     expect(sonnet.calls[0].body).not.toHaveProperty("reasoning");
   });
 
-  it("the topics come from domain/topics in read-15's words and order (phase C added why; phase L why_filed, correction and undo); a change to them is a new prompt version", () => {
-    expect(PROMPT_VERSION).toBe("read-15");
+  it("the topics come from domain/topics in read-15's words and order (phase C added why; phase L why_filed, correction and undo; phase J standup); a change to them is a new prompt version", () => {
+    expect(PROMPT_VERSION).toBe("read-wave3-j");
     expect(SYSTEM_PROMPT).toContain(
-      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
+      'topic: needs_me (what they need to do, review or approve), my_work (what they are working on: their own open work), due (what is due, or when the next milestone is), blocked (what is blocked or stuck), project_status (how a project stands), updates (what is new or changed since they last asked), mentions (who mentioned them), why (why something is as it is: a status, what holds it up, when something was decided, or why a field changed), why_filed (why Atlas filed their update or an item of it where it did ("Why did you file that?")), correction (a correction to how you read names ("GQ also means the Guild", "Kyle is Store Insights, not Forager"), with correction filled), undo (only "Undo that" or "Take that back": undo their last saved update, with nothing else said), standup (only "Start my standup" or "Let\'s do my standup": start their standup in this chat, with nothing else said), small_talk (only a greeting, thanks or ok, with nothing else said or asked), or other.\n',
     );
     expect(questionSchema.shape.topic.options).toEqual([
       "needs_me",
@@ -86,6 +86,7 @@ describe("the request", () => {
       "why_filed",
       "correction",
       "undo",
+      "standup",
       "small_talk",
       "other",
       "unclear",
@@ -110,6 +111,20 @@ describe("the request", () => {
     const correction = { kind: "contact", projectId: "insights", personId: "kyle", notProjectId: "forager" };
     expect(questionSchema.safeParse({ asked: "Kyle is Store Insights, not Forager", topic: "correction", projectId: "insights", correction }).success).toBe(true);
     expect(questionSchema.safeParse({ asked: "hi", topic: "small_talk", projectId: null }).success).toBe(true);
+  });
+
+  it("phase J: a standup's answers are read each with its question, quoting only the author's words (M28, SU4)", () => {
+    const section = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf("Standups\n"), SYSTEM_PROMPT.indexOf("\nEarlier messages"));
+    expect(section).toContain('"Start my standup" or "Let\'s do my standup", with nothing else said, is topic standup with items empty');
+    expect(section).toContain("Read each answer with its question as context");
+    expect(section).toContain('("Not that, but #212 is done" is about #212)'); // SU4
+    expect(section).toContain('quote only the author\'s answer words, never an "Atlas:" line'); // the model check's questionAsQuote
+    expect(section).toContain("Propose only a blocker report for what it waits on when it names something");
+    // S3: DPM's Blocked from the tap is the only one; DPM drops a second from Atlas as well (atlasProposals)
+    expect(section).toContain("never propose that work's state or blocked_note");
+    const answers = { ...KEMAR_CONTEXT, text: "Atlas: Anything new blocking you?\nKemar: The GPU quota", standup: { quoteIn: [] } };
+    expect(userMessage(answers)).toContain("This update is the author's answers to their standup questions.");
+    expect(userMessage(KEMAR_CONTEXT)).not.toContain("standup questions");
   });
 
   it("phase R: how the team writes is read as written, and what Atlas writes is standard English (JA1 to JA4, JA7, CD20)", () => {
@@ -170,6 +185,15 @@ describe("the request", () => {
     expect(section).toContain('"Approve all of them": one command for each line'); // AC8
     expect(section).toContain('"Mark the second one done"'); // a record change stays a proposal
     expect(section).toContain('Words that only report another person\'s decision ("Alicia approved the Kyle risk") are "other"'); // rule 10
+  });
+
+  it("phase D: a vague update names every record it could mean in targetOptions, and DPM asks which (M21)", () => {
+    expect(SYSTEM_PROMPT).toContain("targetOptions every record the words could mean, targetId among them. DPM asks the author which.");
+    expect(SYSTEM_PROMPT).toContain("never when the words name the record or only one fits");
+    const r = proposalSchema.safeParse({ ...KEMAR_PROPOSALS[2], targetOptions: ["wi-151", "wi-152"] });
+    expect(r.success && r.data.targetOptions).toEqual(["wi-151", "wi-152"]);
+    // Older answers without it keep their shape
+    expect(proposalSchema.safeParse(KEMAR_PROPOSALS[2]).success).toBe(true);
   });
 
   it("describes every proposal field the checks read", () => {
