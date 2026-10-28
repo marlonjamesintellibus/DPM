@@ -222,6 +222,10 @@ test("Phase H. Alicia asks what Kemar is working on and who owns the store feed;
   await box.fill("Who owns the store feed?");
   await box.press("Enter");
   await expect(page.getByText("Kemar Brown owns #152 Store feed connector on Forager 2.0.")).toBeVisible();
+  // CV8: a follow-up asks the owner of what it names, never the store feed again
+  await box.fill("and the trend model?");
+  await box.press("Enter");
+  await expect(page.getByText("Kemar Brown owns Trend model on Forager 2.0.")).toBeVisible();
 
   // PP1: the same words as for a name nobody has
   await viewAs("andre", "/projects");

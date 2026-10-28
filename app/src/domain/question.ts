@@ -8,7 +8,7 @@ import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
-import { aboutAsker } from "./topics/people";
+import { aboutAsker, aboutOther, aboutProject } from "./topics/people";
 import { GREETING, smallTalk } from "./topics/small-talk";
 import { subjectById, subjectIn, type WhySubject } from "./topics/why";
 import { undo } from "./topics/undo";
@@ -47,15 +47,52 @@ export function checkQuestion(
   if (said === "small_talk" && !smallTalk.rule.test(ctx.text.trim().toLowerCase())) return null;
   // Phase L: "Undo that" is the asker's command only as the whole message, whatever Atlas read
   if (said === "undo" && !undo.rule.test(ctx.text.trim().toLowerCase())) return null;
-  const projectId = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
+  const named = raw.projectId && ctx.projects.some((p) => p.id === raw.projectId) ? raw.projectId : null;
   const asked = raw.asked.trim() && ctx.text.includes(raw.asked.trim()) ? raw.asked.trim() : ctx.text.trim();
-  // Phase H, PP4: Kemar asking "What is Kemar working on?" asks about his own work
-  const topic = said === "people" && ctx.author && aboutAsker(asked, ctx.author, ctx.projects) ? "my_work" : said;
+  const { topic, projectId } = ctx.author ? aboutWhom(said, asked, named, ctx.author, ctx.projects) : { topic: said, projectId: named };
   const follows = followed(ctx.text, asked, topic, ctx.earlier ?? []);
   // Phase C, WY1: a subject outside the asker's lists is no subject, never a sign that it exists
   const subject = topic === "why" ? subjectById(raw.subjectId, ctx.projects) : null;
   const correction = topic === "correction" ? checkCorrection(raw.correction, ctx) : null;
   return { asked, topic, projectId, ...(follows.length ? { follows } : {}), ...(subject ? { subject } : {}), ...(correction ? { correction } : {}) };
+}
+
+/**
+ * Phase H: who the words are about decides between the asker's work and someone else's, whatever Atlas
+ * read. PP4: Kemar asking "What is Kemar working on?" asks about his own work, and Alicia asking it asks
+ * about his, never hers. "What is Forager doing?" asks how that project stands, not about a person.
+ */
+function aboutWhom(
+  said: QuestionTopic,
+  asked: string,
+  projectId: string | null,
+  author: CheckContext["author"],
+  projects: CheckContext["projects"],
+): { topic: QuestionTopic; projectId: string | null } {
+  if (said === "my_work" && aboutOther(asked, author, projects)) return { topic: "people", projectId };
+  if (said !== "people") return { topic: said, projectId };
+  if (aboutAsker(asked, author, projects)) return { topic: "my_work", projectId };
+  const project = aboutProject(asked, author, projects);
+  return project ? { topic: "project_status", projectId: projectId ?? project.id } : { topic: said, projectId };
+}
+
+/**
+ * CV8: what a follow-up asks beyond following up and saying where, or null when the words are not a
+ * follow-up. "and Jodian?" is "jodian" and "and the trend model?" is "the trend model"; "and on GQ?" is
+ * "" (the question before it, on GQ). `places` are the names and aliases of the asker's projects.
+ */
+export function followUpRest(words: string, places: readonly string[]): string | null {
+  const text = words.trim().toLowerCase().replace(/[‘’]/g, "'");
+  const lead = FOLLOW_UP.exec(text);
+  if (!lead) return null;
+  let rest = text.slice(lead[0].length).replace(/[?.!]+$/, "");
+  for (const place of places.map((p) => p.toLowerCase()).sort((a, b) => b.length - a.length)) {
+    rest = rest.replace(new RegExp(`\\b(?:on|in|pon|for|at|with)\\s+${place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\w)`, "g"), " ");
+  }
+  return rest
+    .replace(/\b(?:then|too|instead|now|there|only|just|please)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

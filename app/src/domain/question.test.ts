@@ -3,10 +3,10 @@
 import { describe, expect, it } from "vitest";
 import type { CandidateProject } from "./atlas-checks/types";
 import { applyCaptureEvent, type CaptureRecord } from "./machines/capture";
-import { checkQuestion, ruleQuestion, topicOf } from "./question";
+import { checkQuestion, followUpRest, ruleQuestion, topicOf } from "./question";
 import { suggestionsAfter } from "./topics";
 import { namesPerson } from "./topics/mentions";
-import { aboutAsker, ownedMatches, ownedPhrase, peopleAsks, whoIsMeant } from "./topics/people";
+import { aboutAsker, ownedMatches, ownedPhrase, peopleAsked, peopleAsks, whoIsMeant } from "./topics/people";
 import { GREETING } from "./topics/small-talk";
 import { whyAsks, whyField, whyWords } from "./topics/why";
 
@@ -579,16 +579,16 @@ describe("phase H: questions about people, by the rule (PP1 to PP8)", () => {
   ];
 
   it("who is meant, by the one rule for names: a full name, a first name in any case, a contact's one name", () => {
-    expect(whoIsMeant("What is Kemar working on?", SHARED)).toEqual({ kind: "one", id: "kemar" });
-    expect(whoIsMeant("what is kemar brown working on", SHARED)).toEqual({ kind: "one", id: "kemar" });
-    expect(whoIsMeant("What's on Jodian's plate?", SHARED)).toEqual({ kind: "one", id: "jodian" });
-    expect(whoIsMeant("What is Kyle doing?", SHARED)).toEqual({ kind: "one", id: "kyle" });
+    expect(whoIsMeant("What is Kemar working on?", SHARED)).toEqual({ kind: "one", id: "kemar", also: [] });
+    expect(whoIsMeant("what is kemar brown working on", SHARED)).toEqual({ kind: "one", id: "kemar", also: [] });
+    expect(whoIsMeant("What's on Jodian's plate?", SHARED)).toEqual({ kind: "one", id: "jodian", also: [] });
+    expect(whoIsMeant("What is Kyle doing?", SHARED)).toEqual({ kind: "one", id: "kyle", also: [] });
     // W-D1: a name that is also a word needs its capital
     expect(whoIsMeant("what will mark be doing", SHARED)).toEqual({ kind: "nobody" });
-    expect(whoIsMeant("What is Mark doing?", SHARED)).toEqual({ kind: "one", id: "mark" });
+    expect(whoIsMeant("What is Mark doing?", SHARED)).toEqual({ kind: "one", id: "mark", also: [] });
     // The first named, and a full name before a first name
-    expect(whoIsMeant("What are Jodian and Kemar working on?", SHARED)).toEqual({ kind: "one", id: "jodian" });
-    expect(whoIsMeant("What are Jodian and Kemar Brown working on?", SHARED)).toEqual({ kind: "one", id: "kemar" });
+    expect(whoIsMeant("What are Jodian and Kemar working on?", SHARED)).toEqual({ kind: "one", id: "jodian", also: ["kemar"] });
+    expect(whoIsMeant("What are Jodian and Kemar Brown working on?", SHARED)).toEqual({ kind: "one", id: "kemar", also: ["jodian"] });
   });
 
   it("PP1: a name outside the people searched is nobody, the same as a name nobody has", () => {
@@ -600,7 +600,7 @@ describe("phase H: questions about people, by the rule (PP1 to PP8)", () => {
   it("PP2: a first name two of them share is unsure, and only they are listed; a full name settles it", () => {
     const two = [...SHARED, { id: "kemar-s", name: "Kemar Smith" }];
     expect(whoIsMeant("What is Kemar working on?", two)).toEqual({ kind: "which", ids: ["kemar", "kemar-s"] });
-    expect(whoIsMeant("What is Kemar Smith working on?", two)).toEqual({ kind: "one", id: "kemar-s" });
+    expect(whoIsMeant("What is Kemar Smith working on?", two)).toEqual({ kind: "one", id: "kemar-s", also: [] });
   });
 
   it("PP4: the asker by their own name is my_work, through checkQuestion", () => {
@@ -619,6 +619,79 @@ describe("phase H: questions about people, by the rule (PP1 to PP8)", () => {
     expect(check("What is Jodian working on?")).toBe("people");
     // Without the author (an older caller), the topic stands
     expect(checkQuestion({ asked: "What is Kemar working on?", topic: "people", projectId: null }, { text: "What is Kemar working on?", projects })?.topic).toBe("people");
+  });
+
+  it("PP4 the other way: someone else's name is never the asker's own work, whatever Atlas read", () => {
+    const people = [
+      { personId: "kemar", name: "Kemar Brown", role: "member" as const, tie: "Data engineer" },
+      { personId: "jodian", name: "Jodian Taylor", role: "member" as const, tie: "Intern" },
+    ];
+    const projects = [{ ...PROJECTS[0], people }];
+    const alicia = { id: "alicia", name: "Alicia Campbell" };
+    const check = (asked: string, topic: string, author = alicia) => checkQuestion({ asked, topic, projectId: null }, { text: asked, projects, author })?.topic;
+    expect(check("What is Kemar working on?", "my_work")).toBe("people");
+    expect(check("Is Jodian overloaded?", "my_work")).toBe("people");
+    // A name nobody on her projects has is still not hers (PP1 answers it)
+    expect(check("What is Zed working on?", "my_work")).toBe("my_work");
+    expect(check("What am I working on?", "my_work")).toBe("my_work");
+    expect(check("What should I be working on with Kemar?", "my_work")).toBe("my_work");
+    // Two people, the asker one of them: about the other too, so people (PP6)
+    expect(check("What are Kemar and Jodian working on?", "people", { id: "kemar", name: "Kemar Brown" })).toBe("people");
+  });
+
+  it("a project by its name or alias is how it stands, not a person", () => {
+    const people = [{ personId: "kemar", name: "Kemar Brown", role: "member" as const, tie: "Data engineer" }];
+    const projects = [{ ...PROJECTS[0], people }, PROJECTS[1]];
+    const alicia = { id: "alicia", name: "Alicia Campbell" };
+    const check = (asked: string) => checkQuestion({ asked, topic: "people", projectId: null }, { text: asked, projects, author: alicia });
+    expect(topicOf("What is Forager doing?")).toBe("people");
+    expect(check("What is Forager doing?")).toMatchObject({ topic: "project_status", projectId: "forager" });
+    expect(check("What's GQ up to?")).toMatchObject({ topic: "project_status", projectId: "gq" });
+    expect(check("What is Academy working on?")).toMatchObject({ topic: "project_status", projectId: "gq" });
+    // A person is still a person, on a project or not; a name that is no project stays people (PP1)
+    expect(check("What is Kemar doing on Forager?")).toMatchObject({ topic: "people" });
+    expect(check("What is Insights doing?")).toMatchObject({ topic: "people", projectId: null });
+    expect(check("Who owns Forager?")).toMatchObject({ topic: "people" });
+  });
+
+  it("PP5: who's, who has, who's got and who is handling ask whose a record is", () => {
+    for (const [text, phrase] of [
+      ["Who's working on #151?", "#151"],
+      ["Who’s responsible for the feed?", "feed"],
+      ["Who has the store feed?", "store feed"],
+      ["Who's got #151?", "#151"],
+      ["Who is handling the store feed?", "store feed"],
+      ["Who's the owner of the trend model?", "trend model"],
+      ["Who's doing the backfill?", "backfill"],
+    ]) {
+      expect(topicOf(text)).toBe("people");
+      expect(peopleAsks(text)).toBe("owner");
+      expect(ownedPhrase(text)).toBe(phrase);
+    }
+    // Not whose a record is
+    for (const text of ["Who has the most work?", "Who has time this week?", "Who has mentioned me?"]) expect(peopleAsks(text)).not.toBe("owner");
+    expect(topicOf("Who has mentioned me?")).toBe("mentions");
+  });
+
+  it("CV8: the newest words that ask something of their own decide what a follow-up asks", () => {
+    expect(peopleAsked(["and what is Jodian working on?", "What did Kemar say about the feed?"])).toBe("work");
+    expect(peopleAsked(["and what is Jodian working on?", "Who owns the store feed?"])).toBe("work");
+    expect(peopleAsked(["and Jodian?", "What did Kemar say about the feed?"])).toBe("said");
+    expect(peopleAsked(["and the trend model?", "Who owns the store feed?"])).toBe("owner");
+    expect(peopleAsked(["and who owns #151?", "What is Kemar working on?"])).toBe("owner");
+    expect(peopleAsked(["and Jodian?"])).toBe("work");
+  });
+
+  it("CV8: what a follow-up asks beyond following up and saying where", () => {
+    const places = ["Forager 2.0", "Forager", "GQ & Academy", "GQ", "Academy"];
+    expect(followUpRest("and Jodian?", places)).toBe("jodian");
+    expect(followUpRest("and the trend model?", places)).toBe("the trend model");
+    expect(followUpRest("What about #151?", places)).toBe("#151");
+    expect(followUpRest("and on GQ?", places)).toBe("");
+    expect(followUpRest("and in GQ & Academy then?", places)).toBe("");
+    expect(followUpRest("and GQ?", places)).toBe("gq");
+    expect(followUpRest("and on Store Insights?", places)).toBe("on store insights");
+    expect(followUpRest("What is Kemar working on?", places)).toBeNull();
   });
 
   it("suggests what to ask next", () => {

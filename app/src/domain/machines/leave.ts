@@ -183,7 +183,7 @@ export function leaveSeenByLead(row: LeaveRecord): LeaveRecord {
 }
 
 /** Leave someone is away on: approved, and every state after it while it lasts. A request is not leave yet. */
-const AWAY: readonly LeaveState[] = ["approved", ...CHANGEABLE, "active"];
+const AWAY: readonly LeaveState[] = [...CHANGEABLE, "active"];
 
 /**
  * Phase H, PP7: the last day of the leave the person is on today, or null. Approved dates only: a change

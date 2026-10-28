@@ -107,6 +107,24 @@ describe("PP1: someone the asker shares no project with reads as a name nobody h
     ]);
     expect((await sharedPeople(db, "andre")).map((p) => p.id)).toEqual(["andre", "kemar"]);
   });
+
+  it("CV8: a follow-up that names someone she shares no project with, or nobody, never gets the person before", async () => {
+    const first = await ask("alicia", "What is Kemar working on?");
+    // Andre shares no project with her; Zed is nobody
+    const andre = await ask("alicia", "and Andre?", 31, first.conversationId);
+    expect(andre.row.question).toMatchObject({ topic: "people", follows: ["What is Kemar working on?"] });
+    expect(andre.answer.text).toBe(NOBODY);
+    expect(andre.answer.cards).toEqual([]);
+    expect((await ask("alicia", "and Zed?", 32, first.conversationId)).answer.text).toBe(NOBODY);
+  });
+
+  it("CV8: a follow-up that only says where keeps the person asked about before", async () => {
+    const first = await ask("alicia", "What is Kemar working on?");
+    expect((await ask("alicia", "and on GQ?", 31, first.conversationId)).answer.text).toBe("Kemar Brown has nothing open on GQ & Academy.");
+    expect((await ask("alicia", "what about Forager?", 32, first.conversationId)).answer.text).toBe(
+      "Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on Forager 2.0; none is past due.",
+    );
+  });
 });
 
 describe("PP2: a first name two shared people have", () => {
@@ -114,11 +132,21 @@ describe("PP2: a first name two shared people have", () => {
     await addPerson("kemar-s", "Kemar Smith", "forager");
     // Another Jodian, on a project Alicia is not in, makes no difference to her
     await addPerson("jodian-g", "Jodian Grant", "insights");
-    expect((await ask("alicia", "What is Kemar working on?")).answer.text).toBe("Did you mean Kemar Brown or Kemar Smith? Ask again with their full name.");
+    expect((await ask("alicia", "What is Kemar working on?")).answer.text).toBe('Did you mean Kemar Brown or Kemar Smith? Ask again with their full name, for example "and Kemar Smith?"');
     expect((await ask("alicia", "What is Kemar Smith working on?")).answer.text).toBe("Kemar Smith has nothing open on Forager 2.0.");
     expect((await ask("alicia", "What is Jodian working on?")).answer.text).toBe("Jodian Taylor has 1 open work item on Forager 2.0; none is past due.");
     // Andre shares a project with Kemar Brown and Jodian Grant only
     expect((await ask("andre", "What is Kemar working on?")).answer.text).toBe("Kemar Brown has 1 open work item on Store Insights; none is past due.");
+  });
+
+  it("the reply the answer suggests, a follow-up by full name, settles it", async () => {
+    await addPerson("kemar-s", "Kemar Smith", "forager");
+    const which = await ask("alicia", "What is Kemar working on?");
+    const reply = await ask("alicia", "and Kemar Smith?", 31, which.conversationId);
+    expect(reply.row.question).toMatchObject({ topic: "people" });
+    expect(reply.answer.text).toBe("Kemar Smith has nothing open on Forager 2.0.");
+    const other = await ask("alicia", "and Kemar Brown?", 32, which.conversationId);
+    expect(other.answer.text).toMatch(/^Kemar Brown has 4 open work items/);
   });
 });
 
@@ -181,15 +209,63 @@ describe("PP5: who owns something", () => {
 
   it("P10: a record on a project the asker is not in matches nothing, as one that does not exist", async () => {
     const theirs = await ask("alicia", "Who owns #208?");
-    expect(theirs.answer.text).toBe('Nothing on your projects matches "#208". Try its number, or its name as the project shows it.');
+    expect(theirs.answer.text).toBe('Nothing open on your projects matches "#208". Try its number, or its name as the project shows it.');
     expect((await ask("alicia", "Who owns the weekly sales export?")).answer.text).toBe(
-      'Nothing on your projects matches "weekly sales export". Try its number, or its name as the project shows it.',
+      'Nothing open on your projects matches "weekly sales export". Try its number, or its name as the project shows it.',
     );
-    expect((await ask("andre", "Who owns the store feed?")).answer.text).toBe('Nothing on your projects matches "store feed". Try its number, or its name as the project shows it.');
+    expect((await ask("andre", "Who owns the store feed?")).answer.text).toBe('Nothing open on your projects matches "store feed". Try its number, or its name as the project shows it.');
+  });
+
+  it("who's, who has, who's got and who is handling ask the same", async () => {
+    const owns = "Kemar Brown owns #151 Store sales feed access on Forager 2.0.";
+    for (const text of ["Who's working on #151?", "Who’s responsible for #151?", "Who has #151?", "Who's got #151?", "Who is handling #151?"]) {
+      const { row, answer } = await ask("alicia", text);
+      expect(row.question).toMatchObject({ topic: "people" });
+      expect(answer.text).toBe(owns);
+    }
+    expect((await ask("alicia", "Who has the store feed?")).answer.text).toBe("Kemar Brown owns #152 Store feed connector on Forager 2.0.");
+  });
+
+  it("CV8: a follow-up asks the owner of what it names; one that only says where keeps the thing", async () => {
+    const first = await ask("alicia", "Who owns the store feed?");
+    const trend = await ask("alicia", "and the trend model?", 31, first.conversationId);
+    expect(trend.row.question).toMatchObject({ topic: "people" });
+    expect(trend.answer.text).toBe("Kemar Brown owns Trend model on Forager 2.0.");
+    expect((await ask("alicia", "and #160?", 32, first.conversationId)).answer.text).toBe("Jodian Taylor owns #160 Feature store backfill on Forager 2.0.");
+    expect((await ask("alicia", "and on GQ?", 33, first.conversationId)).answer.text).toBe(
+      'Nothing open on your projects matches "#160". Try its number, or its name as the project shows it.',
+    );
+  });
+
+  it("CD9: the same things as what someone has; never Done work, a done milestone, or an entry off the log", async () => {
+    // #142 is Done and Data sources is done, both Kemar's
+    expect((await ask("alicia", "Who owns #142?")).answer.text).toBe('Nothing open on your projects matches "#142". Try its number, or its name as the project shows it.');
+    expect((await ask("alicia", "Who owns data sources?")).answer.text).toBe('Nothing open on your projects matches "data sources". Try its number, or its name as the project shows it.');
+    // The pipeline risk closed, and then proposed again but not yet on the log
+    for (const state of ["closed", "proposed"] as const) {
+      await db.update(t.braidEntries).set({ state }).where(eq(t.braidEntries.id, "br-pipeline-risk"));
+      expect((await ask("kemar", "Who owns the pipeline risk?")).answer.text).toBe(
+        'Nothing open on your projects matches "pipeline risk". Try its number, or its name as the project shows it.',
+      );
+      expect((await personSeenBy(db, "kemar", "alicia", at(30)))!.entries.map(({ e }) => e.title)).not.toContain("Only Kemar can run the pipeline");
+    }
   });
 });
 
 describe("PP6: facts only, never a judgement", () => {
+  it("two people named: the first, and the answer says who was left out", async () => {
+    const both = await ask("alicia", "What are Kemar and Jodian working on?");
+    expect(both.answer.text).toBe(
+      "Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; none is past due. Ask about Jodian Taylor on their own.",
+    );
+    // The asker named with someone: the other, and how to ask about their own
+    const kemar = await ask("kemar", "What are Kemar and Jodian working on?");
+    expect(kemar.row.question).toMatchObject({ topic: "people" });
+    expect(kemar.answer.text).toBe('Jodian Taylor has 1 open work item on Forager 2.0; none is past due. Ask "What am I working on?" for your own.');
+    // P10: someone she shares no project with is not named as left out
+    expect((await ask("alicia", "What are Kemar and Andre working on?")).answer.text).not.toMatch(/Andre|Ask about/);
+  });
+
   it("Is Kemar overloaded? Four days on: the counts and how many are past due", async () => {
     const { answer } = await ask("alicia", "Is Kemar overloaded?", 4 * DAY);
     expect(answer.text).toBe("Kemar Brown has 4 open work items, 1 milestone and 1 entry on the BRAID log on projects you share; 4 are past due.");
@@ -237,6 +313,31 @@ describe("PP8: what someone said is never shared", () => {
     expect((await ask("alicia", "What did Andre say about pricing?")).answer.text).toBe(NOT_SAID);
     expect((await ask("alicia", "What did Zed say about pricing?")).answer.text).toBe(NOT_SAID);
   });
+
+  it("CV8: a follow-up that names only someone asks the same, so still never", async () => {
+    const said = await ask("alicia", "What did Kemar say about the feed?");
+    expect((await ask("alicia", "and Jodian?", 31, said.conversationId)).answer.text).toBe(NOT_SAID);
+  });
+
+  it("CV8: the newest words decide: a follow-up asking what someone has is answered as that", async () => {
+    const jodian = "Jodian Taylor has 1 open work item on Forager 2.0; none is past due.";
+    const said = await ask("alicia", "What did Kemar say about the feed?");
+    expect((await ask("alicia", "and what is Jodian working on?", 31, said.conversationId)).answer.text).toBe(jodian);
+    const owner = await ask("alicia", "Who owns the store feed?");
+    expect((await ask("alicia", "and what is Jodian working on?", 31, owner.conversationId)).answer.text).toBe(jodian);
+  });
+});
+
+describe("a project by its name is not a person", () => {
+  it("What is Forager doing? is how the project stands", async () => {
+    for (const text of ["What is Forager doing?", "What's GQ up to?"]) {
+      const { row, answer } = await ask("alicia", text);
+      expect(row.question).toMatchObject({ topic: "project_status" });
+      expect(answer.text).not.toBe(NOBODY);
+    }
+    // Store Insights is not hers: no project of hers, so read as a name nobody has (P10)
+    expect((await ask("alicia", "What is Insights doing?")).answer.text).toBe(NOBODY);
+  });
 });
 
 describe("WY8 hands over to phase H", () => {
@@ -244,5 +345,10 @@ describe("WY8 hands over to phase H", () => {
     const { row, answer } = await ask("alicia", "Why is Jodian behind?");
     expect(row.question).toMatchObject({ topic: "why" });
     expect(answer.text).toBe(`${NOT_WHY}Jodian Taylor has 1 open work item on Forager 2.0; none is past due.`);
+  });
+
+  it("a why about the asker by name is their own work, still with no reason given", async () => {
+    const { answer } = await ask("kemar", "Why is Kemar late?");
+    expect(answer.text).toMatch(new RegExp(`^${NOT_WHY.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}You have `));
   });
 });

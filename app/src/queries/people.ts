@@ -15,7 +15,7 @@ import { isMember } from "../domain/machines/membership";
 import { leaveImpactOwners, onLeaveUntil } from "../domain/machines/leave";
 import { namesPerson } from "../domain/names";
 import { milestonesOf, projectsAsked, workOf } from "./answers/shared";
-import { projectReader, todayIn, type PersonRef, type ProjectBraidEntry, type ProjectMilestone, type ProjectView, type ProjectWorkItem } from "./project";
+import { projectReader, todayIn, type PersonRef, type ProjectBraidEntry, type ProjectMilestone, type ProjectReader, type ProjectView, type ProjectWorkItem } from "./project";
 
 /** Someone the viewer shares a project with, the viewer too, and the shared projects. */
 export type SharedPerson = PersonRef & { projectIds: string[] };
@@ -58,11 +58,11 @@ export async function sharedPeople(conn: Conn, viewerId: string): Promise<Shared
  * so the records are exactly as the viewer's own screens show them.
  */
 export async function personSeenBy(conn: Conn, viewerId: string, personId: string, now: Date, projectId: string | null = null): Promise<PersonSeen | null> {
-  const { world } = await projectReader(conn, viewerId);
+  const reader = await projectReader(conn, viewerId);
   const [person] = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(eq(t.people.id, personId));
   if (!person) return null;
   const contactRows = await conn.select().from(t.projectContacts).where(eq(t.projectContacts.personId, personId));
-  const onIt = (v: ProjectView) => isMember(personId, v.project.id, world.memberships) || contactRows.some((c) => c.projectId === v.project.id);
+  const onIt = (v: ProjectView) => isMember(personId, v.project.id, reader.world.memberships) || contactRows.some((c) => c.projectId === v.project.id);
   const shared = (await projectsAsked(conn, viewerId, null, now)).filter(onIt);
   if (!shared.length) return null;
   const views = projectId ? shared.filter((v) => v.project.id === projectId) : shared;
@@ -79,25 +79,46 @@ export async function personSeenBy(conn: Conn, viewerId: string, personId: strin
     return [{ project: of(v), tie: c.tie, work, entries }];
   });
 
-
+  const theirs = <T extends { owner: PersonRef | null }>(x: T) => x.owner?.id === personId;
   return {
     person,
     projects,
-    work: views.flatMap((v) => workOf(v).filter((w) => w.owner?.id === personId && w.state !== "done" && w.state !== "cancelled").map((w) => ({ project: of(v), w }))),
-    milestones: views.flatMap((v) => milestonesOf(v).filter((m) => m.owner?.id === personId && m.state !== "done").map((m) => ({ project: of(v), m }))),
-    entries: views.flatMap((v) => v.braid.entries.filter((e) => e.owner?.id === personId && e.onLog).map((e) => ({ project: of(v), e }))),
+    work: views.flatMap((v) => ownedOn(v).work.filter(theirs).map((w) => ({ project: of(v), w }))),
+    milestones: views.flatMap((v) => ownedOn(v).milestones.filter(theirs).map((m) => ({ project: of(v), m }))),
+    entries: views.flatMap((v) => ownedOn(v).entries.filter(theirs).map((e) => ({ project: of(v), e }))),
     ties,
-    onLeaveUntil: await leaveShownTo(conn, viewerId, personId, projects.map((p) => p.id), now),
+    onLeaveUntil: await leaveShownTo(conn, viewerId, personId, projects.map((p) => p.id), now, reader),
+  };
+}
+
+/**
+ * CD9: what a project shows as someone's, so what may be said of whoever owns it, in one place for
+ * "What is Kemar working on?" and "Who owns the store feed?": work that is not Done or cancelled,
+ * milestones that are not done, and entries live on the BRAID log (never one still proposed, closed
+ * or replaced).
+ */
+export function ownedOn(v: ProjectView): { work: ProjectWorkItem[]; milestones: ProjectMilestone[]; entries: ProjectBraidEntry[] } {
+  return {
+    work: workOf(v).filter((w) => w.state !== "done" && w.state !== "cancelled"),
+    milestones: milestonesOf(v).filter((m) => m.state !== "done"),
+    entries: v.braid.entries.filter((e) => e.onLog),
   };
 }
 
 /**
  * PP7: the last day of the leave the person is on today, as this viewer may see it: only where one of
  * these projects shows the viewer what that person's leave touches (D6: its PMs, Leads and admin);
- * otherwise null, as if there were none.
+ * otherwise null, as if there were none. A caller that has the viewer's reader passes it.
  */
-export async function leaveShownTo(conn: Conn, viewerId: string, personId: string, projectIds: readonly string[], now: Date): Promise<IsoDate | null> {
-  const { world, mayRead } = await projectReader(conn, viewerId);
+export async function leaveShownTo(
+  conn: Conn,
+  viewerId: string,
+  personId: string,
+  projectIds: readonly string[],
+  now: Date,
+  reader?: ProjectReader,
+): Promise<IsoDate | null> {
+  const { world, mayRead } = reader ?? (await projectReader(conn, viewerId));
   if (!leaveImpactOwners(personId, world).some((o) => o.ownerId === viewerId && projectIds.includes(o.projectId) && mayRead(o.projectId))) return null;
   const leave = await conn.select().from(t.leave).where(eq(t.leave.personId, personId));
   return onLeaveUntil(leave.map(leaveRecordOf), todayIn(now));
