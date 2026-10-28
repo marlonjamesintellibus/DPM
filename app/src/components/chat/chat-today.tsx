@@ -203,6 +203,11 @@ function AnswerBlock({ capture, answer, last, helpOn }: { capture: ChatCapture; 
                 <span className="relative z-10 flex shrink-0 items-start gap-2">
                   <LineActions captureId={capture.id} line={i + 1} projectId={c.subject.projectId} actions={c.actions} tapped={capture.taps.findLast((t) => t.line === i + 1) ?? null} />
                 </span>
+              ) : c.promise ? (
+                // Phase E, CM12: the asker's own promise, ended or moved from here as from a check-in
+                <span className="relative z-10 flex shrink-0 items-start gap-2">
+                  <CommitmentButtons id={c.promise.id} mode={c.promise.mode} today={c.promise.today} dropFirst={c.promise.dropFirst} label={`Promised: ${c.title}`} />
+                </span>
               ) : c.review ? (
                 <form action={startReview.bind(null, c.review.captureId)} className="relative z-10 shrink-0">
                   <button type="submit" className="rounded-control border border-line-strong bg-panel px-2.5 py-1 type-label text-fg-1 hover:bg-hover">

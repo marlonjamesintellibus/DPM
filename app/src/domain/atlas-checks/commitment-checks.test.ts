@@ -81,6 +81,21 @@ describe("a promise is the author's commitment, private to them (CD3)", () => {
     expect(read(promise("Mi a go send Kyle di request tumaro")).item?.kind).toBe("commitment");
   });
 
+  it("CD5, rule 10: anyone else, on Kemar's projects or not, and loose words of his never make their promise his", () => {
+    // Omar is on none of Kemar's projects; a name-like word before "will" is still someone else
+    expect(read(promise("Omar will send the access request tomorrow")).dropped?.check).toBe(11);
+    expect(read(promise("Someone will send the access request tomorrow")).dropped?.check).toBe(11);
+    // "we'll" and "I can" are not Kemar saying he will do it
+    expect(read(promise("Kyle will send the access request tomorrow, we'll see")).dropped?.check).toBe(11);
+    expect(read(promise("Kyle will send the access request tomorrow, I can chase him")).dropped?.check).toBe(11);
+    // Kemar's own "I'll" about the promised words keeps it his, even with someone else's "will" beside it
+    expect(read(promise("I'll send Kyle the access request tomorrow, Andre will review it")).item?.kind).toBe("commitment");
+    // His "I'll" about something else does not take Kyle's promise from him
+    expect(read(promise("Kyle will send the access request tomorrow, I'll check the dashboard")).dropped?.check).toBe(11);
+    // Words that are not people: "It'll be quick, I'll send Kyle the access request tomorrow"
+    expect(read(promise("It'll be quick, I'll send Kyle the access request tomorrow")).item?.kind).toBe("commitment");
+  });
+
   it("P10, CM9: a link names only a record of a project the author files into; any other id is dropped, not echoed", () => {
     const { item } = read(promise("I'll send Kyle the access request tomorrow", { targetId: "wi-999" }));
     expect(item?.commitment?.link).toBeNull();

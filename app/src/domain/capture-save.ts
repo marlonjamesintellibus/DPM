@@ -166,7 +166,8 @@ export function planSave(
         else conflicts.push({ itemId: item.id, key: `commitment:${id}:state`, saw: item.saw, current: now });
         continue;
       }
-      // recordAtSave: the linked work item as it is now. Done is No change; cancelled saves with CM11's question
+      // recordAtSave: the linked work item as it is now. Done is No change; cancelled saves with CM11's question.
+      // Membership comes first: work the author can no longer read reads as null (CM9), so neither applies
       const linked = promise.link?.type === "work_item" ? valueOf(`work_item:${promise.link.id}:state`) : null;
       // CM5: the match holds only while that commitment is live; otherwise this promise opens a new one
       const matchId = promise.commitmentId && isLive(stateOf(promise.commitmentId)) ? promise.commitmentId : null;

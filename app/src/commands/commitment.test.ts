@@ -14,10 +14,11 @@ import { getChatSummary, getThread } from "../queries/chat";
 import { getInbox } from "../queries/inbox";
 import { getReview } from "../queries/review";
 import { commitments as promisesAnswer } from "../queries/answers/commitments";
+import { undoReply } from "../queries/answers/undo";
 import { at, seededDb } from "../test/seeded-db";
 import { readCapture } from "./atlas";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "./capture";
-import { answerCommitment, runCommitmentTimers } from "./commitment";
+import { answerCommitment, runCommitmentTimers, type CheckInAnswer } from "./commitment";
 import { CommandRefused } from "./core";
 import { evaluateProject } from "./evaluate";
 import { undoSave } from "./undo";
@@ -34,6 +35,8 @@ const notices = async (who: string, id: string) => (await db.select().from(t.not
 const live = async (who: string) =>
   (await db.select().from(t.inboxItems).where(eq(t.inboxItems.ownerId, who))).filter((i) => i.state === "open" && i.causeKey.startsWith("commitment")).map((i) => i.causeKey).sort();
 const SEEDED = "cm-kemar-columns";
+/** A button pressed once: each press carries its own command id (rule 6). */
+const answer = (ctx: ReturnType<typeof as>, id: string, a: CheckInAnswer, commandId = `cmd-${++n}`) => answerCommitment(ctx, id, a, commandId);
 
 const PROMISE: RawProposal = {
   kind: "commitment",
@@ -134,10 +137,68 @@ describe("a promise saved from the review (M22 SAVE)", () => {
     expect(await row(first.id)).toMatchObject({ state: "open", dueOn: "2026-11-03", moves: 2 });
   });
 
+  it("CM5: a day that passed while the review waited goes back to the card to fix; nothing saves until it is fixed", async () => {
+    const first = await kemarSays(PROMISE);
+    // Said Tuesday for Thursday, the same promise as the live one; saved Friday
+    const thursday: RawProposal = { ...PROMISE, quote: "I'll send Kyle the access request for #151 Thursday" };
+    const late = async (proposal: RawProposal, messageId: string) => {
+      const { captureId } = await createCapture(as("kemar", 5), { channel: "app", messageId, kind: "text", text: `${proposal.quote}.`, messageAt: at(5), receivedAt: at(5) });
+      const { items } = await proposeItems(as("kemar", 5), captureId, [proposal]);
+      await openReview(as("kemar", 5), captureId);
+      if (items[0].state === "needs_ok") await decideExtraction(as("kemar", 5), items[0].id, { type: "accept" });
+      return { captureId, itemId: items[0].id };
+    };
+    const moved = await late(thursday, "late-1");
+    const reason = "that day has passed; pick a day from today on. Edit it or reject it";
+    expect(await saveCapture(as("kemar", morning(3)), moved.captureId)).toMatchObject({ outcome: "conflict", refused: [{ itemId: moved.itemId, reason }] });
+    expect(await row(first.id)).toMatchObject({ dueOn: "2026-10-21", moves: 0 });
+    // A new promise saved late is held the same way, not opened with a day already gone
+    const other = await late({ ...thursday, promise: "Book the room for the demo", targetId: null, quote: "I'll book the room for the demo Thursday" }, "late-2");
+    expect(await saveCapture(as("kemar", morning(3)), other.captureId)).toMatchObject({ outcome: "conflict", refused: [{ itemId: other.itemId, reason }] });
+    expect(await row(`cm-${other.itemId}`)).toBeUndefined();
+    // Fixed on the card, it saves and moves the live one
+    await decideExtraction(as("kemar", morning(3) + 1), moved.itemId, { type: "edit", value: "2026-10-26" });
+    expect(await saveCapture(as("kemar", morning(3) + 2), moved.captureId)).toMatchObject({ outcome: "saved" });
+    expect(await row(first.id)).toMatchObject({ dueOn: "2026-10-26", moves: 1 });
+  });
+
+  it("recordAtSave, CM9, P10: work Done on a project Kemar left since never decides the save; the promise opens without the link", async () => {
+    const { captureId } = await createCapture(as("kemar"), { channel: "app", messageId: "left", kind: "text", text: `${PROMISE.quote}.`, messageAt: at(0), receivedAt: at(0) });
+    const { items } = await proposeItems(as("kemar"), captureId, [PROMISE]);
+    await openReview(as("kemar"), captureId);
+    await decideExtraction(as("kemar"), items[0].id, { type: "accept" });
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "kemar")));
+    await db.update(t.workItems).set({ state: "done" }).where(eq(t.workItems.id, "wi-151"));
+    const saved = await saveCapture(as("kemar", 2), captureId);
+    // Not "Already done": that would tell him a record he can no longer read changed
+    expect(saved).toMatchObject({ outcome: "saved", noChange: [], applied: [items[0].id] });
+    expect(await row(`cm-${items[0].id}`)).toMatchObject({ state: "open", linkId: null, linkType: null, linkProjectId: null });
+  });
+
   it("an undo of the save drops the promise it opened, as its owner (as CD34)", async () => {
     const { id, captureId } = await kemarSays(PROMISE);
     await undoSave(as("kemar", 2), { commandId: "undo-1", captureId });
     expect(await row(id)).toMatchObject({ state: "dropped", endedBy: "owner" });
+  });
+
+  it("as CD34: an undo leaves a promise the save moved (CM5) or marked done (CM6), and says so", async () => {
+    const first = await kemarSays(PROMISE);
+    // CM5: the save's only change moved the live promise; "Undo that" finds nothing to undo and says it stays
+    await kemarSays({ ...PROMISE, quote: "I'll send Kyle the access request for #151 Friday" }, 5);
+    expect(await undoSave(as("kemar", 6), { commandId: "undo-moved" })).toEqual({ kind: "nothing" });
+    expect((await undoReply(db, "kemar", null, at(6))).text).toBe(
+      "There's nothing to undo there. A promise you marked done or moved stays as you left it: Send Kyle the access request (due Fri 23 Oct).",
+    );
+    // CM6, from the Undo button on that saved message
+    const sent: RawProposal = { ...PROMISE, newValue: "done", commitmentId: first.id, promise: null, targetId: null, quote: "Sent Kyle the access request" };
+    const done = await kemarSays(sent, 7);
+    expect(await undoSave(as("kemar", 8), { commandId: "undo-done", captureId: done.captureId })).toEqual({ kind: "nothing" });
+    expect((await undoReply(db, "kemar", null, at(8), done.captureId)).text).toBe(
+      "There's nothing to undo there. A promise you marked done or moved stays as you left it: Send Kyle the access request (done).",
+    );
+    expect(await row(first.id)).toMatchObject({ state: "done", dueOn: "2026-10-23" });
+    // Nobody else's undo says anything about it (CD3)
+    expect((await undoReply(db, "alicia", null, at(8), done.captureId)).text).toBe("There's nothing of yours to undo.");
   });
 });
 
@@ -168,7 +229,7 @@ describe("due, check-ins and the owner's answers (M22 timers)", () => {
     await timers(morning(2));
     const thread = await getThread(db, "kemar", conversationId, at(morning(2)));
     expect(thread.found && thread.notices.find((x) => x.subject.id === id)?.promise).toEqual({ id, mode: "check", dropFirst: false, today: "2026-10-22" });
-    expect(await answerCommitment(as("kemar", morning(2) + 5), id, { act: "done" })).toMatchObject({ message: "Marked done: Send Kyle the access request." });
+    expect(await answer(as("kemar", morning(2) + 5), id, { act: "done" })).toMatchObject({ message: "Marked done: Send Kyle the access request." });
     expect(await row(id)).toMatchObject({ state: "done", checkInOut: false, endedBy: "owner" });
     expect(await live("kemar")).not.toContain(`commitment_check:${id}`);
     const closed = (await db.select().from(t.inboxItems).where(eq(t.inboxItems.causeKey, `commitment_check:${id}`)))[0];
@@ -177,13 +238,34 @@ describe("due, check-ins and the owner's answers (M22 timers)", () => {
     expect(after.found && after.notices.find((x) => x.subject.id === id)).toMatchObject({ promiseOutcome: "Marked done." });
     expect(after.found && after.notices.find((x) => x.subject.id === id)?.promise).toBeUndefined();
     // A second tap changes nothing (rule 6)
-    await expect(answerCommitment(as("kemar", morning(2) + 7), id, { act: "drop" })).rejects.toThrow("That promise is already done.");
+    await expect(answer(as("kemar", morning(2) + 7), id, { act: "drop" })).rejects.toThrow("That promise is already done.");
+  });
+
+  it("rule 6: the same command again changes nothing and says what the first did, whatever day it carries", async () => {
+    const { id } = await kemarSays(PROMISE);
+    await timers(morning(2));
+    expect((await answer(as("kemar", morning(2) + 1), id, { act: "date", dueOn: "2026-10-23" }, "tap-1")).message).toBe("Moved to Fri 23 Oct: Send Kyle the access request.");
+    expect((await answer(as("kemar", morning(2) + 2), id, { act: "date", dueOn: "2026-10-26" }, "tap-1")).message).toBe("Moved to Fri 23 Oct: Send Kyle the access request.");
+    // One move, so CM10's count (CD24) is not fed by a repeat
+    expect(await row(id)).toMatchObject({ dueOn: "2026-10-23", moves: 1, state: "open" });
+  });
+
+  it("M22 NO_REPLY: a check-in whose day ended unanswered says nothing under it until the next one", async () => {
+    const { id, conversationId } = await kemarSays(PROMISE);
+    await timers(morning(2));
+    await timers(2 * DAY + 15 * 60); // Fri 23 Oct, 0:10am: Thursday ended with no reply
+    expect(await row(id)).toMatchObject({ state: "checking", checkInOut: false, checkIns: 1, dueOn: "2026-10-21" });
+    const thread = await getThread(db, "kemar", conversationId, at(2 * DAY + 16 * 60));
+    const shown = thread.found ? thread.notices.find((x) => x.subject.id === id) : undefined;
+    expect(shown).toMatchObject({ text: "Did you send Kyle the access request (#151 Store sales feed access)? You said you would by Wed 21 Oct." });
+    expect(shown?.promise).toBeUndefined();
+    expect(shown?.promiseOutcome).toBeUndefined();
   });
 
   it("rule 10, CD3: only the owner answers; anyone else is told it is not found", async () => {
     const { id } = await kemarSays(PROMISE);
     await timers(morning(2));
-    await expect(answerCommitment(as("alicia", morning(2) + 1), id, { act: "done" })).rejects.toThrow(CommandRefused);
+    await expect(answer(as("alicia", morning(2) + 1), id, { act: "done" })).rejects.toThrow(CommandRefused);
     expect((await row(id)).state).toBe("checking");
   });
 
@@ -218,7 +300,7 @@ describe("due, check-ins and the owner's answers (M22 timers)", () => {
     for (const [day, move, dueOn] of [[2, 1, "2026-10-23"], [13, 2, "2026-11-02"], [14, 3, "2026-11-03"]] as const) {
       await timers(morning(day));
       expect((await row(id)).state).toBe("checking");
-      await answerCommitment(as("kemar", morning(day) + 1), id, { act: "date", dueOn });
+      await answer(as("kemar", morning(day) + 1), id, { act: "date", dueOn });
       expect(await row(id)).toMatchObject({ state: "open", dueOn, moves: move, checkIns: 0, checkInOut: false });
     }
     await timers(morning(15)); // Wed 4 Nov
@@ -226,8 +308,8 @@ describe("due, check-ins and the owner's answers (M22 timers)", () => {
     const thread = await getThread(db, "kemar", conversationId, at(morning(15)));
     expect(thread.found && thread.notices.find((x) => x.subject.id === id)?.promise?.dropFirst).toBe(true);
     // A day already past is refused, and nothing moves
-    await expect(answerCommitment(as("kemar", morning(15) + 1), id, { act: "date", dueOn: "2026-11-02" })).rejects.toThrow("Pick a day from today on.");
-    await answerCommitment(as("kemar", morning(15) + 2), id, { act: "drop" });
+    await expect(answer(as("kemar", morning(15) + 1), id, { act: "date", dueOn: "2026-11-02" })).rejects.toThrow("Pick a day from today on.");
+    await answer(as("kemar", morning(15) + 2), id, { act: "drop" });
     expect(await row(id)).toMatchObject({ state: "dropped", endedBy: "owner" });
   });
 
@@ -262,11 +344,22 @@ describe("the rules on a commitment's link, and a later update (M22, CM6, CM9, C
     expect(await live("kemar")).toEqual([`commitment_stands:${id}`]);
     const item = (await getInbox(db, "kemar", at(6))).items.find((i) => i.causeKey === `commitment_stands:${id}`)!;
     expect(item).toMatchObject({ title: "Does your promise still stand? Send Kyle the access request", why: "#151 Store sales feed access was cancelled; keep it, or drop it" });
-    expect(await answerCommitment(as("kemar", 7), id, { act: "keep" })).toMatchObject({ message: "Kept: Send Kyle the access request. I'll check on it when it's due." });
+    expect(await answer(as("kemar", 7), id, { act: "keep" })).toMatchObject({ message: "Kept: Send Kyle the access request. I'll check on it when it's due." });
     await db.transaction((tx) => evaluateProject(tx, "forager", at(8)));
     await timers(9);
     expect(await row(id)).toMatchObject({ state: "open", stands: "kept" });
     expect(await notices("kemar", id)).toHaveLength(1);
+    // Under the question in the chat, what came of it
+    expect((await getChatSummary(db, "kemar", undefined, at(10))).notices.find((x) => x.subject.id === id)).toMatchObject({ promiseOutcome: "Kept. Due Wed 21 Oct." });
+  });
+
+  it("CM11: a bare \"yes\" to \"Does your promise still stand?\" keeps it; it never marks it done", async () => {
+    const { id, conversationId } = await kemarSays(PROMISE);
+    await db.update(t.workItems).set({ state: "cancelled" }).where(eq(t.workItems.id, "wi-151"));
+    await db.transaction((tx) => evaluateProject(tx, "forager", at(5)));
+    const said = await say("Yes", 6, conversationId);
+    expect(said.capture).toMatchObject({ state: "answered", commandNote: "Kept: Send Kyle the access request. I'll check on it when it's due." });
+    expect(await row(id)).toMatchObject({ state: "open", stands: "kept", endedOn: null });
   });
 
   it("CM9: Kemar leaves Forager; the promise stays his, the link goes, and no check-in names the record", async () => {
@@ -294,7 +387,7 @@ describe("the rules on a commitment's link, and a later update (M22, CM6, CM9, C
     const { items } = await proposeItems(as("kemar", 5), captureId, [sent]);
     await openReview(as("kemar", 5), captureId);
     await decideExtraction(as("kemar", 5), items[0].id, { type: "accept" });
-    await answerCommitment(as("kemar", 6), id, { act: "drop" });
+    await answer(as("kemar", 6), id, { act: "drop" });
     expect(await saveCapture(as("kemar", 7), captureId)).toMatchObject({ outcome: "conflict", refused: [{ itemId: items[0].id, reason: "That promise is dropped now, so it can't be marked done. Reject it" }] });
     expect((await row(id)).state).toBe("dropped");
   });
@@ -318,7 +411,7 @@ describe("in the chat and CM12 (no model)", () => {
     // The seeded promise waits too: with two waiting, a reply answers neither, and nothing moves
     expect((await say("Done", morning(2) + 1, conversationId)).capture.state).toBe("failed");
     expect((await row(id)).state).toBe("checking");
-    await answerCommitment(as("kemar", morning(2) + 2), SEEDED, { act: "drop" });
+    await answer(as("kemar", morning(2) + 2), SEEDED, { act: "drop" });
     const moved = await say("Move it to Monday", morning(2) + 5, conversationId);
     expect(moved.capture).toMatchObject({ state: "answered", commandNote: "Moved to Mon 26 Oct: Send Kyle the access request." });
     expect(await row(id)).toMatchObject({ state: "open", dueOn: "2026-10-26", moves: 1 });
@@ -331,12 +424,49 @@ describe("in the chat and CM12 (no model)", () => {
   it("a typed reply elsewhere is not an answer to it, and a day already past is said back", async () => {
     const { id, conversationId } = await kemarSays(PROMISE);
     await timers(morning(2));
-    await answerCommitment(as("kemar", morning(2)), SEEDED, { act: "done" });
+    await answer(as("kemar", morning(2)), SEEDED, { act: "done" });
     expect((await say("Done", morning(2) + 1, null)).capture.state).not.toBe("answered");
     const past = await say("Move it to Monday the 19th", morning(2) + 2, conversationId);
     expect(past.capture).toMatchObject({ state: "answered", commandNote: "Pick a day from today on." });
     expect((await row(id)).state).toBe("checking");
     expect((await say("done", morning(2) + 3, conversationId)).capture.commandNote).toBe("Marked done: Send Kyle the access request.");
+  });
+
+  it("SU4 with M28: a standup asked after the check-in takes the reply; the promise is not marked done", async () => {
+    const { id, conversationId } = await kemarSays(PROMISE);
+    await timers(morning(2));
+    await answer(as("kemar", morning(2)), SEEDED, { act: "drop" });
+    // Kemar starts his standup in the same chat after the check-in; its question is the one asked last
+    await say("Start my standup", morning(2) + 1, conversationId);
+    const [standup] = await db.select().from(t.standups).where(eq(t.standups.personId, "kemar"));
+    expect(standup).toMatchObject({ state: "asking", conversationId });
+    const done = await say("Done", morning(2) + 2, conversationId);
+    expect(done.capture.state).toBe("answered");
+    expect(done.capture.commandNote).toBeNull();
+    expect(await row(id)).toMatchObject({ state: "checking", checkInOut: true });
+    // The standup's first question took it as its Done
+    const [after] = await db.select().from(t.standups).where(eq(t.standups.id, standup.id));
+    expect(after.steps[0]).toMatchObject({ n: 1, answer: { tap: "done" } });
+  });
+
+  it("SU4: a check-in from before DPM kept where a promise was said is answered by its buttons, never by typed words", async () => {
+    await timers(0);
+    expect((await row(SEEDED)).state).toBe("checking");
+    // It shows in his newest chat, where he types "Done"
+    const { capture } = await say("What did I promise?", 1, null);
+    expect((await getChatSummary(db, "kemar", undefined, at(1))).notices[0]).toMatchObject({ subject: { id: SEEDED }, promise: { mode: "check" } });
+    expect((await say("Done", 2, capture.conversationId)).capture.state).not.toBe("answered");
+    expect((await row(SEEDED)).state).toBe("checking");
+  });
+
+  it("OwnerSays: each open promise in \"What did I promise?\" carries its buttons, and Done or Drop ends it before it is due", async () => {
+    const { id } = await kemarSays(PROMISE);
+    const { capture } = await say("What did I promise?", 2, null);
+    const card = capture.answer!.cards.find((c) => c.title === "Send Kyle the access request")!;
+    expect(card.promise).toEqual({ id, mode: "check", dropFirst: false, today: "2026-10-20" });
+    expect((await answer(as("kemar", 3), id, { act: "drop" })).message).toBe("Dropped: Send Kyle the access request.");
+    expect(await row(id)).toMatchObject({ state: "dropped", endedBy: "owner" });
+    expect((await answer(as("kemar", 4), SEEDED, { act: "done" })).message).toBe("Marked done: Send Andre the buyers' column list.");
   });
 
   it("CM12: \"What did I promise?\" lists only the asker's own open and due promises, soonest first", async () => {

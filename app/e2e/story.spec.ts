@@ -521,6 +521,10 @@ test("Phase E. Kemar promises to send Kyle the access request: a promise he revi
   await box.fill("What did I promise?");
   await box.press("Enter");
   await expect(page.getByRole("link", { name: /Send Kyle the access request.*Due Wed 21 Oct · #151 Store sales feed access/ })).toBeVisible();
+  // Each open promise carries its own Done, New date and Drop, so he can end one before it is due (M22 anyLive)
+  const own = page.getByRole("group", { name: "Promised: Send Kyle the access request" });
+  await expect(own.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+  await expect(own.getByRole("button", { name: "Drop it" })).toBeVisible();
 });
 
 test("Phase E. Kemar's promise from Friday was due Monday: Tuesday morning's check-in is in his inbox and chat, and Done ends it", async () => {

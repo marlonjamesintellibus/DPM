@@ -660,7 +660,7 @@ export function decideExtraction(ctx: CommandCtx, extractionId: string, decision
           : decision.type === "reject"
             ? { type: "REJECT" }
             : { type: "UNDO" };
-    const checkEdit = decision.type === "edit" ? await editRule(tx, item, ctx.actorId) : undefined;
+    const checkEdit = decision.type === "edit" ? await editRule(tx, item, ctx.actorId, ctx.now) : undefined;
     const r = moveItem(item, event, { checkEdit });
     await persistItems(tx, [item], [r.item], new Map([[row.id, row.version]]), ctx.now);
     await auditItem(tx, ctx.now, row.captureId, r.item, r.outcome, { type: "person", id: ctx.actorId }, decision.type === "edit" ? { value: decision.value } : undefined);
@@ -684,11 +684,20 @@ function leaveRecords(rows: (typeof t.leave.$inferSelect)[]): LeaveRecord[] {
  * E22: an edited value must pass the target's own rules, read now: the record's machine must
  * accept it, and a forecast may not fall before the project starts.
  */
-async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<(value: string) => string | null> {
-  // Phase E, CM2: the author corrects a promise's day on the card; it is a day still to come
+async function editRule(tx: Tx, item: ExtractedItem, authorId: string, now: Date): Promise<(value: string) => string | null> {
+  // Phase E, CM2: the author corrects a promise's day on the card; it is a day still to come. CM5: run again at
+  // Save, since a review stays open for days, so a day that has passed since goes back to the card to fix,
+  // whether it opens a promise or moves a live one (M22's NEW_DATE wants a day still to come)
   if (item.draft.commitment?.act === "promise") {
     const [{ messageAt }] = await tx.select({ messageAt: t.captures.messageAt }).from(t.captures).innerJoin(t.extractions, eq(t.extractions.captureId, t.captures.id)).where(eq(t.extractions.id, item.id));
-    return (value) => (!isIsoDate(value) ? "a promise's day is a date" : value < dateInZone(messageAt, config.timeZone) ? "pick a day from when you said it on" : null);
+    return (value) =>
+      !isIsoDate(value)
+        ? "a promise's day is a date"
+        : value < dateInZone(messageAt, config.timeZone)
+          ? "pick a day from when you said it on"
+          : value < todayOf(now)
+            ? "that day has passed; pick a day from today on"
+            : null;
   }
   const target = item.draft.target;
   if (item.draft.kind !== "update" || !target) return () => null; // a BRAID title: the machine wants it non-empty
@@ -1076,11 +1085,16 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
 
 /**
  * Phase E: a fact a promise is saved against, keyed as commitmentKeys builds it: the linked work item's state, or
- * the matched commitment's state and due day. Someone else's commitment reads as gone (CD3).
+ * the matched commitment's state and due day. Someone else's commitment reads as gone (CD3). The model's
+ * recordAtSave checks membership first (CM9, P10): work on a project the author can no longer read reads as
+ * nothing, so its state never decides the save ("Already done") and the promise opens without the link.
  */
-async function readCommitmentFact(tx: Tx, key: string, authorId: string): Promise<string | null> {
+async function readCommitmentFact(tx: Tx, key: string, authorId: string, mayRead: (projectId: string) => boolean): Promise<string | null> {
   const [type, id, field] = key.split(":");
-  if (type === "work_item") return (await tx.select({ state: t.workItems.state }).from(t.workItems).where(eq(t.workItems.id, id)))[0]?.state ?? null;
+  if (type === "work_item") {
+    const [wi] = await tx.select({ state: t.workItems.state, projectId: t.workItems.projectId }).from(t.workItems).where(eq(t.workItems.id, id));
+    return wi && mayRead(wi.projectId) ? wi.state : null;
+  }
   const [row] = await tx.select().from(t.commitments).where(eq(t.commitments.id, id));
   if (!row || row.ownerId !== authorId) return null;
   return field === "due" ? row.dueOn : row.state;
@@ -1401,7 +1415,7 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       const key = targetKey(item);
       if (key !== null && !(key in current)) current[key] = await readCurrent(tx, item, authorId);
       // Phase E: a promise reads its linked work and the commitment it matches or ends, as they are now
-      for (const k of commitmentKeys(item)) if (!(k in current)) current[k] = await readCommitmentFact(tx, k, authorId);
+      for (const k of commitmentKeys(item)) if (!(k in current)) current[k] = await readCommitmentFact(tx, k, authorId, isMember);
     }
     let plan = planSave(saving.record, items, current);
     if (plan.outcome === "refused") throw new CommandRefused(plan.reason);
@@ -1418,12 +1432,27 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       for (const w of plan.writes) {
         // Phase J: a write that goes back as an ask is not the author's to apply, so its record's rules do not run
         if (deciders.has(w.itemId)) continue;
-        const reason = (await editRule(tx, s0(items, w.itemId), authorId))(w.value);
+        const reason = (await editRule(tx, s0(items, w.itemId), authorId, ctx.now))(w.value);
         if (reason) refusals.set(w.itemId, `${reason}. Edit it or reject it`);
       }
+      // Phase E, CM5: a promise's day is checked as it saves, so one that passed while the review waited goes back
+      // to its card to fix, never a machine refusal that stops the save with nothing said
+      const promised: { itemId: string; dueOn: string }[] = plan.commitments.flatMap((c) => (c.act === "promise" ? [c] : []));
+      for (const c of promised) {
+        const reason = (await editRule(tx, s0(items, c.itemId), authorId, ctx.now))(c.dueOn);
+        if (reason) refusals.set(c.itemId, `${reason}. Edit it or reject it`);
+      }
       const refused = plan.writes.filter((w) => refusals.has(w.itemId));
-      if (refused.length) {
-        plan = { outcome: "conflict", conflicts: [...plan.conflicts, ...refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null }))] };
+      const late = promised.filter((c) => refusals.has(c.itemId));
+      if (refused.length || late.length) {
+        plan = {
+          outcome: "conflict",
+          conflicts: [
+            ...plan.conflicts,
+            ...refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null })),
+            ...late.map((c) => ({ itemId: c.itemId, key: `promise:${c.itemId}:due`, saw: c.dueOn, current: null })),
+          ],
+        };
       }
     }
     if (deciders.size) {

@@ -207,6 +207,11 @@ export type AnswerCard = {
   actions?: LineAction[];
   /** Phase B: an update waiting for review opens it, as the chat's Review button does. */
   review?: { captureId: string };
+  /**
+   * Phase E, CM12: the asker's own live promise, with its buttons (the model's OwnerSays): Done, New date, Drop;
+   * or, while CM11's question waits, It still stands and Drop. Checked when pressed (rule 4).
+   */
+  promise?: { id: string; mode: "check" | "stands"; dropFirst: boolean; today: string };
 };
 
 /**

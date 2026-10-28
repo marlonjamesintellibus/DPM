@@ -5,7 +5,7 @@
 // working day the owner is in (CM7, CM8), and lapses it unanswered. Every move runs the machine
 // (domain/machines/commitment.ts), checked now (rule 4), and writes an audit entry.
 // Atlas cannot speak first yet (phase F): a check-in is a notice in the owner's DPM chat plus an inbox item.
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Conn, Tx } from "../db/conn";
 import { commitmentOf, leaveRecordOf, loadWorld, orgTagsOf, persistCommitment } from "../db/records";
@@ -127,7 +127,8 @@ export async function applyCommitmentsAtSave(tx: Tx, now: Date, capture: { id: s
       const record = commitmentOf(row);
       const event: CommitmentEvent = p.act === "done" ? { type: "DONE", by: "owner" } : { type: "NEW_DATE", dueOn: p.dueOn };
       const r = applyCommitmentEvent(record, event, await ctxFor(tx, now, record, capture.authorId));
-      await write(tx, now, row, r.record, moved(r.outcome), by, { itemId: p.itemId, from: p.act === "done" ? "update" : "same_promise" });
+      // savedBy: the save that moved or ended it, so its undo can say this stays (queries/undo.ts, keptPromisesOfSave)
+      await write(tx, now, row, r.record, moved(r.outcome), by, { itemId: p.itemId, from: p.act === "done" ? "update" : "same_promise", savedBy: capture.id });
       continue;
     }
     if (p.act !== "promise") continue;
@@ -176,49 +177,109 @@ export function answeredText(r: CommitmentRecord, act: CheckInAnswer["act"]): st
   }
 }
 
+// The machine's reasons, as the owner is told them
+const REFUSED: Record<string, string> = {
+  "it is already due then": "It is already due that day.",
+  "a new date is a day still to come": "Pick a day from today on.",
+  "nothing asked whether it stands": "Nothing is asking about that promise now.",
+};
+
 /**
  * The owner answers a check-in (Done, a new date, Drop), CM11's question (it still stands, or Drop), or acts
- * from "What did I promise?". Only the owner, checked now (rule 10); a commitment that ended, or a second tap,
- * is refused and changes nothing (rule 6).
+ * from "What did I promise?" (the model's OwnerSays). Only the owner, checked now (rule 10). Rule 6: every
+ * answer carries its command id (the button's own, or the reply's message), and the same id again changes
+ * nothing and says what the first did; a commitment that ended since is refused and changes nothing.
  */
-export function answerCommitment(ctx: CommandCtx, commitmentId: string, answer: CheckInAnswer): Promise<{ record: CommitmentRecord; message: string }> {
-  return runCommand(ctx, (tx) => answerIn(tx, ctx.now, ctx.actorId, commitmentId, answer));
+export function answerCommitment(ctx: CommandCtx, commitmentId: string, answer: CheckInAnswer, commandId: string): Promise<{ record: CommitmentRecord; message: string }> {
+  return runCommand(ctx, (tx) => answerIn(tx, ctx.now, ctx.actorId, commitmentId, answer, commandId));
 }
 
-export async function answerIn(tx: Tx, now: Date, actorId: string, commitmentId: string, answer: CheckInAnswer): Promise<{ record: CommitmentRecord; message: string }> {
+export async function answerIn(tx: Tx, now: Date, actorId: string, commitmentId: string, answer: CheckInAnswer, commandId: string): Promise<{ record: CommitmentRecord; message: string }> {
   const [row] = await tx.select().from(t.commitments).where(eq(t.commitments.id, commitmentId));
   // CD3: someone else's commitment is not found, whatever its id
   if (!row || row.ownerId !== actorId) throw new CommandRefused("Not found, or not yours to see", "not_found");
-  if (answer.act === "date" && !isIsoDate(answer.dueOn)) throw new CommandRefused("a new date is a day, for example 2026-10-23");
   const record = commitmentOf(row);
+  // Rule 6: a command already run (a second tap, a retried request) changes nothing; the first one's answer stands
+  const [seen] = await tx
+    .select({ detail: t.auditEntries.detail })
+    .from(t.auditEntries)
+    .where(and(eq(t.auditEntries.subjectType, "commitment"), eq(t.auditEntries.subjectId, commitmentId), sql`${t.auditEntries.detail}->>'commandId' = ${commandId}`))
+    .limit(1);
+  if (seen) return { record, message: answeredText(record, (seen.detail as { answer: CheckInAnswer["act"] }).answer) };
+  if (answer.act === "date" && !isIsoDate(answer.dueOn)) throw new CommandRefused("a new date is a day, for example 2026-10-23");
   if (!isLive(record)) throw new CommandRefused(`That promise is already ${record.state === "lapsed" ? "closed" : record.state}.`);
   const r = applyCommitmentEvent(record, EVENT[answer.act](answer), await ctxFor(tx, now, record, actorId));
-  if (!r.outcome.ok) throw new CommandRefused(r.outcome.reason === "it is already due then" ? "It is already due that day." : r.outcome.reason === "a new date is a day still to come" ? "Pick a day from today on." : r.outcome.reason);
-  await write(tx, now, row, r.record, r.outcome, { actorType: "person", actorId }, { answer: answer.act });
+  if (!r.outcome.ok) throw new CommandRefused(REFUSED[r.outcome.reason] ?? r.outcome.reason);
+  await write(tx, now, row, r.record, r.outcome, { actorType: "person", actorId }, { answer: answer.act, commandId });
   return { record: r.record, message: answeredText(r.record, answer.act) };
+}
+
+/** The newest question about a commitment in its owner's chat: a check-in, or CM11's (notice ids carry their act). */
+async function askedAt(tx: Tx, ownerId: string, id: string): Promise<{ check: Date | null; stands: Date | null }> {
+  const rows = await tx.select({ id: t.notices.id, at: t.notices.at }).from(t.notices).where(and(eq(t.notices.personId, ownerId), eq(t.notices.subjectType, "commitment"), eq(t.notices.subjectId, id)));
+  const newest = (act: string) => rows.filter((n) => n.id.startsWith(`ntc-${id}-${act}`)).reduce<Date | null>((a, n) => (a && a >= n.at ? a : n.at), null);
+  return { check: newest("check_in_"), stands: newest("stands-") };
+}
+
+/**
+ * SU4 with CM6 and M28: the time of the newest other question waiting on the author in this conversation (M21's
+ * clarification, the standup's question, a command card to confirm), which a reply there answers first.
+ */
+async function otherQuestionAt(tx: Tx, authorId: string, conversationId: string, replyId: string): Promise<Date | null> {
+  const [clarified] = await tx
+    .select({ at: t.clarifications.createdAt })
+    .from(t.clarifications)
+    .where(and(eq(t.clarifications.authorId, authorId), eq(t.clarifications.conversationId, conversationId), eq(t.clarifications.state, "asked"), ne(t.clarifications.captureId, replyId)));
+  const [standup] = await tx
+    .select({ at: t.standups.askedAt })
+    .from(t.standups)
+    .where(and(eq(t.standups.personId, authorId), eq(t.standups.conversationId, conversationId), eq(t.standups.state, "asking")));
+  const [command] = await tx
+    .select({ at: t.chatCommands.createdAt })
+    .from(t.chatCommands)
+    .innerJoin(t.captures, eq(t.captures.id, t.chatCommands.captureId))
+    .where(and(eq(t.captures.authorId, authorId), eq(t.captures.conversationId, conversationId), eq(t.chatCommands.state, "proposed")));
+  const times = [clarified?.at, standup?.at, command?.at].filter((x): x is Date => !!x);
+  return times.length ? new Date(Math.max(...times.map((x) => x.getTime()))) : null;
 }
 
 /**
  * Phase E: a short reply that answers the one check-in or CM11 question waiting on its author, read by DPM's rule
  * with no model ("done", "drop it", "keep it", "move it to Friday"), in the conversation where its notice shows.
- * Null when it is not such a reply, or when none or several wait: it is then read as a new message. A refusal
- * (a day already past) is said back, and nothing changes.
+ * Null when it is not such a reply, or when none or several wait there: it is then read as a new message. SU4:
+ * only when that question is the one Atlas asked last there; a standup's question or a clarification asked after
+ * it takes the reply. One saved before DPM kept where it was said (the seed) shows in the newest conversation,
+ * so typed words never answer it, its buttons do; it still makes a reply ambiguous. A bare "yes" answers the
+ * row's question asked last: done for a check-in, it still stands for CM11's. A refusal (a day already past) is
+ * said back, and nothing changes. The reply's message is the command id (rule 6).
  */
-export async function answerCheckInInWords(tx: Tx, now: Date, capture: { authorId: string; text: string; messageAt: Date; conversationId: string | null }): Promise<{ id: string; note: string } | null> {
+export async function answerCheckInInWords(tx: Tx, now: Date, capture: { id: string; authorId: string; text: string; messageAt: Date; conversationId: string | null }): Promise<{ id: string; note: string } | null> {
+  if (!capture.conversationId) return null;
   const reply = readCheckInReply(capture.text, (words) => readPromiseDate(words, capture.messageAt));
   if (!reply) return null;
-  const rows = (await tx.select().from(t.commitments).where(and(eq(t.commitments.ownerId, capture.authorId), inArray(t.commitments.state, [...LIVE_COMMITMENT])))).filter(
+  const waiting = (await tx.select().from(t.commitments).where(and(eq(t.commitments.ownerId, capture.authorId), inArray(t.commitments.state, [...LIVE_COMMITMENT])))).filter(
     (r) => (reply.act !== "keep" && r.state === "checking" && r.checkInOut) || r.stands === "asked",
   );
-  if (rows.length !== 1) return null;
-  const [row] = rows;
-  if (row.captureId) {
-    const [made] = await tx.select({ conversationId: t.captures.conversationId }).from(t.captures).where(eq(t.captures.id, row.captureId));
-    if (made?.conversationId && made.conversationId !== capture.conversationId) return null;
+  // Where each one's notice shows: where it was said, or (said before DPM kept that) wherever is newest
+  const shown: { row: Row; home: string | null }[] = [];
+  for (const row of waiting) {
+    const [made] = row.captureId ? await tx.select({ conversationId: t.captures.conversationId }).from(t.captures).where(eq(t.captures.id, row.captureId)) : [];
+    const home = made?.conversationId ?? null;
+    if (home === null || home === capture.conversationId) shown.push({ row, home });
   }
-  const answer: CheckInAnswer = reply.act === "date" ? { act: "date", dueOn: reply.dueOn } : { act: reply.act };
+  if (shown.length !== 1 || shown[0].home === null) return null;
+  const { row } = shown[0];
+  const asked = await askedAt(tx, row.ownerId, row.id);
+  const check = row.state === "checking" && row.checkInOut ? asked.check : null;
+  const stands = row.stands === "asked" ? asked.stands : null;
+  const last = [check, stands].reduce<Date | null>((a, d) => (d && (!a || d > a) ? d : a), null);
+  const other = await otherQuestionAt(tx, capture.authorId, capture.conversationId, capture.id);
+  if (!last || (other && other >= last)) return null;
+  // CM11: "yes" to "Does your promise still stand?" keeps it; to "Did you send it?" it is done
+  const act = reply.act === "yes" ? (stands && (!check || stands > check) ? "keep" : "done") : reply.act;
+  const answer: CheckInAnswer = reply.act === "date" ? { act: "date", dueOn: reply.dueOn } : { act: act as Exclude<CheckInAnswer["act"], "date"> };
   try {
-    return { id: row.id, note: (await answerIn(tx, now, capture.authorId, row.id, answer)).message };
+    return { id: row.id, note: (await answerIn(tx, now, capture.authorId, row.id, answer, capture.id)).message };
   } catch (e) {
     if (e instanceof CommandRefused) return { id: row.id, note: e.reason };
     throw e;

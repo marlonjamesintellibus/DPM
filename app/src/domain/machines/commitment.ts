@@ -195,11 +195,15 @@ export function commitmentCauses(r: CommitmentRecord): CauseKey[] {
   return out;
 }
 
-/** A typed answer to a check-in or to CM11's question, as DPM's rule reads it with no model. */
-export type ReplyInWords = { act: "done" } | { act: "drop" } | { act: "keep" } | { act: "date"; dueOn: IsoDate };
+/**
+ * A typed answer to a check-in or to CM11's question, as DPM's rule reads it with no model. A bare "yes" answers
+ * the question asked last: "Did you send it?" (done) or, CM11, "Does your promise still stand?" (keep).
+ */
+export type ReplyInWords = { act: "done" } | { act: "drop" } | { act: "keep" } | { act: "yes" } | { act: "date"; dueOn: IsoDate };
 
 // Phase R: as the team says them too ("mi done", "mek it Friday")
-const SAYS_DONE = /^(?:yes|yeah|yep|yup|ok|okay)?[,\s]*(?:done|did it|i did|i did it|sent|sent it|i sent it|it'?s done|all done|finished|completed|mi done|mi do it|done already|done now)$|^(?:yes|yeah|yep|yup)$/;
+const SAYS_YES = /^(?:yes|yeah|yep|yup|it does|yes it does)$/;
+const SAYS_DONE = /^(?:yes|yeah|yep|yup|ok|okay)?[,\s]*(?:done|did it|i did|i did it|sent|sent it|i sent it|it'?s done|all done|finished|completed|mi done|mi do it|done already|done now)$/;
 const SAYS_DROP = /^(?:no[,\s]+)?(?:drop|drop it|drop that|cancel it|scrap it|forget it|never ?mind|not needed|no longer needed|it'?s not needed)$/;
 const SAYS_KEEP = /^(?:yes[,\s]+)?(?:it still stands|still stands|it stands|keep it|keep)$/;
 const SAYS_DATE = /^(?:(?:not yet|no|nah|not done)[,.\s]+)?(?:(?:move|push|change|mek|make)(?: it)?(?: to)?|new date:?|by|i'?ll do it|do it)?\s*(.+)$/;
@@ -212,6 +216,7 @@ const SAYS_DATE = /^(?:(?:not yet|no|nah|not done)[,.\s]+)?(?:(?:move|push|chang
 export function readCheckInReply(text: string, dayOf: (words: string) => { date: IsoDate; start: number; end: number } | null): ReplyInWords | null {
   const said = text.trim().toLowerCase().replace(/[.!]+$/, "").replace(/\s+/g, " ");
   if (!said || said.includes("?") || said.split(" ").length > 7) return null;
+  if (SAYS_YES.test(said)) return { act: "yes" };
   if (SAYS_DONE.test(said)) return { act: "done" };
   if (SAYS_DROP.test(said)) return { act: "drop" };
   if (SAYS_KEEP.test(said)) return { act: "keep" };

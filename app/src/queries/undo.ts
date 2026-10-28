@@ -1,6 +1,6 @@
 // Phase L, M30: what a save wrote (its receipt, kept in the audit log as set-aside reasons are, UD6) and
 // whether the author may still undo it. Only the author's own saves are read (M1).
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import * as t from "../db/schema";
 import { withinUndoWindow, type SaveReceipt, type UndoState } from "../domain/machines/undo";
@@ -32,6 +32,32 @@ export async function liveAsksOfSave(conn: Conn, captureId: string): Promise<num
   const asks = await conn.select({ id: t.ownerAsks.id }).from(t.ownerAsks).where(and(eq(t.ownerAsks.captureId, captureId), eq(t.ownerAsks.state, "asked")));
   const promises = await conn.select({ id: t.commitments.id }).from(t.commitments).where(and(eq(t.commitments.captureId, captureId), eq(t.commitments.state, "open"), eq(t.commitments.moves, 0)));
   return asks.length + promises.length;
+}
+
+/**
+ * Phase E with CD34: the author's live promises a save moved to a new day (CM5) or marked done (CM6). An undo does
+ * not put these back (M22 has no arrow out of done, and moving it again would count as a move, CM10), so the
+ * undo says they stay. Only the author's own commitments (CD3).
+ */
+export async function keptPromisesOfSave(conn: Conn, authorId: string, captureId: string): Promise<{ what: string; act: "done" | "moved"; dueOn: string }[]> {
+  const moves = await conn
+    .select({ id: t.auditEntries.subjectId, action: t.auditEntries.action })
+    .from(t.auditEntries)
+    .where(
+      and(
+        eq(t.auditEntries.machine, "commitment"),
+        eq(t.auditEntries.actorId, authorId),
+        inArray(t.auditEntries.action, ["DONE", "NEW_DATE"]),
+        sql`${t.auditEntries.detail}->>'savedBy' = ${captureId}`,
+      ),
+    )
+    .orderBy(t.auditEntries.id);
+  if (!moves.length) return [];
+  const rows = await conn.select().from(t.commitments).where(and(inArray(t.commitments.id, moves.map((m) => m.id)), eq(t.commitments.ownerId, authorId)));
+  return moves.flatMap((m) => {
+    const row = rows.find((r) => r.id === m.id);
+    return row ? [{ what: row.what, act: m.action === "DONE" ? ("done" as const) : ("moved" as const), dueOn: row.dueOn }] : [];
+  });
 }
 
 /** "Undo that": the author's last save, whatever came after it. */

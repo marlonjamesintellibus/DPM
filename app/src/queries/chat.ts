@@ -141,10 +141,14 @@ async function noticesFor(conn: Conn, viewerId: string, now: Date = new Date()):
     const newest = out.find((n) => n.subject.type === "commitment" && n.subject.id === row.id);
     if (!newest) continue;
     if (mode) newest.promise = { id: row.id, mode, dropFirst: mode === "check" && asksDrop(row), today: todayIn(now) };
-    // A question that was answered says what came of it, as Atlas's other questions do (notice ids carry their act)
-    else if (newest.id.startsWith(`ntc-${row.id}-check_in`) || newest.id.startsWith(`ntc-${row.id}-stands`)) {
-      newest.promiseOutcome =
-        row.state === "done" ? "Marked done." : row.state === "dropped" ? "Dropped." : row.state === "lapsed" ? undefined : `Now due ${weekday(row.dueOn).slice(0, 3)} ${shortDate(row.dueOn)}.`;
+    // A question that was answered says what came of it, as Atlas's other questions do (notice ids carry their act).
+    // M22 NO_REPLY: a check-in whose day ended unanswered is still checking, waiting for the next one, and says
+    // nothing; only a new date takes a promise from checking back to open or due
+    else {
+      const due = `${weekday(row.dueOn).slice(0, 3)} ${shortDate(row.dueOn)}`;
+      const ended = row.state === "done" ? "Marked done." : row.state === "dropped" ? "Dropped." : null;
+      if (newest.id.startsWith(`ntc-${row.id}-check_in`)) newest.promiseOutcome = ended ?? (row.state === "open" || row.state === "due" ? `Now due ${due}.` : undefined);
+      else if (newest.id.startsWith(`ntc-${row.id}-stands`)) newest.promiseOutcome = ended ?? (LIVE_COMMITMENT.includes(row.state) && row.stands === "kept" ? `Kept. Due ${due}.` : undefined);
     }
   }
   return out;

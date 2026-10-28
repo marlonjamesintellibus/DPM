@@ -70,7 +70,9 @@ describe("a typed answer to a check-in (read by DPM's rule, no model)", () => {
   it.each([
     ["Done", { act: "done" }],
     ["yes, sent it", { act: "done" }],
-    ["Yep", { act: "done" }],
+    // CM11: a bare yes answers whichever question was asked last, so DPM decides done or keep from that
+    ["Yep", { act: "yes" }],
+    ["Yes.", { act: "yes" }],
     ["mi done", { act: "done" }],
     ["Drop it.", { act: "drop" }],
     ["no longer needed", { act: "drop" }],

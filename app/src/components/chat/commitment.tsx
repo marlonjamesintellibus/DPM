@@ -1,19 +1,22 @@
 "use client";
 // A check-in on the viewer's own promise (conversational plan, phase E, M22), in their chat and their inbox: Done,
-// a new date, or Drop; or, when its work was cancelled (CM11), "It still stands" or Drop. The server checks the
-// promise is theirs and still live when a button is pressed, so a second tap is refused and changes nothing.
+// a new date, or Drop; or, when its work was cancelled (CM11), "It still stands" or Drop. The same buttons sit on
+// each open promise in "What did I promise?" (the model's OwnerSays). The server checks the promise is theirs and
+// still live when a button is pressed; the buttons carry one command id, so a second tap changes nothing (rule 6).
 // Typing the answer in the chat works too ("done", "drop it", "Friday").
 import { useState, useTransition } from "react";
 import { answerCommitmentAction, type ActionResult } from "@/app/actions";
 import type { CheckInAnswer } from "@/commands/commitment";
 import { ActionNote, Button } from "@/components/ui/controls";
 
-export function CommitmentButtons({ id, mode, today, dropFirst = false }: { id: string; mode: "check" | "stands"; today: string; dropFirst?: boolean }) {
+/** label: what the buttons are for, read out with them; a card in "What did I promise?" names its promise. */
+export function CommitmentButtons({ id, mode, today, dropFirst = false, label = "Your promise" }: { id: string; mode: "check" | "stands"; today: string; dropFirst?: boolean; label?: string }) {
   const [pending, start] = useTransition();
   const [result, setResult] = useState<ActionResult | null>(null);
   const [day, setDay] = useState("");
   const [picking, setPicking] = useState(false);
-  const send = (answer: CheckInAnswer) => start(async () => setResult(await answerCommitmentAction(id, answer)));
+  const [commandId] = useState(() => crypto.randomUUID());
+  const send = (answer: CheckInAnswer) => start(async () => setResult(await answerCommitmentAction(id, answer, commandId)));
   if (result?.ok) {
     return (
       <span role="status" className="type-caption text-ok">
@@ -28,7 +31,7 @@ export function CommitmentButtons({ id, mode, today, dropFirst = false }: { id: 
     </Button>
   );
   return (
-    <span role="group" aria-label="Your promise" className="flex flex-col gap-1.5">
+    <span role="group" aria-label={label} className="flex flex-col gap-1.5">
       <span className="flex flex-wrap items-center gap-1.5">
         {dropFirst && drop}
         {mode === "check" ? (

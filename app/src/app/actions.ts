@@ -177,13 +177,14 @@ export async function answerClarificationAction(clarificationId: string, option:
 // ---- Commitments (phase E, M22) ----
 
 /**
- * The owner answers a check-in or CM11's question, in the chat or the inbox: Done, a new date, Drop, or "it still
- * stands". The command checks it is theirs and still live, so a second tap is refused and changes nothing.
+ * The owner answers a check-in or CM11's question, in the chat or the inbox, or acts on a promise from "What did I
+ * promise?": Done, a new date, Drop, or "it still stands". `commandId` is the buttons' own, so a second tap or a
+ * retried request changes nothing (rule 6); the command checks it is theirs and still live.
  */
-export async function answerCommitmentAction(commitmentId: string, answer: CheckInAnswer): Promise<ActionResult> {
+export async function answerCommitmentAction(commitmentId: string, answer: CheckInAnswer, commandId: string): Promise<ActionResult> {
   let message = "";
   const r = await run(async (ctx) => {
-    message = (await answerCommitment(ctx, commitmentId, answer)).message;
+    message = (await answerCommitment(ctx, commitmentId, answer, commandId)).message;
   });
   return r.ok ? { ok: true, message } : r;
 }
@@ -312,7 +313,7 @@ export async function undoUpdate(captureId: string, commandId: string): Promise<
   let reply = "";
   const r = await run(async (ctx) => {
     const done = await undoSave(ctx, { commandId, captureId });
-    const body = await undoReply(ctx.db, ctx.actorId, done.kind === "job" ? done.job.id : null, ctx.now);
+    const body = await undoReply(ctx.db, ctx.actorId, done.kind === "job" ? done.job.id : null, ctx.now, captureId);
     reply = body.text;
     if (done.kind !== "job" || done.job.state !== "undone") throw new CommandRefused(body.text);
   });

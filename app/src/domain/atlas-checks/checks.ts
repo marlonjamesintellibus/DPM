@@ -670,21 +670,40 @@ function readPromise(w: Work, s: Scope): string | null {
 }
 
 // CD5: someone else's promise is theirs to make ("Kyle will send it", "Jodian seh she a go do it"); the author's
-// own words about doing it ("I'll", "mi a go", "let me") keep it theirs
-const SAYS_I_WILL = /\b(?:i'?ll|i\s+will|i'?m\s+(?:going\s+to|gonna)|i\s+am\s+going\s+to|i'?d|i\s+promised|i\s+can|we'?ll|we\s+will|let\s+me|imma|i'?ma|mi\s+(?:a\s+go|ago|wi|will|gwine|gonna|ah\s+go|fi)|me\s+(?:a\s+go|wi|will|gwine))\b/i;
+// own words about doing it ("I'll", "mi a go", "let me") keep it theirs. Only the author's own "I will" counts
+// against someone else's: "we'll" and "I can" are loose words ("Kyle will send it, we'll see")
+const SAYS_I_WILL = /\b(?:i'?ll|i\s+will|i'?m\s+(?:going\s+to|gonna)|i\s+am\s+going\s+to|i'?d|i\s+promised|let\s+me|imma|i'?ma|mi\s+(?:a\s+go|ago|wi|will|gwine|gonna|ah\s+go|fi)|me\s+(?:a\s+go|wi|will|gwine))\b/i;
+const WILL = `(?:'ll|\\s+(?:will|wi|is\\s+going\\s+to|are\\s+going\\s+to|'s\\s+going\\s+to|gonna|a\\s+go|ago|gwine|promised\\s+to|said\\s+(?:he|she|they)(?:'d|\\s+would)))`;
+// Anyone else, named or not: a capitalised word before "will" is a person unless it is one of these
+const NAMED_WILL = new RegExp(`\\b([A-Z][a-z'’]+)${WILL}\\b`, "g");
+const NOT_A_PERSON = new Set(["I", "It", "That", "This", "There", "Here", "What", "Which", "Who", "We", "You", "Today", "Tomorrow", "Tonight", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday", "Mi", "Me", "Dat", "Dis", "Everything", "Nothing"]);
+const CLAUSES = /[,;.!?]+|\s+(?:but|so|then|and then|while)\s+/i;
 
 function promiseGuard(w: Work, s: Scope): string | null {
   if (!w.promise) return null;
   if (w.promise.act === "promise" && !w.promise.what) return "a promise needs what you promised";
+  if (w.promise.act !== "promise") return null;
+  // Anyone on the author's projects by first name, in any case, and anyone else by a name-like word (CD30)
   const names = s.ctx.projects
     .flatMap((p) => p.people)
     .filter((x) => x.personId !== s.ctx.author.id)
     .map((x) => escapeRegex(x.name.split(" ")[0]));
-  const someone = `he|she|they|him|dem|${[...new Set(names)].join("|")}`.replace(/\|$/, "");
-  const theirs = new RegExp(`\\b(?:${someone})(?:'ll|\\s+(?:will|wi|is\\s+going\\s+to|are\\s+going\\s+to|'s\\s+going\\s+to|gonna|a\\s+go|ago|gwine|promised\\s+to|said\\s+(?:he|she|they)(?:'d|\\s+would)))\\b`, "i");
-  const quote = s.quoteText(w);
-  if (w.promise.act === "promise" && theirs.test(quote) && !SAYS_I_WILL.test(quote)) return "that is someone else's promise; it is theirs to keep";
-  return null;
+  const someone = `he|she|they|him|dem|someone|somebody|${[...new Set(names)].join("|")}`.replace(/\|$/, "");
+  const known = new RegExp(`\\b(?:${someone})${WILL}\\b`, "i");
+  const theirs = (clause: string) => known.test(clause) || [...clause.matchAll(NAMED_WILL)].some((m) => !NOT_A_PERSON.has(m[1]));
+  // Clause by clause: the promise is someone else's when only they say they will, or when the promised words sit
+  // closer to what they said than to anything the author said they will do
+  const clauses = s.quoteText(w).split(CLAUSES).filter((c) => c.trim());
+  const others = clauses.filter(theirs);
+  if (!others.length) return null;
+  const mine = clauses.filter((c) => SAYS_I_WILL.test(c));
+  const what = contentWords(w.promise.what);
+  const near = (clause: string) => {
+    const words = new Set(contentWords(clause));
+    return what.filter((x) => words.has(x)).length;
+  };
+  const best = (list: string[]) => Math.max(0, ...list.map(near));
+  return !mine.length || best(others) > best(mine) ? "that is someone else's promise; it is theirs to keep" : null;
 }
 
 const kindAllowed: Check = [

@@ -1,6 +1,7 @@
 // "What did I promise?" (phase E, CM12): the asker's own open and due commitments (M22), soonest first. Only
 // ever the asker's (CD3): nobody else's is read, counted or hinted at. A record a promise names is said only
 // while the asker can still open its project (P10, CM9). A named project keeps the promises about its records.
+// Each card carries the promise's own buttons, so an open one can be marked done or dropped before it is due.
 import { and, eq, inArray } from "drizzle-orm";
 import * as t from "../../db/schema";
 import { linkLabel } from "../../commands/commitment";
@@ -37,6 +38,8 @@ export const commitments: AnswerBuilder = async (conn, viewerId, { projectId }, 
       detail: `Due ${dayDate(c.dueOn)}${moved}${label ? ` · ${label}` : ""}${asksDrop(c) ? ". Drop it if it no longer stands" : ""}`,
       tag: tagOf(c, today),
       href: c.captureId ? `/review/${c.captureId}` : "/?view=inbox",
+      // The model's anyLive with OwnerSays: the owner ends or moves an open promise here, not only from a check-in
+      promise: { id: c.id, mode: c.stands === "asked" ? "stands" : "check", dropFirst: asksDrop(c), today },
     });
   }
   const due = mine.filter((c) => c.state !== "open" || c.dueOn <= today).length;
