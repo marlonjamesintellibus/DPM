@@ -2,16 +2,19 @@
 // item that could go to 2 or 3 projects, or a reply that could mean 2 or 3 lines of the open answer gets one
 // question in the author's own chat, with the options as buttons; a typed answer is read against them only.
 // Every edge case CL1 to CL8, the model check's three fixes, and phase B's AC6 and AC7 asked as a question.
+// Wave 4 (CD50): a question whose words fit 2 or 3 projects (EX5) or people (PP2, WY8) is asked the same way.
 import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Extractor } from "../atlas/extractor";
 import { createFixtureExtractor, VAGUE_FEED } from "../atlas/fixture";
 import type { Db } from "../db/client";
 import { loadBraidLog, loadItems } from "../db/records";
+import { seedE2e } from "../db/seed/e2e";
 import * as t from "../db/schema";
 import type { RawCommand } from "../domain/acting";
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { optionGoneText } from "../domain/machines/clarification";
+import { NOT_WHY } from "../queries/answers/why";
 import { getThread } from "../queries/chat";
 import { loadCheckContext } from "../queries/check-context";
 import { getReview } from "../queries/review";
@@ -89,6 +92,7 @@ describe("CHECKS_DONE: asked in the author's own chat", () => {
     const shown = await turn("kemar", conversationId, captureId);
     expect(shown.clarification).toEqual({
       id: `clr-${captureId}`,
+      about: "record",
       state: "asked",
       question: 'For "Worked on the store feed today", do you mean #151 Store sales feed access or #152 Store feed connector?',
       options: [
@@ -477,5 +481,199 @@ describe("a reply that could mean 2 or 3 lines of the open answer (phase B, AC6 
     const other = q.options.find((o) => o.id !== onGq)!;
     await answerClarification(as("alicia", 4), q.id, other.id);
     expect(await db.select().from(t.chatCommands).where(eq(t.chatCommands.captureId, reply.captureId))).toHaveLength(1);
+  });
+});
+
+describe("a question whose words fit 2 or 3 of the asker's projects or people (CD50)", () => {
+  /** Someone joins a project as a member, for the cases the seed does not have (a second Kemar). */
+  async function addPerson(id: string, name: string, projectId: string) {
+    await db.insert(t.people).values({ id, name, initials: name.slice(0, 2).toUpperCase(), title: null, orgRole: "employee" });
+    await db.insert(t.projectMemberships).values({ projectId, personId: id, state: "member", role: "member" });
+  }
+  /** Alicia shares Forager with Kemar Brown and, from here, with Kemar Smith too. */
+  async function twoKemars() {
+    await addPerson("kemar-s", "Kemar Smith", "forager");
+    return say("alicia", "What is Kemar working on?");
+  }
+  /** "Insights" is also a name for Forager, so "Explain Insights" fits Forager 2.0 and Store Insights for Kemar. */
+  const insightsTwice = () => db.update(t.projects).set({ aliases: ["Forager", "Forager Insights"] }).where(eq(t.projects.id, "forager"));
+
+  it("PP2: 'What is Kemar working on?' asks who, a button each, before any answer; a tap answers it as if it had named him", async () => {
+    const { captureId, conversationId } = await twoKemars();
+    expect(await capture(captureId)).toMatchObject({ state: "answered", answer: null });
+    expect(await question(captureId)).toMatchObject({ about: "question", state: "asked", extractionId: null, question: { fits: "person", asked: { topic: "people" } } });
+    expect((await turn("alicia", conversationId, captureId)).clarification).toEqual({
+      id: `clr-${captureId}`,
+      about: "question",
+      state: "asked",
+      question: "Who do you mean: Kemar Brown or Kemar Smith?",
+      options: [
+        { id: "kemar", label: "Kemar Brown" },
+        { id: "kemar-s", label: "Kemar Smith" },
+      ],
+      outcome: null,
+    });
+
+    const r = await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar");
+    expect(r).toMatchObject({ message: "Got it: Kemar Brown.", answeredIn: captureId });
+    const answered = await capture(captureId);
+    expect(answered.question).toMatchObject({ topic: "people", chosen: { fits: "person", id: "kemar" } });
+    expect(answered.answer).toMatchObject({ topic: "people", wording: "rules" });
+    expect(answered.answer!.text).toMatch(/^Kemar Brown has \d+ open work items?\b.* on projects you share; /);
+    const shown = await turn("alicia", conversationId, captureId, 1);
+    expect([shown.clarification?.outcome, shown.answer?.text]).toEqual(["Got it: Kemar Brown.", answered.answer!.text]);
+    // Rule 6: a second tap changes nothing and says how it ended
+    expect((await answerClarification(as("alicia", 2), `clr-${captureId}`, "kemar-s")).message).toBe("Got it: Kemar Brown.");
+    expect((await capture(captureId)).answer!.text).toBe(answered.answer!.text);
+  });
+
+  it("the browser story's own data (db/seed/e2e.ts): Kemar Lee on GQ & Academy makes Alicia's question ask who", async () => {
+    await seedE2e(db);
+    const { captureId, conversationId } = await say("alicia", "What is Kemar working on?");
+    expect((await turn("alicia", conversationId, captureId)).clarification?.question).toBe("Who do you mean: Kemar Brown or Kemar Lee?");
+    // Andre shares no project with Kemar Lee: his question is answered at once
+    expect((await say("andre", "What is Kemar working on?", 1)).read).toMatchObject({ answer: { text: expect.stringMatching(/^Kemar Brown has /) } });
+  });
+
+  it("PP2: two with the same full name are told apart by the projects she shares with each, and only those", async () => {
+    await addPerson("kemar-b2", "Kemar Brown", "gq");
+    const { captureId } = await say("alicia", "What is Kemar Brown working on?");
+    expect((await question(captureId)).options.map((o) => o.label)).toEqual(["Kemar Brown (Forager 2.0 and GQ & Academy)", "Kemar Brown (GQ & Academy)"]);
+  });
+
+  it("CV8: a follow-up after the tap keeps the one chosen ('and on GQ?' is about Kemar Brown)", async () => {
+    const { captureId, conversationId } = await twoKemars();
+    await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar");
+    const next = await say("alicia", "and on GQ?", 2, conversationId);
+    expect((await capture(next.captureId)).answer!.text).toMatch(/^Kemar Brown has nothing open on GQ & Academy\./);
+    expect(await question(next.captureId)).toBeUndefined();
+  });
+
+  it("EX5: 'Explain Insights' with two of his projects fitting asks which project; choosing Store Insights explains it", async () => {
+    await insightsTwice();
+    const { captureId, conversationId } = await say("kemar", "Explain Insights");
+    expect((await turn("kemar", conversationId, captureId)).clarification?.question).toBe("Which project do you mean: Forager 2.0 or Store Insights?");
+    expect((await answerClarification(as("kemar", 1), `clr-${captureId}`, "insights")).message).toBe("Got it: Store Insights.");
+    expect((await capture(captureId)).answer!.text).toMatch(/^Store Insights is for Sprouts, from Mon 5 Oct to Fri 18 Dec, and Andre Mitchell owns it\./);
+  });
+
+  it("EX5, EX4: an outside contact is asked which of his client views, and nothing else is offered", async () => {
+    await insightsTwice();
+    await db.insert(t.projectContacts).values({ projectId: "insights", personId: "kyle", tie: "contact", clientView: true });
+    const { captureId } = await say("kyle", "Explain Insights");
+    expect((await question(captureId)).options).toEqual([
+      { id: "forager", label: "Forager 2.0", projectId: null },
+      { id: "insights", label: "Store Insights", projectId: null },
+    ]);
+    await answerClarification(as("kyle", 1), `clr-${captureId}`, "insights");
+    const answer = (await capture(captureId)).answer!;
+    expect(answer.text).toMatch(/^Store Insights is for Sprouts, from Mon 5 Oct to Fri 18 Dec\. /);
+    // The client view only: no owner, status or people
+    for (const word of ["Andre", "track", "thread"]) expect(answer.text).not.toContain(word);
+  });
+
+  it("CL2: a typed answer is read against the options; the reply carries the answer and says no 'Got it' of its own", async () => {
+    const first = await twoKemars();
+    const reply = await say("alicia", "Kemar Smith", 1, first.conversationId, noModel);
+    expect(reply.read).toMatchObject({ outcome: "proposed", state: "answered" });
+    expect(await question(first.captureId)).toMatchObject({ state: "resolved", chosen: "kemar-s", answeredBy: reply.captureId });
+    expect(await capture(reply.captureId)).toMatchObject({ question: { topic: "people", chosen: { id: "kemar-s" } }, answer: { text: "Kemar Smith has nothing open on Forager 2.0." } });
+    // The question's own message still has no answer; the chat shows it under the reply
+    expect((await capture(first.captureId)).answer).toBeNull();
+    const shown = await turn("alicia", first.conversationId, reply.captureId, 1);
+    expect([shown.answered, shown.answer?.text]).toEqual([null, "Kemar Smith has nothing open on Forager 2.0."]);
+    expect((await turn("alicia", first.conversationId, first.captureId, 1)).clarification?.outcome).toBe("Got it: Kemar Smith.");
+  });
+
+  it("CL2: 'the second one' counts over the options shown; a first name both have is a new message, and the question stays", async () => {
+    const first = await twoKemars();
+    await say("alicia", "Kemar", 1, first.conversationId, reads([]));
+    expect((await question(first.captureId)).state).toBe("asked");
+    await say("alicia", "the second one", 2, first.conversationId, noModel);
+    expect(await question(first.captureId)).toMatchObject({ state: "resolved", chosen: "kemar-s" });
+  });
+
+  it("CL5, P10: someone she no longer shares a project with is refused with the gone words, never named, and the other still answers", async () => {
+    const { captureId, conversationId } = await twoKemars();
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "kemar-s")));
+    const shown = (await turn("alicia", conversationId, captureId, 1)).clarification!;
+    expect(shown.options).toEqual([{ id: "kemar", label: "Kemar Brown" }]);
+    expect(shown.question).not.toContain("Smith");
+    await expect(answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar-s")).rejects.toMatchObject({ reason: optionGoneText("question") });
+    expect(await question(captureId)).toMatchObject({ state: "asked", chosen: null });
+    expect((await capture(captureId)).answer).toBeNull();
+    // Typed, a name she can no longer ask about is no answer at all: it is read as a new message
+    const typed = await say("alicia", "Kemar Smith", 2, conversationId, reads([]));
+    expect((await capture(typed.captureId)).commandNote).toBeNull();
+    expect((await question(captureId)).state).toBe("asked");
+    await answerClarification(as("alicia", 3), `clr-${captureId}`, "kemar");
+    expect((await capture(captureId)).answer!.text).toMatch(/^Kemar Brown has /);
+  });
+
+  it("CL5, P10: a project he has left since is refused, and the project still his still explains", async () => {
+    await insightsTwice();
+    const { captureId } = await say("kemar", "Explain Insights");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    await expect(answerClarification(as("kemar", 1), `clr-${captureId}`, "insights")).rejects.toMatchObject({ reason: optionGoneText("question") });
+    await answerClarification(as("kemar", 2), `clr-${captureId}`, "forager");
+    expect((await capture(captureId)).answer!.text).toMatch(/^Forager 2\.0 is for Sprouts/);
+  });
+
+  it("CD23: one question per message: an unsure item in the same message is asked about, and the question's answer says the names", async () => {
+    await addPerson("kemar-s", "Kemar Smith", "forager");
+    const text = "Waiting on the vendor's data, it may be late. What is Kemar working on?";
+    const asking: Extractor = {
+      name: "fake",
+      extract: async () => ({ proposals: [unsureRisk(["forager", "gq"])], question: { asked: "What is Kemar working on?", topic: "people", projectId: null }, commands: [], malformed: [], model: "fake", usage: null }),
+    };
+    const { captureId } = await say("alicia", text, 0, null, asking);
+    expect(await db.select().from(t.clarifications)).toHaveLength(1);
+    expect(await question(captureId)).toMatchObject({ about: "project" });
+    expect((await capture(captureId)).answer!.text).toBe('Did you mean Kemar Brown or Kemar Smith? Ask again with their full name, for example "and Kemar Smith?"');
+  });
+
+  it("CL4: two questions open in a conversation: a typed answer goes to the newest, and the older one's buttons still work", async () => {
+    const older = await twoKemars();
+    const newer = await say("alicia", "What is Kemar working on now?", 1, older.conversationId);
+    expect((await question(newer.captureId)).state).toBe("asked");
+    await say("alicia", "Smith", 2, older.conversationId, noModel);
+    expect((await question(newer.captureId)).state).toBe("resolved");
+    expect((await question(older.captureId)).state).toBe("asked");
+    await answerClarification(as("alicia", 3), `clr-${older.captureId}`, "kemar");
+    expect((await question(older.captureId)).chosen).toBe("kemar");
+  });
+
+  it("rules 3 and 8: asked in no other chat; there the answer says the names, as before", async () => {
+    await addPerson("kemar-s", "Kemar Smith", "forager");
+    const ctx = as("alicia");
+    const inGroup = await createCapture(ctx, { channel: "atlas", messageId: "grp-q", kind: "text", text: "What is Kemar working on?", messageAt: at(0), receivedAt: at(0), atlasChatId: "grp-forager" });
+    await readCapture(ctx, inGroup.captureId, createFixtureExtractor(), { retryDelayMs: () => 0 });
+    expect(await question(inGroup.captureId)).toBeUndefined();
+    expect((await capture(inGroup.captureId)).answer!.text).toMatch(/^Did you mean Kemar Brown or Kemar Smith\?/);
+  });
+
+  it("timer clarify_expiry: after 2 hours a question closes quietly with nothing answered; a tap then says so", async () => {
+    const { captureId, conversationId } = await twoKemars();
+    expect((await runClarificationTimers({ db, now: at(120) })).expired).toEqual([`clr-${captureId}`]);
+    expect(await question(captureId)).toMatchObject({ state: "closed", endedBy: "timer" });
+    expect((await turn("alicia", conversationId, captureId, 120)).clarification).toMatchObject({ state: "closed", outcome: "Nothing was chosen; ask me again." });
+    expect((await capture(captureId)).answer).toBeNull();
+    expect(await answerClarification(as("alicia", 121), `clr-${captureId}`, "kemar")).toMatchObject({ message: "Nothing was chosen; ask me again.", answeredIn: null });
+    // Quietly: nobody is told anything
+    expect(await db.select().from(t.notices).where(eq(t.notices.personId, "alicia"))).toEqual([]);
+  });
+
+  it("WY8: a why about a person two share a name with asks who, and the answer still gives no reason", async () => {
+    await addPerson("kemar-s", "Kemar Smith", "forager");
+    const { captureId } = await say("alicia", "Why is Kemar behind?");
+    expect(await question(captureId)).toMatchObject({ about: "question", question: { asked: { topic: "why" }, fits: "person" } });
+    await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar-s");
+    expect((await capture(captureId)).answer!.text).toBe(`${NOT_WHY}Kemar Smith has nothing open on Forager 2.0.`);
+  });
+
+  it("section 17: with Atlas connected, the chosen answer waits to be worded, as a read's does", async () => {
+    const { captureId } = await twoKemars();
+    await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar-s", { wordWithAtlas: true });
+    expect((await capture(captureId)).answer).toMatchObject({ wording: "pending", text: "Kemar Smith has nothing open on Forager 2.0.", rulesText: "Kemar Smith has nothing open on Forager 2.0." });
   });
 });

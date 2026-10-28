@@ -254,13 +254,16 @@ function Turn({ capture, at, last, helpOn }: { capture: ChatCapture; at: Date; l
     );
   }
   if (capture.state === "answered") {
+    // CD50: a question that fits 2 or 3 asks which first; its answer comes once one is chosen
+    const asksFirst = capture.clarification?.about === "question";
     return (
       <>
         {yours}
+        {asksFirst && <ClarifyBlock capture={capture} />}
         {capture.answer && <AnswerBlock capture={capture} answer={capture.answer} last={last} helpOn={helpOn} />}
         {capture.answered && <AtlasLine>{capture.answered}</AtlasLine>}
         <CommandsBlock capture={capture} />
-        <ClarifyBlock capture={capture} />
+        {!asksFirst && <ClarifyBlock capture={capture} />}
         <StandupBlock capture={capture} />
       </>
     );

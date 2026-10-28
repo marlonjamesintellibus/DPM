@@ -22,7 +22,7 @@ import {
 import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome, ResolveOutcome } from "../domain/machines/braid-entry";
 import type { CaptureState } from "../domain/machines/capture";
 import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy, WordAct } from "../domain/machines/chat-command";
-import type { ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
+import type { ClarificationRecord, ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
@@ -529,8 +529,9 @@ export const chatCommands = pgTable(
 
 /**
  * M21. A question Atlas asks in the author's own chat when it is unsure which project, record or line a
- * message means (conversational plan, phase D). At most one per capture; its options are as the author
- * could read them when it was asked, and each is checked again when chosen (CL5).
+ * message means (conversational plan, phase D), or, from wave 4, which project or person a question means
+ * (CD50). At most one per capture; its options are as the author could read them when it was asked, and
+ * each is checked again when chosen (CL5).
  */
 export const clarifications = pgTable(
   "clarifications",
@@ -546,6 +547,8 @@ export const clarifications = pgTable(
     answerCaptureId: text("answer_capture_id").references(() => captures.id),
     act: text("act").$type<WordAct>(),
     reason: text("reason"),
+    /** CD50: a question's own words as the checks kept them, answered again with the one chosen. */
+    question: jsonb("question").$type<NonNullable<ClarificationRecord["question"]>>(),
     quote: text("quote").notNull(),
     options: jsonb("options").$type<ClarifyOption[]>().notNull(),
     state: text("state").$type<ClarificationState>().notNull(),

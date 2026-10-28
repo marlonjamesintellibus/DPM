@@ -21,6 +21,10 @@
 //   Second: 'command' makes the second message a chat command (phase B, AC6 and AC7: "Mark the store
 //          feed one done" over an answer with two lines). It has no review card, so handing it to review
 //          leaves nobody holding the choice; CommandTimerCloses closes it instead.
+//          'question' (wave 4, CD50) makes it a question whose words fit 2 or 3 of Kemar's projects
+//          ("Explain Insights", EX5; PP2's people are the same shape). DPM's own query finds the fits, so
+//          only projects he reads; choosing one answers the question and changes nothing. It has no review
+//          card either, so the same fix applies: CommandTimerCloses closes any question with no review card.
 //   FourProjects: Kemar is in a fourth project, so a choose_project item can have four candidates,
 //          which the guard lets through; ProjectCap asks only with 2 or 3, as for matches.
 import { clone, subsets } from '../lib.mjs';
@@ -67,7 +71,9 @@ export default function Clarification({
         c2:
           Second === 'command'
             ? { source: 'dm', command: true, items: { i1: { kind: 'match', pool: ['w151', 'w152'] } } }
-            : { source: 'dm', items: { i1: { kind: 'match', pool: ['w151', 'w208'] } } },
+            : Second === 'question'
+              ? { source: 'dm', question: true, items: { i1: { kind: 'fit', pool: ['forager', 'insights', 'sante'] } } }
+              : { source: 'dm', items: { i1: { kind: 'match', pool: ['w151', 'w208'] } } },
       }
     : {
         c1: {
@@ -167,9 +173,10 @@ export default function Clarification({
             for (const t of outs) {
               for (const raw of subsets(spec[i].pool)) {
                 const u = clone(t);
-                // Check 9: only what Kemar can read and the checks accept (planted bug trustAtlas: Atlas's list as is)
-                const opts = Bug === 'trustAtlas' ? raw : raw.filter((o) => valid(s, o));
-                const none = spec[i].kind === 'route' ? 'not_filed' : 'new';
+                // Check 9: only what Kemar can read and the checks accept (planted bug trustAtlas: Atlas's list as is).
+                // A question's fits are DPM's own per-viewer read, never Atlas's (CD50, P10)
+                const opts = Bug === 'trustAtlas' && spec[i].kind !== 'fit' ? raw : raw.filter((o) => valid(s, o));
+                const none = { route: 'not_filed', match: 'new', fit: 'not_found' }[spec[i].kind];
                 u.caps[c].items[i] = { opts, pick: opts.length === 0 ? none : opts.length === 1 ? opts[0] : null };
                 next.push(u);
               }
@@ -177,7 +184,8 @@ export default function Clarification({
             outs = next;
           }
           return outs.map((t) => {
-            t.caps[c].st = CAPS[c].command ? 'no_review' : 'proposed';
+            // A command and a question are answered in the chat; neither has a review card
+            t.caps[c].st = CAPS[c].command || CAPS[c].question ? 'no_review' : 'proposed';
             checksDone(t, c);
             return t;
           });
@@ -233,7 +241,7 @@ export default function Clarification({
         step(s, c) {
           if (s.caps[c].q.st !== 'asked' || Bug === 'noTimer') return [];
           const t = clone(s);
-          // A command has no review card to hand the choice to (finding); the fix closes it
+          // A command or a question has no review card to hand the choice to (finding); the fix closes it
           t.caps[c].q.st = CommandTimerCloses && s.caps[c].st === 'no_review' ? 'closed' : 'handed_to_review';
           return [t];
         },

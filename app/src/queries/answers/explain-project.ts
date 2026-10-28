@@ -3,14 +3,14 @@
 // milestones; the five most recent approved decisions; and where the asker starts on it. All from the
 // project view the asker reads (getProject), so members only (EX1, P10), and a decision's quote only where
 // rule 9 lets them read it (EX3). An outside contact gets the client view of a project they are tied to,
-// and nothing else (EX4). A name that fits two of their projects asks which (EX5); M21 Clarification is phase
-// D's, so until it is wired here the asker says the name again. Asked in a group (EX6) waits for phase I:
-// this answer reads the asker's own view (thread owners, their work, decision quotes), so a group answer
-// needs its own builder from the group's shared facts (rule 8), never this one.
+// and nothing else (EX4). A name that fits 2 or 3 of their projects asks which (EX5): M21 asks it in their
+// own chat with a button each (CD50), and elsewhere the asker says the name again. Asked in a group (EX6)
+// waits for phase I: this answer reads the asker's own view (thread owners, their work, decision quotes), so
+// a group answer needs its own builder from the group's shared facts (rule 8), never this one.
 import { inArray } from "drizzle-orm";
 import * as t from "../../db/schema";
 import type { IsoDate } from "../../domain/dates";
-import type { AnswerCard } from "../../domain/question";
+import type { AnswerCard, AskedQuestion, Which } from "../../domain/question";
 import { namesSomething, projectFits } from "../../domain/topics/explain-project";
 import { clientViews, type ClientView } from "../client-view";
 import { firstName, getProject, readableProjects, type ProjectBraidEntry, type ProjectMilestone, type ProjectView, type ProjectWorkItem } from "../project";
@@ -63,20 +63,28 @@ function pickProject<P extends { id: string; name: string; aliases: readonly str
   return projects.length === 1 ? { project: projects[0] } : { choose: [...projects] };
 }
 
-export const explainProject: AnswerBuilder = async (conn, viewerId, { asked, projectId, follows }, now) => {
+/** CD50: the projects that fit, for M21 to ask which; it asks only when there are 2 or 3. */
+const whichOf = (fits: readonly { id: string; name: string }[]): Which => ({ fits: "project", options: fits.map((p) => ({ id: p.id, label: p.name })) });
+
+/** CD50: the project chosen when M21 asked which; the words are read only without one. */
+const chosenIn = (q: AskedQuestion) => (q.chosen?.fits === "project" ? q.chosen.id : null);
+
+export const explainProject: AnswerBuilder = async (conn, viewerId, question, now) => {
+  const { asked, projectId, follows } = question;
   const readable = await readableProjects(conn, viewerId);
   // EX4: someone who reads no project as a member may be an outside contact, who reads the client view only
-  if (!readable.length) return forClient(asked, follows ?? [], await clientViews(conn, viewerId));
+  if (!readable.length) return forClient(asked, follows ?? [], await clientViews(conn, viewerId), chosenIn(question));
 
   const projects = (await conn.select({ id: t.projects.id, name: t.projects.name, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, readable))).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  const pick = pickProject(asked, follows ?? [], projectId, projects);
+  const pick = pickProject(asked, follows ?? [], chosenIn(question) ?? projectId, projects);
   const card = (p: { id: string; name: string }): AnswerCard => ({ title: p.name, detail: null, tag: "Project", href: `/projects/${p.id}` });
   if ("notFound" in pick) return none(`${NOT_FOUND} You can ask about ${either(projects.map((p) => p.name))}.`);
-  // EX5: two of theirs fit; until phase D asks in the chat, the asker says it again (wave 2, AC7)
-  if ("which" in pick) return { text: `Did you mean ${either(pick.which.map((p) => `"${p.name}"`))}? Say it again with its name.`, cards: pick.which.map(card), more: null };
-  if ("choose" in pick) return { text: `Which project? You are on ${either(pick.choose.map((p) => p.name), "and")}. Ask about one by its name.`, cards: pick.choose.map(card), more: null };
+  // EX5: 2 or 3 of theirs fit, or none is named and they are on 2 or 3: M21 asks which in their own chat
+  // (CD50); where it cannot, the asker says it again (wave 2, AC7)
+  if ("which" in pick) return { text: `Did you mean ${either(pick.which.map((p) => `"${p.name}"`))}? Say it again with its name.`, cards: pick.which.map(card), more: null, which: whichOf(pick.which) };
+  if ("choose" in pick) return { text: `Which project? You are on ${either(pick.choose.map((p) => p.name), "and")}. Ask about one by its name.`, cards: pick.choose.map(card), more: null, which: whichOf(pick.choose) };
 
   // Rule 4: read now; a project they have left reads as one that never was
   const v = await getProject(conn, viewerId, pick.project.id, now);
@@ -175,14 +183,15 @@ function decisionLine(v: ProjectView, e: ProjectBraidEntry): string {
 /**
  * EX4: an outside contact reads the client view of the projects they are tied to: who it is for, when it
  * runs, and its releases with their planned dates. No status, people, threads, work or decisions, and no
- * cards, since they open no project page. Anything else is not found, as for a member (EX1).
+ * cards, since they open no project page. Anything else is not found, as for a member (EX1). CD50: a
+ * choice among their client views is asked as a member's is, and `chosen` is one of those views or nothing.
  */
-function forClient(asked: string, follows: readonly string[], views: readonly ClientView[]): Body {
+function forClient(asked: string, follows: readonly string[], views: readonly ClientView[], chosen: string | null): Body {
   const projects = views.map((v) => v.project);
-  const pick = pickProject(asked, follows, null, projects);
+  const pick = pickProject(asked, follows, chosen, projects);
   if ("notFound" in pick) return none(projects.length ? `${NOT_FOUND} You can ask about ${either(projects.map((p) => p.name))}.` : NOT_FOUND);
-  if ("which" in pick) return none(`Did you mean ${either(pick.which.map((p) => `"${p.name}"`))}? Say it again with its name.`);
-  if ("choose" in pick) return none(`Which project? You can ask about ${either(pick.choose.map((p) => p.name))}.`);
+  if ("which" in pick) return { ...none(`Did you mean ${either(pick.which.map((p) => `"${p.name}"`))}? Say it again with its name.`), which: whichOf(pick.which) };
+  if ("choose" in pick) return { ...none(`Which project? You can ask about ${either(pick.choose.map((p) => p.name))}.`), which: whichOf(pick.choose) };
   const v = views.find((x) => x.project.id === pick.project.id)!;
   const p = v.project;
   const release = (r: ClientView["releases"][number]) => `${r.name} ${r.done ? "(done)" : `on ${dayDate(r.date)}`}`;

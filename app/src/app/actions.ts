@@ -8,7 +8,7 @@ import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { atlasFromEnv } from "@/atlas";
-import { readCapture } from "@/commands/atlas";
+import { readCapture, wordCaptureAnswer } from "@/commands/atlas";
 import {
   acknowledgeBlocker,
   answerKindChange,
@@ -164,12 +164,26 @@ export async function cancelChatCommand(commandId: string): Promise<ActionResult
 
 // ---- Asking when unsure (phase D, M21) ----
 
-/** A button under Atlas's question: the option is checked again now (CL5); a second tap says how it ended. */
+/**
+ * A button under Atlas's question: the option is checked again now (CL5); a second tap says how it ended.
+ * CD50: a question answered as the one chosen is worded by Atlas after the reply, as a sent message's is.
+ */
 export async function answerClarificationAction(clarificationId: string, option: string): Promise<ActionResult> {
   let message = "";
+  const atlas = atlasFromEnv();
+  let worded: { ctx: CommandCtx; captureId: string } | null = null;
   const r = await run(async (ctx) => {
-    message = (await answerClarification(ctx, clarificationId, option)).message;
+    const ran = await answerClarification(ctx, clarificationId, option, { wordWithAtlas: !!atlas.drafter });
+    message = ran.message;
+    if (ran.answeredIn) worded = { ctx, captureId: ran.answeredIn };
   });
+  const done = worded as { ctx: CommandCtx; captureId: string } | null;
+  if (r.ok && done && atlas.drafter) {
+    const drafter = atlas.drafter;
+    after(async () => {
+      await wordCaptureAnswer({ ...done.ctx, now: now() }, done.captureId, drafter);
+    });
+  }
   return r.ok ? { ok: true, message } : r;
 }
 

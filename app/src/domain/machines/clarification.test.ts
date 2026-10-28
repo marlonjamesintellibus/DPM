@@ -1,5 +1,7 @@
 // M21 (conversational plan, section 6): every arrow, its guards, and the model check's three fixes: asked
 // only in the author's own chat, only with 2 or 3 options, and a question about a command closes on its timer.
+// Wave 4 (CD50): a question whose words fit 2 or 3 projects or people is asked the same way, and closes as a
+// command's does.
 import { describe, expect, it } from "vitest";
 import {
   applyClarificationEvent,
@@ -43,6 +45,19 @@ const at = (state: ClarificationState, fields: Partial<ClarificationRecord> = {}
 
 const base = { actorId: "kemar", now: later(5), ownChat: true, allowed: true };
 
+/** CD50, PP2: "What is Kemar working on?" when Alicia shares a project with two Kemars. */
+const QUESTION: Partial<ClarificationRecord> = {
+  about: "question",
+  authorId: "alicia",
+  extractionId: null,
+  question: { asked: { asked: "What is Kemar working on?", topic: "people", projectId: null }, fits: "person" },
+  quote: "What is Kemar working on?",
+  options: [
+    { id: "kemar", label: "Kemar Brown", projectId: null },
+    { id: "kemar-s", label: "Kemar Smith", projectId: null },
+  ],
+};
+
 describe("clarification arrows", () => {
   const rows: [ClarificationState, ClarificationEvent, Partial<ClarificationRecord>, Partial<typeof base>, ClarificationState][] = [
     ["none", { type: "ASK" }, {}, {}, "asked"],
@@ -50,6 +65,8 @@ describe("clarification arrows", () => {
     ["asked", { type: "REVIEW_OPENED" }, {}, {}, "handed_to_review"],
     ["asked", { type: "EXPIRE" }, {}, { now: later(120) }, "handed_to_review"],
     ["asked", { type: "EXPIRE" }, { about: "line", extractionId: null, command: { answerCaptureId: "cap-0", act: "approve", reason: null } }, { now: later(120) }, "closed"],
+    // CD50: a question has no review card either
+    ["asked", { type: "EXPIRE" }, QUESTION, { now: later(120) }, "closed"],
     ["asked", { type: "CLOSE" }, {}, {}, "closed"],
   ];
   it.each(rows)("%s --%o--> (%o, %o) %s", (from, event, fields, ctx, to) => {
@@ -118,6 +135,19 @@ describe("guards", () => {
     expect(applyClarificationEvent(line, { type: "REVIEW_OPENED" }, base).outcome).toMatchObject({ ok: false, reason: "a reply that decides a line has no review card" });
   });
 
+  it("CD50: a question is answered only by its asker, with an option still theirs to ask about; no review takes it, and its timer closes it", () => {
+    const q = at("asked", QUESTION);
+    expect(applyClarificationEvent(q, { type: "ANSWER", option: "kemar" }, { ...base, actorId: "alicia" }).record).toMatchObject({ state: "resolved", chosen: "kemar" });
+    expect(applyClarificationEvent(q, { type: "ANSWER", option: "kemar" }, base).outcome).toMatchObject({ ok: false, reason: "only the person who sent the message can answer" });
+    expect(applyClarificationEvent(q, { type: "ANSWER", option: "kemar-s" }, { ...base, actorId: "alicia", allowed: false }).record.state).toBe("asked");
+    expect(applyClarificationEvent(q, { type: "REVIEW_OPENED" }, { ...base, actorId: "alicia" }).outcome).toMatchObject({ ok: false, reason: "a question has no review card" });
+    expect(applyClarificationEvent(q, { type: "EXPIRE" }, { ...base, now: later(119) }).outcome.ok).toBe(false);
+    expect(applyClarificationEvent(q, { type: "EXPIRE" }, { ...base, now: later(120) }).record).toMatchObject({ state: "closed", endedBy: "timer" });
+    // Rules 3 and 8 and ProjectCap hold for a question as for an item
+    expect(applyClarificationEvent(at("none", QUESTION), { type: "ASK" }, { ...base, ownChat: false }).outcome.ok).toBe(false);
+    expect(applyClarificationEvent(at("none", { ...QUESTION, options: QUESTION.options!.slice(0, 1) }), { type: "ASK" }, base).outcome.ok).toBe(false);
+  });
+
   it("CL6: the capture discarded or expired closes it; so does a correction withdrawing its item (CV10)", () => {
     expect(applyClarificationEvent(at("asked"), { type: "CLOSE" }, base).record).toMatchObject({ state: "closed", endedBy: "capture" });
     expect(applyClarificationEvent(at("asked"), { type: "CLOSE", because: "corrected" }, base).record).toMatchObject({ state: "closed", endedBy: "corrected" });
@@ -131,6 +161,10 @@ describe("what the chat says", () => {
       'Which project is "Waiting on the sign-off" for: Forager 2.0, GQ & Academy or Store Insights?',
     );
     expect(clarifyQuestion(at("asked", { about: "line", options: [{ id: "1", label: "Kemar raised a risk: A", projectId: "forager" }, { id: "2", label: "Kemar raised a risk: B", projectId: "forager" }] }))).toBe('Did you mean "Kemar raised a risk: A" or "Kemar raised a risk: B"?');
+    // CD50: the question is on screen above it, so only which one is asked
+    expect(clarifyQuestion(at("asked", QUESTION))).toBe("Who do you mean: Kemar Brown or Kemar Smith?");
+    const ex5 = { ...QUESTION, question: { asked: { asked: "Explain Insights", topic: "explain_project" as const, projectId: null }, fits: "project" as const }, options: [{ id: "forager", label: "Forager 2.0", projectId: null }, { id: "insights", label: "Store Insights", projectId: null }] };
+    expect(clarifyQuestion(at("asked", ex5))).toBe("Which project do you mean: Forager 2.0 or Store Insights?");
   });
 
   it("says how it ended", () => {
@@ -143,12 +177,17 @@ describe("what the chat says", () => {
     expect(clarifyOutcomeText(at("closed", { endedBy: "capture" }), null)).toBe("Closed with the update.");
     expect(clarifyOutcomeText(at("closed", { endedBy: "corrected" }), null)).toBe("You corrected this in a later message.");
     expect(clarifyOutcomeText(at("asked"), null)).toBeNull();
+    // CD50: a question's answer follows its "Got it"; its timer closes it quietly
+    expect(clarifyOutcomeText(at("resolved", QUESTION), "Kemar Smith")).toBe("Got it: Kemar Smith.");
+    expect(clarifyOutcomeText(at("resolved", QUESTION), null)).toBe("Got it.");
+    expect(clarifyOutcomeText(at("closed", { ...QUESTION, endedBy: "timer" }), null)).toBe("Nothing was chosen; ask me again.");
   });
 
   it("CL5: a refused option points to the review only when there is one; a line's question has none", () => {
     expect(optionGoneText("record")).toBe("You can't choose that one any more. Pick another, or choose it in the review.");
     expect(optionGoneText("project")).toBe("You can't choose that one any more. Pick another, or choose it in the review.");
     expect(optionGoneText("line")).toBe("You can't choose that one any more. Pick another, or ask me again.");
+    expect(optionGoneText("question")).toBe("You can't choose that one any more. Pick another, or ask me again.");
   });
 });
 
@@ -177,6 +216,14 @@ describe("a typed answer is read against the options only (CL2)", () => {
     ["the fourth one", "no fourth option"],
   ])("%s is not an answer (%s)", (text) => {
     expect(readTypedAnswer(text, FEED)).toBeNull();
+  });
+
+  it("CD50: a person by their full name or surname; a first name both have is no answer", () => {
+    const kemars = QUESTION.options!;
+    expect(readTypedAnswer("Kemar Smith", kemars)).toBe("kemar-s");
+    expect(readTypedAnswer("smith", kemars)).toBe("kemar-s");
+    expect(readTypedAnswer("the first one", kemars)).toBe("kemar");
+    expect(readTypedAnswer("Kemar", kemars)).toBeNull();
   });
 
   it("a project by its name or an alias", () => {

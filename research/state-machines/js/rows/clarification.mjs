@@ -9,6 +9,9 @@ export const ROWS = [
   // Found by the check: phase B sends AC6 and AC7 here, but a chat command has no review card to hand the choice to
   { spec: 'Clarification', setting: 'a chat command asks which (AC7), handed to review as drawn', model: Clarification({ Second: 'command' }), expectFail: ['HandedOnlyToAReview'] },
   { spec: 'Clarification', setting: "same, the timer closes a command's question (proposed)", model: Clarification({ Second: 'command', CommandTimerCloses: true }), expectFail: [] },
+  // Wave 4 (CD50): a question whose words fit 2 or 3 projects has no review card either; the same fix closes it
+  { spec: 'Clarification', setting: 'a question fits two projects (EX5), handed to review as drawn', model: Clarification({ Second: 'question' }), expectFail: ['HandedOnlyToAReview'] },
+  { spec: 'Clarification', setting: "same, the timer closes the question's question (built)", model: Clarification({ Second: 'question', CommandTimerCloses: true }), expectFail: [] },
   // Found by the check: the plan does not say which chat; asked where a group message came from, rule 8 breaks
   { spec: 'Clarification', setting: 'a Forager group message (phase I), asked in the group', model: Clarification({ Source: 'forager', AskIn: 'source' }), expectFail: ['OptionsOnlyWhatTheyMaySee'] },
   { spec: 'Clarification', setting: "same, asked in Kemar's own chat (proposed)", model: Clarification({ Source: 'forager', AskIn: 'own' }), expectFail: [] },
@@ -26,6 +29,7 @@ export const PLANTS = [
   { spec: 'Clarification', setting: 'bug: a second tap changes the answer', model: Clarification({ Bug: 'reanswer' }), expectFail: ['AnsweredOnce'] },
   { spec: 'Clarification', setting: 'bug: a tap after the review was opened still answers (CL3)', model: Clarification({ Bug: 'tapAfterReview' }), expectFail: ['OnlyDrawnArrows', 'AnsweredOnce'] },
   { spec: 'Clarification', setting: 'bug: an answer is taken without checking the option again (CL5)', model: Clarification({ Bug: 'noRecheck' }), expectFail: ['AnswerRechecked'] },
+  { spec: 'Clarification', setting: 'bug: a question (CD50) is answered with a project he has left since', model: Clarification({ Second: 'question', CommandTimerCloses: true, Bug: 'noRecheck' }), expectFail: ['AnswerRechecked'] },
   { spec: 'Clarification', setting: 'bug: the answer applies the change at once', model: Clarification({ Bug: 'answerApplies' }), expectFail: ['RecordsChangeOnlyOnSave'] },
   { spec: 'Clarification', setting: "bug: saving marks Jodian's #160 done on Kemar's word", model: Clarification({ Bug: 'applyOthers' }), expectFail: ['OthersRecordsWaitForThem'] },
   { spec: 'Clarification', setting: 'bug: the 2 hour timer never fires', model: Clarification({ Bug: 'noTimer' }), expectFail: ['QuestionEnds'] },

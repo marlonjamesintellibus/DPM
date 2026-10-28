@@ -3,7 +3,7 @@
 import type { Conn } from "../../db/conn";
 import { weekday, type IsoDate } from "../../domain/dates";
 import type { CommandAct } from "../../domain/machines/chat-command";
-import type { Answer, AnswerCard, AskedQuestion } from "../../domain/question";
+import type { Answer, AnswerCard, AskedQuestion, Which } from "../../domain/question";
 import { getProject, readableProjects, shortDate, type ProjectMilestone, type ProjectView, type ProjectWorkItem } from "../project";
 
 /**
@@ -12,8 +12,11 @@ import { getProject, readableProjects, shortDate, type ProjectMilestone, type Pr
  */
 export type DraftCard = AnswerCard & { offer?: readonly CommandAct[] };
 
-/** DPM's sentence and the cards; answerFor adds the topic and the time it was given. */
-export type Body = Pick<Answer, "text" | "more"> & { cards: DraftCard[] };
+/**
+ * DPM's sentence and the cards; answerFor adds the topic and the time it was given. CD50: `which` when the
+ * words fit 2 or 3 of the asker's projects or people, for M21 to ask; the text then asks for the name again.
+ */
+export type Body = Pick<Answer, "text" | "more"> & { cards: DraftCard[]; which?: Which };
 
 /** One topic's answer to a checked question, from the asker's own data, as of now. */
 export type AnswerBuilder = (conn: Conn, viewerId: string, question: AskedQuestion, now: Date) => Promise<Body>;

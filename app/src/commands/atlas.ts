@@ -74,7 +74,11 @@ export async function readCapture(ctx: CommandCtx, captureId: string, extractor:
       if (!standup) {
         // Phase D, CL2: words that answer Atlas's open question are that answer; no model reads them. First, so
         // a standup asking in the same chat does not take "#152" as its own answer (SU4)
-        if (await readAsAnswer(at(), captureId, readAttempt)) return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
+        if (await readAsAnswer(at(), captureId, readAttempt, { wordWithAtlas: !!drafter })) {
+          // CD50: a chosen question's answer is kept with this reply; Atlas words it as any other
+          if (drafter) await wordCaptureAnswer(at(), captureId, drafter);
+          return { outcome: "proposed", state: "answered", items: [], dropped: [], moreFound: false, answer: null, model: "clarification" };
+        }
         // Phase J: a reply while the author's standup asks is its answer, unless it is their own question or
         // command (SU4); the answers are read once it is composed
         const typed = await readAsStandupAnswer(at(), captureId, readAttempt, context);

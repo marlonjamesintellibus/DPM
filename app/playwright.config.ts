@@ -5,7 +5,7 @@
 import { defineConfig } from "@playwright/test";
 
 const PORT = 3100;
-// While writing tests, E2E_BASE_URL points them at a server you started yourself (on a fresh `pnpm db:reset`)
+// While writing tests, E2E_BASE_URL points them at a server you started yourself (on a fresh `pnpm db:reset --e2e`)
 const external = process.env.E2E_BASE_URL;
 
 export default defineConfig({
@@ -26,7 +26,7 @@ export default defineConfig({
   webServer: external
     ? undefined
     : {
-        command: `pnpm db:reset && pnpm build && pnpm start --port ${PORT}`,
+        command: `pnpm db:reset --e2e && pnpm build && pnpm start --port ${PORT}`,
         url: `http://localhost:${PORT}/api/health`,
         timeout: 240_000,
         reuseExistingServer: false,

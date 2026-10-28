@@ -6,6 +6,7 @@
 import { namesProject, numbersOf } from "./atlas-checks/checks";
 import type { CheckContext, EarlierTurn } from "./atlas-checks/types";
 import type { CommandSubject, LineAction } from "./machines/chat-command";
+import type { QuestionFits } from "./machines/clarification";
 import { BY_RULE, QUESTION_TOPICS, type QuestionTopic } from "./topics";
 import { checkCorrection, ruleCorrection, type Correction, type RawCorrection } from "./topics/correction";
 import { aboutAsker, aboutOther, aboutProject } from "./topics/people";
@@ -33,7 +34,23 @@ export type AskedQuestion = {
   correction?: Correction;
   /** Phase L: what the asker's command made while their message was read (the undo job of "Undo that"). */
   made?: string[];
+  /**
+   * CD50: the project or person the asker chose when the words fit 2 or 3 (M21). The topic that asked reads it
+   * as if the words had named that one, and only while it still fits what the asker reads (P10).
+   */
+  chosen?: { fits: QuestionFits; id: string };
 };
+
+/**
+ * CD50: the words fit 2 or 3 of the asker's own projects (EX5) or people (PP2). M21 asks which in their own
+ * chat, and the answer's text, which says the name again, is said only where it cannot ask.
+ */
+export type Which = { fits: QuestionFits; options: { id: string; label: string }[] };
+
+/** CD50: the question as if it had named the one chosen. */
+export function chosenQuestion(q: AskedQuestion, fits: QuestionFits, id: string): AskedQuestion {
+  return { ...q, chosen: { fits, id } };
+}
 
 /**
  * QA3, QA6: only the asker's own projects; QA5: an unknown topic is "other"; the words must be theirs.
@@ -111,7 +128,8 @@ function followed(text: string, asked: string, topic: QuestionTopic, earlier: re
   for (const turn of [...earlier].reverse()) {
     if (!turn.asked || turn.asked.topic === "small_talk") continue;
     if (turn.asked.topic !== topic) break;
-    words.push(turn.text);
+    // CD50: a question Atlas asked which about is read as the name chosen
+    words.push(turn.chosen ?? turn.text);
   }
   return words;
 }

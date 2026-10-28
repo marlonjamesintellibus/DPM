@@ -152,6 +152,11 @@ export type EarlierTurn = {
   at: Date;
   text: string;
   asked: { topic: string; projectId: string | null } | null;
+  /**
+   * CD50: the name of the project or person chosen by a button when Atlas asked which one the question meant
+   * (M21), while it still fits what the author reads; a follow-up reads it in place of the words.
+   */
+  chosen?: string;
   /** Items of an update not saved yet: what a later message may replace (CV10). */
   openItems: readonly { id: string; summary: string }[];
 };

@@ -7,7 +7,9 @@
 // item's question to it (CL3); its timer does the same after config.clarifyExpiryHours, or closes a line's,
 // which has no review card ("Nothing was done; ask again"). A correction that withdraws the item closes its
 // question (CV10), and a later reply that makes the card for one of a line question's options answers it
-// (CL1). Nothing here changes a record (rule 1).
+// (CL1). Wave 4 (CD50): a question whose words fit 2 or 3 of the asker's projects or people (EX5, PP2) is
+// asked the same way; choosing one answers it as if it had named that one, and its timer closes it quietly
+// ("Nothing was chosen; ask me again"), as a line's. Nothing here changes a record (rule 1).
 import { and, desc, eq, inArray, lte, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
@@ -32,7 +34,11 @@ import {
   type ClarifyOption,
 } from "../domain/machines/clarification";
 import type { ExtractedItem } from "../domain/machines/extracted-item";
+import { chosenQuestion, type AskedQuestion, type Which } from "../domain/question";
 import { mayReport } from "../domain/rights";
+import { topicById } from "../domain/topics";
+import { answerFor, fitsReadBy } from "../queries/answer";
+import { optionsShown } from "../queries/clarification";
 import { projectReader } from "../queries/project";
 import { retargetItemIn, routeItemIn } from "./capture";
 import { proposeLine, type WhichLines } from "./chat-command";
@@ -42,7 +48,11 @@ type Row = typeof t.clarifications.$inferSelect;
 type CaptureRow = typeof t.captures.$inferSelect;
 type Actor = { actorType: "person" | "atlas" | "rule"; actorId: string | null };
 
-export type ClarifyRun = { record: ClarificationRecord; message: string };
+/** CD50: answeredIn is the message now holding a chosen question's answer, for Atlas to word when it waits to be. */
+export type ClarifyRun = { record: ClarificationRecord; message: string; answeredIn: string | null };
+
+/** Section 17: with Atlas connected, a chosen question's answer waits to be worded, as a read's does. */
+type Wording = { wordWithAtlas?: boolean };
 
 function recordOf(row: Row): ClarificationRecord {
   return {
@@ -52,6 +62,7 @@ function recordOf(row: Row): ClarificationRecord {
     about: row.about,
     extractionId: row.extractionId,
     command: row.answerCaptureId && row.act ? { answerCaptureId: row.answerCaptureId, act: row.act, reason: row.reason } : null,
+    question: row.question ?? null,
     quote: row.quote,
     options: row.options,
     state: row.state,
@@ -148,6 +159,24 @@ export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "
         }
       : null;
   if (!fields || !askable(fields.options.length)) return null;
+  return ask(tx, now, capture, fields);
+}
+
+/**
+ * CD50, M21 CHECKS_DONE for a question: the words fit 2 or 3 of the asker's own projects (EX5) or people
+ * (PP2), and nothing else in the message was asked about (CD23: one question per message, so an unsure
+ * item or line goes first). The options are what the topic read for them now (P10). Asked only in the
+ * author's own chat (rules 3 and 8); elsewhere the answer's own words ask for the name again. Asked with
+ * no model too: the question and its fits are DPM's own reading (CL8).
+ */
+export async function askWhich(tx: Tx, now: Date, capture: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "channel">, asked: AskedQuestion, which: Which): Promise<ClarificationRecord | null> {
+  if (!askable(which.options.length)) return null;
+  const options = which.options.map((o) => ({ ...o, projectId: null }));
+  return ask(tx, now, capture, { about: "question", extractionId: null, command: null, question: { asked, fits: which.fits }, quote: asked.asked, options });
+}
+
+/** ASK, then stored once (rule 6); null when it is not asked (another chat, or asked already). */
+async function ask(tx: Tx, now: Date, capture: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "channel">, fields: Pick<ClarificationRecord, "about" | "extractionId" | "command" | "quote" | "options"> & Partial<Pick<ClarificationRecord, "question">>): Promise<ClarificationRecord | null> {
   const draft = draftClarification({ id: `clr-${capture.id}`, captureId: capture.id, authorId: capture.authorId, ...fields, createdAt: now });
   // Rules 3 and 8: which Atlas chat it came from is the conversation's (phase I's groups are other chats)
   const [conversation] = capture.conversationId ? await tx.select({ atlasChatId: t.conversations.atlasChatId }).from(t.conversations).where(eq(t.conversations.id, capture.conversationId)) : [];
@@ -166,6 +195,7 @@ export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "
       answerCaptureId: r.record.command?.answerCaptureId ?? null,
       act: r.record.command?.act ?? null,
       reason: r.record.command?.reason ?? null,
+      question: r.record.question,
       quote: r.record.quote,
       options: r.record.options,
       state: r.record.state,
@@ -184,6 +214,12 @@ export async function askIfUnsure(tx: Tx, now: Date, capture: Pick<CaptureRow, "
  * (rule 1: nothing else). A refusal there is an option no longer allowed (CL5), and nothing changes.
  */
 async function choose(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, r: ClarificationRecord, option: string): Promise<void> {
+  if (r.about === "question") {
+    // CD50, P10: a project they no longer read, or someone they no longer share one with, is refused with the
+    // words of any gone option, and never named
+    if (!(await fitsReadBy(tx, r.authorId, r.question!.fits)).has(option)) throw new CommandRefused("that one can no longer be asked about");
+    return;
+  }
   const [capture] = await tx.select().from(t.captures).where(eq(t.captures.id, r.captureId));
   if (r.about === "line") {
     const [answer] = await tx.select().from(t.captures).where(eq(t.captures.id, r.command!.answerCaptureId));
@@ -199,14 +235,27 @@ async function choose(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, r: Clari
   else await retargetItemIn(tx, ctx, row, item, capture, option, "chat");
 }
 
+/**
+ * CD50: a question answered as if it had named the one chosen, read now from the asker's own data (rule 4),
+ * and kept with the message that chose: the question's own for a button, the reply for typed words (CL2),
+ * so the answer follows what was said. With Atlas connected it waits to be worded, as any answer does.
+ */
+async function answerChosen(tx: Tx, now: Date, r: ClarificationRecord, captureId: string, words: Wording): Promise<string> {
+  const asked = chosenQuestion(r.question!.asked, r.question!.fits, r.chosen!);
+  const found = await answerFor(tx, r.authorId, asked, now);
+  const answer = words.wordWithAtlas && topicById(found.topic).worded !== false ? { ...found, wording: "pending" as const, rulesText: found.text } : found;
+  await tx.update(t.captures).set({ question: asked, answer }).where(eq(t.captures.id, captureId));
+  return captureId;
+}
+
 /** ANSWER: a button, or typed words that fit one option. A second answer changes nothing and says how it ended. */
-async function answerIn(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, row: Row, option: string, answeredBy: string | null): Promise<ClarifyRun> {
+async function answerIn(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, row: Row, option: string, answeredBy: string | null, words: Wording = {}): Promise<ClarifyRun> {
   const seen = recordOf(row);
-  if (seen.state !== "asked") return { record: seen, message: messageOf(seen) };
+  if (seen.state !== "asked") return { record: seen, message: messageOf(seen), answeredIn: null };
   // A question past its time ends when touched, as the timer would a minute later
   if (clarificationExpired(seen, ctx.now)) {
     const r = await expire(tx, ctx.now, row);
-    return { record: r, message: messageOf(r) };
+    return { record: r, message: messageOf(r), answeredIn: null };
   }
   if (!seen.options.some((o) => o.id === option)) throw new CommandRefused("that is not one of the options");
   let allowed = true;
@@ -220,7 +269,8 @@ async function answerIn(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, row: R
   if (!r.outcome.ok) throw new CommandRefused(allowed ? r.outcome.reason : optionGoneText(seen.about));
   await persist(tx, ctx.now, row, r.record);
   await auditMove(tx, ctx.now, r.record, r.outcome, { actorType: "person", actorId: ctx.actorId });
-  return { record: r.record, message: messageOf(r.record) };
+  const answeredIn = r.record.about === "question" ? await answerChosen(tx, ctx.now, r.record, answeredBy ?? r.record.captureId, words) : null;
+  return { record: r.record, message: messageOf(r.record), answeredIn };
 }
 
 /** The author's own question; anyone else's reads as not found (P10). */
@@ -231,8 +281,8 @@ async function ownClarification(tx: Tx, actorId: string, id: string): Promise<Ro
 }
 
 /** A button under the question (it carries the question, so the capture, CL4). */
-export function answerClarification(ctx: CommandCtx, clarificationId: string, option: string): Promise<ClarifyRun> {
-  return runCommand(ctx, async (tx) => answerIn(tx, ctx, await ownClarification(tx, ctx.actorId, clarificationId), option, null));
+export function answerClarification(ctx: CommandCtx, clarificationId: string, option: string, words: Wording = {}): Promise<ClarifyRun> {
+  return runCommand(ctx, async (tx) => answerIn(tx, ctx, await ownClarification(tx, ctx.actorId, clarificationId), option, null, words));
 }
 
 /**
@@ -241,7 +291,7 @@ export function answerClarification(ctx: CommandCtx, clarificationId: string, op
  * Returns null when they are not (CL1: the reply is read as a new message, and the question stays); a note
  * when the option they named can no longer be chosen (CL5).
  */
-export async function answerInWords(tx: Tx, now: Date, reply: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "text">): Promise<{ id: string; note: string | null } | null> {
+export async function answerInWords(tx: Tx, now: Date, reply: Pick<CaptureRow, "id" | "authorId" | "conversationId" | "text">, words: Wording = {}): Promise<{ id: string; note: string | null } | null> {
   if (!reply.conversationId) return null;
   const [open] = await tx
     .select()
@@ -255,15 +305,15 @@ export async function answerInWords(tx: Tx, now: Date, reply: Pick<CaptureRow, "
     return null;
   }
   // CL5, P10: "the second one" counts over the options shown, and an option no longer shown is not named
-  const reader = await projectReader(tx, reply.authorId);
-  const shown = open.options.filter((o) => reader.mayRead(o.projectId));
-  // A project is also named by the other names people use for it ("Sprouts")
+  const shown = await optionsShown(tx, reply.authorId, recordOf(open));
+  // A project is also named by the other names people use for it ("Sprouts"), as an item's or a question's (CD50)
   const ids = shown.map((o) => o.id);
-  const aliases = open.about === "project" && ids.length ? Object.fromEntries((await tx.select({ id: t.projects.id, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids))).map((p) => [p.id, p.aliases])) : {};
+  const projects = open.about === "project" || open.question?.fits === "project";
+  const aliases = projects && ids.length ? Object.fromEntries((await tx.select({ id: t.projects.id, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, ids))).map((p) => [p.id, p.aliases])) : {};
   const option = readTypedAnswer(reply.text, shown, aliases);
   if (!option) return null;
   try {
-    await answerIn(tx, { now, actorId: reply.authorId }, open, option, reply.id);
+    await answerIn(tx, { now, actorId: reply.authorId }, open, option, reply.id, words);
     return { id: open.id, note: null };
   } catch (e) {
     if (e instanceof CommandRefused) return { id: open.id, note: optionGoneText(open.about) };
