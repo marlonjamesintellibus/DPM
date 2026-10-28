@@ -8,15 +8,17 @@ import { PageHead } from "@/components/shell/app-shell";
 import { HeadStatus, ViewSwitch } from "@/components/shell/page-bits";
 import { BraidSummary } from "@/components/project/braid-summary";
 import { BraidTable } from "@/components/project/braid-table";
+import { ContactsCard } from "@/components/project/contacts-card";
 import { MilestoneCard } from "@/components/project/milestone-card";
 import { PauseControl } from "@/components/project/pause-control";
 import { PlanCard } from "@/components/project/plan-card";
 import { getDb } from "@/db/client";
 import { dateInZone } from "@/domain/dates";
+import { contactsOf } from "@/queries/client-view";
 import { getProject } from "@/queries/project";
 
 // A project as the viewer reads it, in two views (A8): the Dashboard (L14d: the plan, the BRAID summary
-// and the milestones) and the Table (L14c: the BRAID log, where kinds are switched and entries approved).
+// and the milestones, and its contacts with the PM's client view switch, CD49) and the Table (L14c: the BRAID log, where kinds are switched and entries approved).
 // Someone not in the project gets nothing.
 export default function ProjectPage({ params, searchParams }: PageProps<"/projects/[projectId]">) {
   return (
@@ -30,12 +32,14 @@ async function Project({ params, searchParams }: { params: PageProps<"/projects/
   // Per request: the viewer, the database and the clock are all read at request time
   await connection();
   const [{ projectId }, { log, view: shown }] = await Promise.all([params, searchParams]);
+  const table = shown === "table";
   const viewer = await currentViewer();
   const at = await requestNow();
-  const view = await getProject(await getDb(), viewer.id, projectId, at);
+  const db = await getDb();
+  const view = await getProject(db, viewer.id, projectId, at);
   if (!view.found) notFound();
+  const contacts = table ? [] : await contactsOf(db, viewer.id, projectId);
   const base = `/projects/${projectId}`;
-  const table = shown === "table";
   const because = view.displayed.from === "set" ? (view.reason?.text.replace(/\.$/, "").replace(/^./, (c) => c.toLowerCase()) ?? null) : null;
   return (
     <ViewerShell breadcrumb={[view.project.customer ?? "Internal", view.project.name]} activeHref={`/projects/${projectId}`}>
@@ -61,7 +65,10 @@ async function Project({ params, searchParams }: { params: PageProps<"/projects/
           <PlanCard view={view} today={dateInZone(at, "America/Jamaica")} />
           <div className="flex shrink-0 flex-col items-stretch gap-4 xl:flex-row xl:items-start">
             <BraidSummary view={view} tableHref={`${base}?view=table`} />
-            <MilestoneCard view={view} />
+            <div className="flex shrink-0 flex-col gap-4 xl:w-[520px]">
+              <MilestoneCard view={view} />
+              <ContactsCard projectId={view.project.id} projectName={view.project.name} contacts={contacts} isPm={view.viewerRole === "pm"} />
+            </div>
           </div>
         </div>
       )}

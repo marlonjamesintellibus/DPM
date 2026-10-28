@@ -41,6 +41,7 @@ import {
 } from "@/commands/capture";
 import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
 import { answerClarification } from "@/commands/clarification";
+import { setClientView } from "@/commands/client-view";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
@@ -407,6 +408,12 @@ export async function stillGoingAction(workItemId: string): Promise<ActionResult
 
 export async function setPausedAction(projectId: string, paused: boolean): Promise<ActionResult> {
   return run((ctx) => setProjectPaused(ctx, projectId, paused), paused ? "Marked paused. Atlas will not flag it as quiet." : "Resumed.");
+}
+
+// ---- A contact's client view (CD49) ----
+
+export async function setClientViewAction(projectId: string, personId: string, on: boolean): Promise<ActionResult> {
+  return run((ctx) => setClientView(ctx, projectId, personId, on), on ? "Client view on." : "Client view off.");
 }
 
 // ---- Set status and reason (L6, L6b) ----

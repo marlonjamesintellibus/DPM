@@ -443,6 +443,18 @@ test("Phase K, CD13. Alicia marks GQ & Academy paused, so Atlas will not flag it
   await expect(page.getByText("Paused: Atlas will not flag it as quiet")).toHaveCount(0);
 });
 
+test("CD49. Alicia turns Kyle's client view on Forager off and on again; Kemar sees it but has no switch", async () => {
+  await viewAs("kemar", "/projects/forager");
+  await expect(page.getByText("Kyle can see the client view")).toBeVisible();
+  await expect(page.getByText(/hears only its name, customer, dates and releases with their target dates\. Never its status, people, work or decisions\./)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Turn off Kyle's client view" })).toHaveCount(0); // only the PM switches it
+  await viewAs("alicia", "/projects/forager");
+  await page.getByRole("button", { name: "Turn off Kyle's client view" }).click();
+  await expect(page.getByText("Kyle cannot see the client view")).toBeVisible();
+  await page.getByRole("button", { name: "Turn on Kyle's client view" }).click();
+  await expect(page.getByText("Kyle can see the client view")).toBeVisible();
+});
+
 /** Phase K: Kemar says the store feed is still blocked, a report on the blocker on the log (M16 same as), saved from its review. */
 async function kemarSaysFeedStillBlocked() {
   await viewAs("kemar", "/?view=chat&c=new&ask=1");
