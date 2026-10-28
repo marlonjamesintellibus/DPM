@@ -195,6 +195,10 @@ asked ──capture expires or is rejected──▶ closed
 - M21: the question is always asked in the author's own chat, never in a group (rules 3 and 8).
 - M21: ask in the chat only when choose_project has 2 or 3 candidates; with more, only the review card asks.
 
+### Built (wave 3)
+
+See `atlas-conversational-wave-3.md`. M21 with the model check's fixes: own chat only (by `atlasChatId`), 2 or 3 options, a line's question closes on its 2-hour timer. It covers projects, vague updates (`targetOptions`) and answer lines, and replaces B's AC6 and AC7 text. Typed answers are read by a DPM rule. Waiting for review: W3-D1 (line questions with no model), W3-D2 (one line), W3-D12 (questions with 2 or 3 fits).
+
 ## 7. Phase E. Commitments
 
 ### What changes
@@ -372,6 +376,10 @@ Default proposed: a viewer sees another person's **work items, milestones and BR
 | PP7 | The person is on leave | Their work, and "on leave until" where the project shows it |
 | PP8 | Asking about someone's updates or messages | Never: captures are their author's (M1) |
 
+### Built (wave 3)
+
+See `atlas-conversational-wave-3.md`. Topic `people` under CD9, one list in `queries/people.ts` that "Who owns …" also reads. In a follow-up, the newest words decide. Waiting for review: W3-D5 (upcoming leave for leads), W3-D6 (owners of closed records), W3-D12 (PP2 as a clarification).
+
 ## 11. Phase I. Atlas in the project group
 
 ### What changes
@@ -486,6 +494,10 @@ composed ──▶ one capture (M1, M2) from the answers, each read with its que
 - M28: at save, recheck ownership as well as membership: an answer about a record someone else now owns becomes an Ask to the owner (section 20's M37), never an edit. This also holds for free-form updates.
 - M28: draw START from none, scheduled and skipped; one per day counts standups that asked. Draw the "Stuck" follow-up as `asking(k) --ANSWER Stuck--> asking(k, "What's it waiting on?")`.
 
+### Built (wave 3)
+
+See `atlas-conversational-wave-3.md`. M28 started by the person. Each question keeps what it showed (`saw`, SU3), questions and commands typed mid-standup run as normal (SU4), and the review hides lines about projects the person left (P10). Scheduled starts are drawn and model-checked, but nothing schedules one until phase F. Waiting for review: W3-D3 (CD12 for a standup the person starts), W3-D4 (taps kept with no model).
+
 ## 13. Phase K. Signals
 
 ### What changes
@@ -535,6 +547,10 @@ raised ──TIMER signalExpiryDays──▶ expired                            
 - M29: on ACCEPT, DISMISS and expiry store the level and the condition's episode (when it started); DETECTED raises only when there is no memory, the episode is new, or it is worse. Otherwise an accepted signal comes back every night.
 - M29: "worse" is compared within one episode, so a condition that ends and comes back is raised again.
 - M29: draw the stale-work escalation, `raised(owner) --TIMER ownerAnswerDays--> raised(PM and Leads)`; the expiry clock starts there.
+
+### Built (wave 3)
+
+See `atlas-conversational-wave-3.md`. M29 with six rules, levels in steps, Accept through M15 with the covering risk checked again at the tap, and pausing by a PM (CD13). The "Atlas noticed" inbox item, Accept, Add to and Dismiss are in the browser story. Waiting for review: W3-D8 (Accept files an open risk), W3-D9 (pausing PM only), W3-D10 (no clock override for the story).
 
 ## 14. Phase L. Undo, "why did you file that?", and corrections
 
@@ -668,6 +684,10 @@ New topics, answered only where the asker holds the role:
 | LD9 | Someone who updated in a group (phase I) | Counts as updated |
 | LD10 | Asked as a follow-up ("And last week?") | DECIDE: not_updated is today only (default); no history of who missed which day |
 
+### Built (wave 3)
+
+See `atlas-conversational-wave-3.md`. Topics `not_updated` (saved updates only), `my_decisions`, `at_risk_week` (with K's signals), `portfolio` and `who_free`. The lead digest waits on phase F. An executive's whole-org view waits on KB F16. Waiting for review: W3-D7 (unsaved updates don't count).
+
 ## 17. Phase O. Meetings
 
 ### What changes
@@ -782,6 +802,10 @@ A new topic `explain_project`: "What is Forager?", "Explain Store Insights", "I'
 | EX4 | An outside contact asks | The client view only |
 | EX5 | Ambiguous name ("Insights") | Matched by alias; if two fit, asks (M21) |
 | EX6 | Asked in a group (phase I) | Answered with the group's shared facts only |
+
+### Built (wave 3)
+
+See `atlas-conversational-wave-3.md`. Topic `explain_project`; the client view needs `project_contacts.client_view` and a connected group. EX5 still says "Say it again with its name", and EX6 waits on phase I. Waiting for review: W3-D11 (who turns the client view on), W3-D12 (EX5 as a clarification).
 
 ## 20. Phase R. Jamaican English and Patois
 
