@@ -103,28 +103,28 @@
     {
       "idx": 14,
       "version": "7",
-      "when": 1793143988400,
+      "when": 1793152527861,
       "tag": "0014_clarifications",
       "breakpoints": true
     },
     {
       "idx": 15,
       "version": "7",
-      "when": 1793147797330,
+      "when": 1793152535713,
       "tag": "0015_standups",
       "breakpoints": true
     },
     {
       "idx": 16,
       "version": "7",
-      "when": 1793152117169,
+      "when": 1793152536147,
       "tag": "0016_signals",
       "breakpoints": true
     },
     {
       "idx": 17,
       "version": "7",
-      "when": 1793152285253,
+      "when": 1793152540811,
       "tag": "0017_client_view",
       "breakpoints": true
     }

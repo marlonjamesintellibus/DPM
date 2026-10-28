@@ -105,6 +105,8 @@ test("Section 18. Kemar asks what he is working on: his open work, each linked t
 
 test("Phase Q. Kemar asks what GQ is and where to start: who owns it, its empty plan, and who to ask (EX2)", async () => {
   await page.getByRole("link", { name: "New", exact: true }).click();
+  // The new conversation's welcome first, so the question goes to it and not to the one being left
+  await expect(page.getByText("You can also ask me what needs you")).toBeVisible();
   const box = page.getByRole("textbox", { name: "Message to Atlas" });
   await box.fill("I'm new on GQ, where do I start?");
   await box.press("Enter");
