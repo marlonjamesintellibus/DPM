@@ -70,6 +70,13 @@ export type RawProposal = {
    * every record they could mean, targetId among them. DPM asks the author which (M21).
    */
   targetOptions?: readonly string[] | null;
+  /**
+   * Phase E, commitment: what the author promised, in plain words ("Send Kyle the access request"). newValue
+   * "done" says a live commitment of theirs is done (CM6); targetId names a record or entry it is about.
+   */
+  promise?: string | null;
+  /** Phase E: the author's live commitment the same promise matches (CM5), or the one it says is done (CM6). */
+  commitmentId?: string | null;
   /** The exact words, found in the capture text by check 2. */
   quote: string;
   confidence: Confidence;
@@ -129,6 +136,8 @@ export type CheckContext = {
   earlier?: readonly EarlierTurn[];
   /** Phase B: the answer open in this conversation, whose lines a reply may act on ("Approve the Kyle risk"). */
   openAnswer?: OpenAnswer | null;
+  /** Phase E, M22: the author's own live commitments, the only ones a promise matches or an update says are done (CD3). */
+  commitments?: readonly LiveCommitment[];
   /**
    * Phase J: the message is a standup's answers (M28). Check 2 looks for a quote only in these spans, each
    * answer and each question a tap answered, so words Atlas reads are never quoted from DPM's own question.
@@ -136,6 +145,9 @@ export type CheckContext = {
    */
   standup?: { quoteIn: readonly SourceSpan[] };
 };
+
+/** Phase E: a live commitment as Atlas is shown it: what, when, its state and the record it names. */
+export type LiveCommitment = { id: string; what: string; dueOn: IsoDate; state: string; linkId: string | null };
 
 /** One line of the open answer as Atlas is shown it: what it is, and what the asker may do on it. */
 export type OpenLine = { line: number; title: string; detail: string | null; subject: CommandSubject | null; acts: readonly CommandAct[] };

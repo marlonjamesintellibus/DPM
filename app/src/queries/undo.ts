@@ -24,9 +24,14 @@ export async function readReceipt(conn: Conn, captureId: string): Promise<Stored
   return row ? receiptOf(row) : null;
 }
 
-/** W2-D1: how many Asks to an owner a save made that are still waiting; undoing withdraws them. */
+/**
+ * W2-D1: how many Asks to an owner a save made that are still waiting; undoing withdraws them. Phase E, as CD34:
+ * and the commitments it opened that are still open and never moved; undoing drops them, as their owner.
+ */
 export async function liveAsksOfSave(conn: Conn, captureId: string): Promise<number> {
-  return (await conn.select({ id: t.ownerAsks.id }).from(t.ownerAsks).where(and(eq(t.ownerAsks.captureId, captureId), eq(t.ownerAsks.state, "asked")))).length;
+  const asks = await conn.select({ id: t.ownerAsks.id }).from(t.ownerAsks).where(and(eq(t.ownerAsks.captureId, captureId), eq(t.ownerAsks.state, "asked")));
+  const promises = await conn.select({ id: t.commitments.id }).from(t.commitments).where(and(eq(t.commitments.captureId, captureId), eq(t.commitments.state, "open"), eq(t.commitments.moves, 0)));
+  return asks.length + promises.length;
 }
 
 /** "Undo that": the author's last save, whatever came after it. */

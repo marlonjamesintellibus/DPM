@@ -9,7 +9,9 @@
 // then expire (phase L, M31), once a day the signal rules run over every project (phase K, M29: snoozes end,
 // stale work goes on to PM and Leads, unanswered signals expire, new trouble is raised), and a standup
 // question left config.standupIdleMinutes composes what was answered, read at once, or abandons it (phase J,
-// M28). Each timer is one command and safe to run again; a reminder never decides anything.
+// M28), and a promise is due at the end of its day, checked in on from config.commitmentCheckInTime on a
+// working day its owner is in, and lapses unanswered (phase E, M22). Each timer is one command and safe to run
+// again; a reminder never decides anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
 import type { Extractor } from "./atlas/extractor";
@@ -19,6 +21,7 @@ import { runBraidReminders, runDependencyDue, runKindRequestReminders } from "./
 import { runCaptureTimers } from "./commands/capture";
 import { runChatCommandTimers } from "./commands/chat-command";
 import { runClarificationTimers } from "./commands/clarification";
+import { runCommitmentTimers } from "./commands/commitment";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
@@ -39,7 +42,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   const db = opts.db ?? (await getDb());
   const now = opts.now ?? appNow;
   const run: TimerRun = { failed: [], read: [] };
-  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runClarificationTimers, runVocabularyTimers, runSignalTimers]) {
+  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runClarificationTimers, runVocabularyTimers, runSignalTimers, runCommitmentTimers]) {
     // One failing timer does not stop the others; it runs again next minute
     try {
       await timer({ db, now: now() });

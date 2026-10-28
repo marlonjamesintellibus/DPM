@@ -317,7 +317,7 @@ function ItemCard({
         {/* The footnote number, quiet: it only says which words this card came from */}
         <span className="w-3 shrink-0 pt-0.5 text-right type-micro text-fg-3">{item.ordinal}</span>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          {item.braidKind && <KindChip>{item.kindLabel}</KindChip>}
+          {(item.braidKind || item.kind === "commitment") && <KindChip>{item.kindLabel}</KindChip>}
           <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="type-body-medium text-fg-1">{item.title}</span>
             {warn && <span className="rounded-sm bg-warn-soft px-1.5 type-micro text-warn">Needs your OK</span>}

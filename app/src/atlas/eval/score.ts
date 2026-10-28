@@ -11,6 +11,13 @@ export function itemKey(i: ExtractedItemDraft): string {
   if (i.target && i.ask) return `ask:${i.target.id}.${i.target.field}=${i.target.newValue}`;
   if (i.target) return `upd:${i.target.id}.${i.target.field}=${i.target.newValue}`;
   if (i.newWork) return `track:${i.projectId ?? "none"}`;
+  // Phase E: the author's own promise, with what it names and the day the server read; the same promise again
+  // (CM5) names the commitment it moves, and one said done (CM6) the commitment it ends
+  if (i.commitment) {
+    const c = i.commitment;
+    if (c.act === "done") return `promise-done:${c.commitmentId}`;
+    return c.commitmentId ? `same-promise:${c.commitmentId}@${c.dueOn}` : `promise:${c.link?.id ?? "none"}@${c.dueOn}`;
+  }
   // Section 20, U3: a risk, assumption or dependency says how it ended
   if (i.kind === "braid_resolve") return i.braid?.outcome ? `outcome:${i.braid.matchEntryId}=${i.braid.outcome}` : `resolve:${i.braid?.matchEntryId}`;
   if (i.braid?.match === "same_as") return `same:${i.braid.matchEntryId}`;

@@ -13,7 +13,7 @@ import { displayMark, type ExtractedItem, type ItemState, type WithdrawReason } 
 import { landsAs, type BraidKind, type ProjectRole } from "../domain/rights";
 import { mayReadCapture } from "../domain/routing";
 import { setAside, type SetAside, type StoredDrop } from "../domain/set-aside";
-import type { Confidence, ExtractedItemDraft, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
+import type { CommitmentDraft, Confidence, ExtractedItemDraft, ItemKind, MatchState, RoutingState, SourceSpan } from "../domain/shared";
 import type { WorkItemState } from "../domain/status/rules";
 import { firstName, KIND_LABEL, NOT_YOURS, projectReader, shortDate, WORK_STATE_LABEL, type NotYours, type PersonRef } from "./project";
 import { composedRead } from "./standup";
@@ -157,7 +157,8 @@ export function withSetAside(line: string, s: SetAside): string {
 }
 
 export function countsLine(c: ReviewCounts, separator: "; " | ". "): string {
-  const head = `${plural(c.changes, "update", "updates")} for ${plural(c.projects, "project", "projects")}`;
+  // Phase E: a promise (or leave) alone is the author's own, so it is not "for 0 projects"
+  const head = `${plural(c.changes, "update", "updates")} for ${c.projects ? plural(c.projects, "project", "projects") : "you"}`;
   const waits = [c.needsOk ? `${plural(c.needsOk, "needs", "need")} your OK` : null, c.needsProject ? `${plural(c.needsProject, "needs", "need")} a project` : null].filter(Boolean);
   return waits.length ? `${head}${separator}${waits.join("; ")}.` : `${head}.`;
 }
@@ -214,6 +215,8 @@ function editOf(item: ExtractedItem): ReviewItem["edit"] {
   if (d.kind === "braid_resolve") return null;
   if (d.braid) return { input: "text", value: item.value ?? d.braid.title, options: [] };
   if (d.newWork) return { input: "text", value: item.value ?? d.newWork.title, options: [] };
+  // Phase E, CM2: the day a promise is due by, shown to correct; one said done has nothing to change
+  if (d.commitment) return d.commitment.act === "promise" ? { input: "date", value: item.value ?? d.commitment.dueOn ?? "", options: [] } : null;
   const target = d.target;
   if (!target) return null;
   const value = item.value ?? target.newValue;
@@ -333,6 +336,33 @@ export function targetChange(item: ExtractedItem, records: TargetRecords): strin
   }
 }
 
+/** "Wed 21 Oct" */
+const dayDate = (s: string) => `${weekday(s).slice(0, 3)} ${shortDate(s)}`;
+
+/**
+ * Phase E: what saving a promise does. "Due Wed 21 Oct, you said "tomorrow"" (CM2: a vague day says how it was
+ * read; CD4: none said is the next working day), "Moves your promise from Mon 19 Oct to Fri 23 Oct" (CM5), "Mark
+ * your promise done" (CM6). The record it names only while the author can open its project (P10, CM9).
+ */
+function promiseChange(item: ExtractedItem, c: CommitmentDraft, reader: { mayRead: (projectId: string) => boolean }): string {
+  const about = c.link && reader.mayRead(c.link.projectId) ? ` · ${c.link.label}` : "";
+  if (c.act === "done") return item.state === "no_change" ? "Already done" : "Mark your promise done";
+  const day = item.value ?? c.dueOn ?? "";
+  if (item.state === "no_change") return c.commitmentId && c.seenDue === day ? `Already due ${dayDate(day)}` : `Already done${about}`;
+  if (c.commitmentId && c.seenDue) return `Moves your promise from ${dayDate(c.seenDue)} to ${dayDate(day)}${about}`;
+  const how =
+    item.state === "edited" || day !== c.dueOn
+      ? ""
+      : c.dueFrom === "said" && c.dueWords
+        ? `, you said "${c.dueWords}"`
+        : c.dueFrom === "vague" && c.dueWords
+          ? `, read from "${c.dueWords}"`
+          : c.dueFrom === "none"
+            ? ": no day said, so the next working day"
+            : "";
+  return `Due ${dayDate(day)}${how}${about}`;
+}
+
 export async function getReview(conn: Conn, viewerId: string, captureId: string): Promise<Review | NotYours> {
   const [capture] = await conn.select().from(t.captures).where(eq(t.captures.id, captureId));
   if (!capture || !mayReadCapture({ personId: viewerId }, capture)) return NOT_YOURS;
@@ -382,6 +412,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const titleOf = (item: ExtractedItem): string => {
     const d = item.draft;
     if (d.newWork) return `New work: ${item.value ?? d.newWork.title}`;
+    if (d.commitment) return d.commitment.what;
     if (d.braid) {
       if (d.kind === "braid_same" || d.kind === "braid_resolve" || d.braid.match === "same_as") return entries.find((e) => e.id === d.braid!.matchEntryId)?.title ?? d.braid.title;
       return item.value ?? d.braid.title;
@@ -428,6 +459,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
   const nameIn = (personId: string) => firstName(memberships.find((m) => m.personId === personId)?.name ?? personId);
   const changeOf = (item: ExtractedItem): string => {
     const d = item.draft;
+    if (d.commitment) return promiseChange(item, d.commitment, reader);
     if (d.newWork) {
       const pm = memberships.find((m) => m.projectId === d.projectId && m.role === "pm" && m.state === "member" && m.personId !== capture.authorId);
       return `${pm ? `Propose to ${firstName(pm.name)}, the PM` : "Propose to the PM"}: ${WORK_STATE_LABEL[d.newWork.state]}`;
@@ -444,7 +476,7 @@ export async function getReview(conn: Conn, viewerId: string, captureId: string)
       id: item.id,
       ordinal: d.ordinal,
       kind: d.kind,
-      kindLabel: d.braid ? `BRAID · ${KIND_LABEL[d.braid.kind]}` : d.newWork ? "New work" : "Update",
+      kindLabel: d.braid ? `BRAID · ${KIND_LABEL[d.braid.kind]}` : d.newWork ? "New work" : d.commitment ? "Promise" : "Update",
       braidKind: d.braid?.kind ?? null,
       title: titleOf(item),
       change: changeOf(item),

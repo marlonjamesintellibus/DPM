@@ -5,7 +5,8 @@
 // and a one-sentence reply that decides lines of the open answer (phase B: "Approve the refresh decision"),
 // and "Start my standup" (phase J): a standup of taps never reaches a model, and typed answers need one.
 // Phase D adds one recording: a vague update whose words fit two of Kemar's records, so the browser story
-// can answer Atlas's question (M21). Phase K adds one: the store feed blocker said again (S14).
+// can answer Atlas's question (M21). Phase K adds one: the store feed blocker said again (S14). Phase E adds one:
+// Kemar's own promise, a commitment (M22).
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
 import { ruleCommands } from "../domain/acting";
@@ -47,10 +48,31 @@ const FEED_STILL_BLOCKED_PROPOSALS: readonly RawProposal[] = [
   },
 ];
 
+/**
+ * Phase E's story step: Kemar's own promise about #151, a commitment for his review (M22). "Tomorrow" is read by
+ * the server against when he says it, and the card shows the day to correct (CM2).
+ */
+export const KEMAR_PROMISE = "I'll send Kyle the access request for #151 tomorrow.";
+const KEMAR_PROMISE_PROPOSALS: readonly RawProposal[] = [
+  {
+    kind: "commitment",
+    projectId: null,
+    routingReason: { basis: "personal", evidence: "I'll", label: "Your promise" },
+    targetId: "wi-151",
+    newValue: "promised",
+    promise: "Send Kyle the access request",
+    commitmentId: null,
+    quote: "I'll send Kyle the access request for #151 tomorrow",
+    confidence: "high",
+    rationale: "You promised to send it, so DPM checks on it when it is due.",
+  },
+];
+
 const RECORDINGS = new Map<string, readonly RawProposal[]>([
   [KEMAR_NOTE, KEMAR_PROPOSALS],
   [VAGUE_FEED, VAGUE_FEED_PROPOSALS],
   [FEED_STILL_BLOCKED, FEED_STILL_BLOCKED_PROPOSALS],
+  [KEMAR_PROMISE, KEMAR_PROMISE_PROPOSALS],
 ]);
 
 export function createFixtureExtractor(recordings: ReadonlyMap<string, readonly RawProposal[]> = RECORDINGS): Extractor {

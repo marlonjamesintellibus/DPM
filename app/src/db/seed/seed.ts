@@ -14,6 +14,7 @@ import {
   ALICIA_SETS,
   BRAID,
   BRAID_LINKS,
+  COMMITMENTS,
   CONTACTS,
   GROUPS,
   HANDOVER,
@@ -91,6 +92,7 @@ export async function seedSnapshot(db: Db, options: SeedOptions = {}): Promise<S
     await tx.insert(t.handovers).values(handover);
     await tx.insert(t.handoverSteps).values(steps.map((s, i) => ({ ...s, handoverId: HANDOVER.id, position: i + 1 })));
     await tx.insert(t.leave).values(LEAVE);
+    await tx.insert(t.commitments).values(COMMITMENTS);
 
     const { messageId, ...kemarCapture } = KEMAR_CAPTURE;
     const capture = {

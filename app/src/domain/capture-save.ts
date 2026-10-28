@@ -7,7 +7,8 @@ import { config, type Config } from "./config";
 import type { CaptureEvent, CaptureState } from "./machines/capture";
 import { applyItemEvent, isReady, UNDECIDED_STATES, type ExtractedItem, type ItemState } from "./machines/extracted-item";
 import type { BraidKind } from "./rights";
-import type { TargetType } from "./shared";
+import type { CommitmentDraft, TargetType } from "./shared";
+import { LIVE_COMMITMENT, type CommitmentState } from "./machines/commitment";
 import type { ResolveOutcome } from "./machines/braid-entry";
 
 /**
@@ -69,6 +70,27 @@ export type PlannedAsk = {
   title: string | null;
 };
 
+/**
+ * Phase E, M22: what Save does with the author's own promise, run as its owner. A promise opens a commitment, or
+ * moves the live one it matches to its new day (CM5); standsAsked saves it with CM11's question asked (its linked
+ * work was cancelled). A done item ends the live commitment it names (CM6).
+ */
+export type PlannedCommitment =
+  | { itemId: string; act: "promise"; what: string; dueOn: string; link: CommitmentDraft["link"]; matchId: string | null; standsAsked: boolean }
+  | { itemId: string; act: "done"; commitmentId: string };
+
+/**
+ * Phase E: the keys Save reads for a commitment item, as current values (the model's recordAtSave): the linked
+ * work item's state, and the matched or named commitment's state and due day.
+ */
+export function commitmentKeys(item: ExtractedItem): string[] {
+  const c = item.draft.commitment;
+  if (item.draft.kind !== "commitment" || !c) return [];
+  const keys = c.link?.type === "work_item" ? [`work_item:${c.link.id}:state`] : [];
+  if (c.commitmentId) keys.push(`commitment:${c.commitmentId}:state`, `commitment:${c.commitmentId}:due`);
+  return keys;
+}
+
 export type SaveConflict = { itemId: string; key: string; saw: string | null; current: string | null };
 
 export type SavePlan =
@@ -80,6 +102,7 @@ export type SavePlan =
       writes: PlannedWrite[];
       braid: BraidIntent[];
       asks: PlannedAsk[];
+      commitments: PlannedCommitment[];
       /** The target already has the new value (E2, E25): skipped, shown as no change. */
       noChange: string[];
       /** Applied before (another session, a retry): never applied again. */
@@ -126,8 +149,32 @@ export function planSave(
   const writes: PlannedWrite[] = [];
   const braid: BraidIntent[] = [];
   const asks: PlannedAsk[] = [];
+  const commitments: PlannedCommitment[] = [];
   const noChange: string[] = [];
+  const isLive = (state: string | null) => state !== null && LIVE_COMMITMENT.includes(state as CommitmentState);
   for (const item of filed) {
+    // Phase E, M22: a promise or a done commitment is the author's own; it changes no project's record
+    const promise = item.draft.kind === "commitment" ? item.draft.commitment : undefined;
+    if (promise) {
+      const stateOf = (id: string) => valueOf(`commitment:${id}:state`);
+      if (promise.act === "done") {
+        const id = promise.commitmentId!;
+        const now = stateOf(id);
+        if (now === "done") noChange.push(item.id);
+        else if (isLive(now)) commitments.push({ itemId: item.id, act: "done", commitmentId: id });
+        // Dropped or lapsed since Atlas read it: nothing to mark done (the model's conflict)
+        else conflicts.push({ itemId: item.id, key: `commitment:${id}:state`, saw: item.saw, current: now });
+        continue;
+      }
+      // recordAtSave: the linked work item as it is now. Done is No change; cancelled saves with CM11's question
+      const linked = promise.link?.type === "work_item" ? valueOf(`work_item:${promise.link.id}:state`) : null;
+      // CM5: the match holds only while that commitment is live; otherwise this promise opens a new one
+      const matchId = promise.commitmentId && isLive(stateOf(promise.commitmentId)) ? promise.commitmentId : null;
+      const sameDay = matchId !== null && stateOf(matchId) === "open" && valueOf(`commitment:${matchId}:due`) === item.value;
+      if (linked === "done" || sameDay) noChange.push(item.id);
+      else commitments.push({ itemId: item.id, act: "promise", what: promise.what, dueOn: item.value!, link: promise.link, matchId, standsAsked: linked === "cancelled" });
+      continue;
+    }
     // Section 20, U7: new work changes no record; it asks the PM and Leads
     if (item.draft.kind === "new_work" && item.draft.newWork && item.draft.projectId) {
       const w = item.draft.newWork;
@@ -168,7 +215,7 @@ export function planSave(
   }
   // All or nothing (S3): one conflict and nothing is applied
   if (conflicts.length && (opts.applyMode ?? config.applyMode) === "all_or_nothing") return { outcome: "conflict", conflicts };
-  return { outcome: "apply", writes, braid, asks, noChange, alreadyApplied, keptPrivate, conflicts };
+  return { outcome: "apply", writes, braid, asks, commitments, noChange, alreadyApplied, keptPrivate, conflicts };
 }
 
 /** Moves the items through M3 to match a plan once it has run (or, for a conflict, instead of running). */
@@ -177,7 +224,7 @@ export function settleItems(items: readonly ExtractedItem[], plan: SavePlan): Ex
   const conflicts = new Map(plan.conflicts.map((c) => [c.itemId, c]));
   const done =
     plan.outcome === "apply"
-      ? new Set([...plan.writes.map((w) => w.itemId), ...plan.braid.map((b) => b.itemId), ...plan.asks.map((a) => a.itemId), ...plan.alreadyApplied])
+      ? new Set([...plan.writes.map((w) => w.itemId), ...plan.braid.map((b) => b.itemId), ...plan.asks.map((a) => a.itemId), ...plan.commitments.map((c) => c.itemId), ...plan.alreadyApplied])
       : new Set<string>();
   const noChange = new Set(plan.outcome === "apply" ? plan.noChange : []);
   return items.map((item) => {

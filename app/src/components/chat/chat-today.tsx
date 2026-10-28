@@ -16,6 +16,7 @@ import { ChatSession } from "./chat-session";
 import { AcceptItem, AnswerFeedback, CopyReply, Suggestions, UndoSave } from "./reply-tools";
 import { CommandCard, LineActions } from "./command-cards";
 import { ClarifyButtons } from "./clarify";
+import { CommitmentButtons } from "./commitment";
 import { StandupButtons } from "./standup";
 import { ThinkingLine } from "./thinking";
 import { ConversationMenu } from "./conversation-menu";
@@ -79,7 +80,7 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
             <AtlasLine>
               <span>
                 Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what
-                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, how a project stands, what a teammate is working on, or what a
+                needs you, what you&rsquo;re working on, what&rsquo;s due, what you promised, any updates, who mentioned you, what is blocked, how a project stands, what a teammate is working on, or what a
                 project is and where to start on it.
                 {lead && " As a lead, you can also ask who hasn\u2019t updated today, what needs your decision, what\u2019s at risk this week, how all your projects stand, or who can pick up a piece of work."}{" "}
                 Or I can ask you, in a short standup.
@@ -124,6 +125,9 @@ function Messages({ thread, at, helpOn }: { thread: Thread; at: Date; helpOn: bo
           <span>
             {n.text} <span className="type-micro text-fg-3">· {n.time}</span>
           </span>
+          {/* Phase E, M22: a check-in on their promise, answered here, in the inbox, or by typing it */}
+          {n.promise && <CommitmentButtons id={n.promise.id} mode={n.promise.mode} today={n.promise.today} dropFirst={n.promise.dropFirst} />}
+          {n.promiseOutcome && <span className="type-caption text-fg-3">{n.promiseOutcome}</span>}
         </AtlasLine>
       ),
     })),

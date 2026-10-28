@@ -4,7 +4,7 @@
 // items are read, and only for projects they may still read.
 import { and, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
-import { loadBraidLog, loadCapture, loadItems, setStatusRecordOf } from "../db/records";
+import { commitmentOf, loadBraidLog, loadCapture, loadItems, setStatusRecordOf } from "../db/records";
 import { saveBlockers } from "../domain/machines/capture";
 import * as t from "../db/schema";
 import { switchedTo, type BraidEntryRecord } from "../domain/machines/braid-entry";
@@ -14,6 +14,9 @@ import type { InboxItemState } from "../domain/machines/inbox-item";
 import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
 import { getLeaveImpact } from "./leave";
+import { linkLabel, lowerFirst } from "../commands/commitment";
+import { asksDrop } from "../domain/machines/commitment";
+import { weekday } from "../domain/dates";
 import { describeOwnerAsk } from "./owner-ask";
 import { signalsFor } from "./signals";
 import { OUTCOME_SAID } from "./review";
@@ -50,7 +53,11 @@ export type InboxCause =
   /** Phase L, M31: a correction to the project's vocabulary waits for a PM or Lead. */
   | "vocab_change"
   /** Phase K, M29: trouble Atlas noticed that nobody reported, one item per project per day (SG10). */
-  | "signals";
+  | "signals"
+  /** Phase E, M22: a check-in on the viewer's own promise, due and not answered yet (a notice in the chat too). */
+  | "commitment_check"
+  /** Phase E, CM11: the work the viewer's promise was about was cancelled; does it still stand? */
+  | "commitment_stands";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -66,7 +73,9 @@ export type InboxSubject =
   | { type: "owner_ask"; id: string; projectId: string }
   | { type: "vocabulary_change"; id: string; projectId: string }
   /** id is "<project>@<day>": the signals that reached the viewer on that project that day. */
-  | { type: "signals"; id: string; projectId: string; day: string };
+  | { type: "signals"; id: string; projectId: string; day: string }
+  /** Phase E: the viewer's own commitment; it belongs to no project (CD3). */
+  | { type: "commitment"; id: string };
 
 export type InboxEntry = {
   id: string;
@@ -100,7 +109,8 @@ export type Inbox = {
 
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
 const WORK_CAUSES: readonly string[] = ["done_no_change", "blocked_without_blocker"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change", "signals"];
+const PROMISE_CAUSES: readonly string[] = ["commitment_check", "commitment_stands"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, ...PROMISE_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change", "signals"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -300,7 +310,38 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
     });
   }
 
-  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask" && x.cause !== "signals")) {
+  // Phase E, M22: the viewer's own promise, checked in on or asked whether it still stands. Only the owner's, read
+  // as it is now: one answered or ended since is not shown (CD3, rule 4)
+  for (const p of parsed.filter((x) => PROMISE_CAUSES.includes(x.cause))) {
+    const [row] = await conn.select().from(t.commitments).where(eq(t.commitments.id, p.subjectId));
+    if (!row || row.ownerId !== viewerId) continue;
+    const c = commitmentOf(row);
+    const check = p.cause === "commitment_check";
+    if (check ? !(c.state === "checking" && c.checkInOut) : c.stands !== "asked") continue;
+    const age = ageOf(p.row.createdAt, now, false);
+    const label = await linkLabel(conn, viewerId, c.link);
+    items.push({
+      id: p.row.id,
+      causeKey: p.row.causeKey,
+      cause: p.cause,
+      state: p.row.state,
+      title: check ? `Did you ${lowerFirst(c.what)}?` : `Does your promise still stand? ${c.what}`,
+      why: check
+        ? `you said you would by ${weekday(c.dueOn).slice(0, 3)} ${shortDate(c.dueOn)}${asksDrop(c) ? `, and it has moved ${c.moves} times` : ""}; say it's done, give a new date, or drop it`
+        : `${label ?? "the work it was about"} was cancelled; keep it, or drop it`,
+      source: "Your promise",
+      age,
+      sourceLine: `Your promise · ${age}`,
+      action: check ? "Answer" : "Decide",
+      group: "today",
+      groupLabel: GROUP_LABEL.today,
+      subject: { type: "commitment", id: c.id },
+      project: null,
+      createdAt: p.row.createdAt,
+    });
+  }
+
+  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask" && x.cause !== "signals" && !PROMISE_CAUSES.includes(x.cause))) {
     const projectId = projectOf(p);
     const project = projectId ? projects.get(projectId) : undefined;
     if (!project) continue; // not readable any more, or the subject is gone

@@ -12,6 +12,7 @@ import type { Status } from "../domain/status/status";
 import type { Conn, Tx } from "./conn";
 import type { KindRequestRecord } from "../domain/machines/kind-request";
 import type { OwnerAskRecord } from "../domain/machines/owner-ask";
+import type { CommitmentRecord } from "../domain/machines/commitment";
 import type { LeaveRecord } from "../domain/machines/leave";
 import * as t from "./schema";
 
@@ -395,6 +396,46 @@ export async function persistOwnerAsk(tx: Tx, r: OwnerAskRecord, version: number
     .where(and(eq(t.ownerAsks.id, id), eq(t.ownerAsks.version, version)))
     .returning({ id: t.ownerAsks.id });
   expectOne(rows, `ask ${id}`);
+}
+
+type CommitmentRow = typeof t.commitments.$inferSelect;
+
+/** M22, phase E: a commitment row as its machine reads it. */
+export function commitmentOf(row: CommitmentRow): CommitmentRecord {
+  return {
+    id: row.id,
+    ownerId: row.ownerId,
+    captureId: row.captureId,
+    extractionId: row.extractionId,
+    what: row.what,
+    dueOn: row.dueOn,
+    link: row.linkType && row.linkId && row.linkProjectId ? { type: row.linkType, id: row.linkId, projectId: row.linkProjectId } : null,
+    state: row.state,
+    moves: row.moves,
+    checkIns: row.checkIns,
+    checkInOut: row.checkInOut,
+    checkInOn: row.checkInOn,
+    stands: row.stands,
+    savedOn: row.savedOn,
+    endedOn: row.endedOn,
+    endedBy: row.endedBy,
+  };
+}
+
+/** Inserts a new commitment (version null), or writes a move against the version it was read at. */
+export async function persistCommitment(tx: Tx, r: CommitmentRecord, version: number | null, now: Date): Promise<void> {
+  const { id, link, ...rest } = r;
+  const columns = { ...rest, linkType: link?.type ?? null, linkId: link?.id ?? null, linkProjectId: link?.projectId ?? null };
+  if (version === null) {
+    await tx.insert(t.commitments).values({ id, ...columns, createdAt: now, updatedAt: now });
+    return;
+  }
+  const rows = await tx
+    .update(t.commitments)
+    .set({ ...columns, version: nextVersion(t.commitments.version), updatedAt: now })
+    .where(and(eq(t.commitments.id, id), eq(t.commitments.version, version)))
+    .returning({ id: t.commitments.id });
+  expectOne(rows, `commitment ${id}`);
 }
 
 export function kindRequestOf(row: KindRequestRow): KindRequestRecord {

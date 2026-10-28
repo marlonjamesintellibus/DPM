@@ -7,11 +7,11 @@ import { OUTCOME_FROM, OUTCOMES, type BraidEntryState, type ResolveOutcome } fro
 import { fitLeave, type LeaveFit } from "../machines/leave";
 import { namesPerson } from "../names";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind, type ProjectRole } from "../rights";
-import { CONFIDENCES, lowerTo, NEW_WORK_STATES, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type NewWorkState, type RoutingState, type SourceSpan } from "../shared";
+import { CONFIDENCES, lowerTo, NEW_WORK_STATES, type CommitmentDraft, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type NewWorkState, type RoutingState, type SourceSpan } from "../shared";
 
 export { lowerTo };
-import { daysBetween } from "../dates";
-import { messageDay, readDateValue, readLeaveRange, resolveDate, type LeaveRange, type ResolvedDate } from "./resolve-dates";
+import { addWorkingDays, daysBetween } from "../dates";
+import { messageDay, readDateValue, readLeaveRange, readPromiseDate, resolveDate, type LeaveRange, type ResolvedDate } from "./resolve-dates";
 import type {
   CandidateProject,
   CandidateRecord,
@@ -20,6 +20,7 @@ import type {
   CheckOptions,
   CheckResult,
   DroppedProposal,
+  LiveCommitment,
   OpenBraidEntry,
   RawProposal,
 } from "./types";
@@ -125,6 +126,21 @@ type Work = {
   routedBy: { basis: "reference" | "tied_person"; word: string; personId: string | null } | null;
   /** Phase D: every record the words could mean, the target first, when there are two or more. */
   closeMatches: string[] | null;
+  /** Phase E: a promise, or a live commitment said to be done (CM6). */
+  promise: PromiseWork | null;
+};
+
+/** Phase E: what a commitment item carries through the checks. */
+type PromiseWork = {
+  act: CommitmentDraft["act"];
+  what: string;
+  link: CommitmentDraft["link"];
+  /** The linked work item's state as read now: a promise about Done work is No change (the model's recordAtSave). */
+  linkedState: string | null;
+  /** CM5: the live commitment the same promise matches; CM6: the one said to be done. */
+  match: LiveCommitment | null;
+  dueFrom: CommitmentDraft["dueFrom"];
+  dueWords: string | null;
 };
 
 type Scope = ReturnType<typeof scopeOf>;
@@ -248,7 +264,7 @@ function leaveFitOf(range: LeaveRange | null, ctx: CheckContext): LeaveFit | nul
 
 // ---- Checks 1 to 5: one proposal at a time ----
 
-const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same", "braid_resolve", "new_work"];
+const ITEM_KINDS: readonly string[] = ["update", "braid_new", "braid_same", "braid_resolve", "new_work", "commitment"];
 
 // Kind is tested before anything else because every later check depends on it (check 11 owns it)
 const knownKind: Check = [11, (w) => (ITEM_KINDS.includes(w.kind) ? null : `"${w.kind}" is not something Atlas may propose`)];
@@ -257,6 +273,7 @@ const targetInScope: Check = [
   1,
   (w, s) => {
     const p = w.p;
+    if (w.kind === "commitment") return readPromise(w, s);
     if (w.kind === "update") {
       if (!p.targetId) return null; // nothing named: at most a private note (check 9)
       const t = s.findTarget(p.targetId);
@@ -330,6 +347,15 @@ const fieldAllowed: Check = [
 
 // Date fields are read here once; check 4 needs to know if the date was relative, check 5 uses it
 function readDates(w: Work, s: Scope): void {
+  if (w.promise?.act === "promise") {
+    // CM2: a vague day ("next week") is read as the last day it allows; none at all is CD4's next working day
+    const span = w.spans[0];
+    const read = readPromiseDate(s.ctx.text.slice(span.start, span.end), s.ctx.messageAt);
+    w.date = read;
+    w.promise.dueFrom = read ? (read.vague ? "vague" : "said") : "none";
+    w.promise.dueWords = read ? s.ctx.text.slice(span.start + read.start, span.start + read.end) : null;
+    return;
+  }
   if (!isDateField(w)) return;
   const span = w.spans[0];
   const quote = s.ctx.text.slice(span.start, span.end);
@@ -354,6 +380,8 @@ const confidenceFloor: Check = [
     readDates(w, s);
     const d = w.leave ?? w.date;
     if (d && (d.relative || d.weekdayMismatch)) c = lowerTo(c, "medium"); // E13
+    // CD4: with no day said, the next working day is DPM's guess, so the author checks it on the card
+    if (w.promise?.dueFrom === "none") c = lowerTo(c, "medium");
     w.confidence = c;
     return null;
   },
@@ -362,6 +390,14 @@ const confidenceFloor: Check = [
 const datesResolve: Check = [
   5,
   (w, s) => {
+    if (w.promise?.act === "promise") {
+      const today = messageDay(s.ctx.messageAt);
+      if (w.date && daysBetween(today, w.date.date) < 0) return "that day has passed; a promise is for a day still to come";
+      // CD4: a promise with no day is due the next working day
+      w.newValue = w.date?.date ?? addWorkingDays(today, 1);
+      if (w.date?.weekdayMismatch) w.needsOk = true;
+      return null;
+    }
     if (!isDateField(w)) return null;
     if (w.target?.type === "leave") {
       if (!w.leave) return "no leave dates found in what you said";
@@ -389,6 +425,8 @@ function mergeKey(w: Work): string | null {
   }
   if (w.kind === "braid_same" && w.match) return `entry|${w.match.entry.id}`;
   if (w.kind === "braid_resolve" && w.match) return `resolve|${w.match.entry.id}`;
+  // CM5: the same promise twice in one message is one card; so is "done" said twice
+  if (w.promise?.match) return `${w.promise.act}|${w.promise.match.id}`;
   return null;
 }
 
@@ -448,6 +486,11 @@ const mark: Check = [
       if (fit?.kind === "change") w.newValue = leaveValue(fit.to.start, fit.to.end);
       if (fit?.kind === "matches" || fit?.kind === "change") w.oldValue = leaveValue(fit.kind === "matches" ? fit.range.start : fit.from.start, fit.kind === "matches" ? fit.range.end : fit.from.end);
       w.mark = fit?.kind === "matches" ? "matches_leave" : "needs_ok";
+    } else if (w.promise) {
+      // The model's recordAtSave, read now too: a promise about Done work, or the same promise with the same day
+      // as an open one (CM5), changes nothing; Save reads both again
+      const same = w.promise.act === "promise" && w.promise.match?.state === "open" && w.promise.match.dueOn === w.newValue;
+      w.mark = same || w.promise.linkedState === "done" ? "no_change" : !w.needsOk && w.confidence === "high" ? "pre_accepted" : "needs_ok";
     } else if (w.target?.type === "record" && w.target.record.type === "work_item" && w.field === "forecast" && w.target.record.values.state === "done") {
       w.mark = "no_change"; // WF3: finished work has nothing left to forecast
     } else if (w.target?.type === "record" && w.newValue !== null && w.oldValue !== null && norm(w.newValue) === norm(w.oldValue)) {
@@ -474,7 +517,11 @@ const projectIsCandidate: Check = [
       w.routingReason = reason;
     };
     w.scope = "project";
-    if (w.target?.type === "leave") {
+    if (w.kind === "commitment") {
+      // CD3: a promise is its author's alone, whatever record it names
+      w.scope = "personal";
+      route("routed", null, "Only you see your promises");
+    } else if (w.target?.type === "leave") {
       // E80: leave goes to "You" whatever project the model named
       w.scope = "personal";
       route("routed", null, "Personal");
@@ -574,11 +621,78 @@ function newWorkGuard(w: Work): string | null {
   return null;
 }
 
+// Phase E, CM3: words that say when the author will finish their own record are its forecast, not a promise
+const FINISHING = /\b(?:finish(?:ed)?|complete[ds]?|wrap(?:ped)?\s+(?:it\s+|this\s+|that\s+)?up|(?:get|have|be)\s+(?:it\s+|this\s+|that\s+)?done|done\s+(?:by|on|before)|close\s+(?:it\s+)?out|ship(?:ped)?|land(?:ed)?|a\s+go\s+done|ago\s+done|mi\s+(?:wi|will)\s+done)\b/i;
+
+const sameWords = (a: string, b: string) => {
+  const [x, y] = [contentWords(a), contentWords(b)];
+  return x.length > 0 && x.length === y.length && x.every((w) => y.includes(w));
+};
+
+/**
+ * Phase E, check 1 for a commitment: the record or entry it names must be one of the author's (CM9), and a live
+ * commitment it matches (CM5) or says is done (CM6) must be one of theirs (CD3). A promise to finish their own
+ * work item or milestone by a day is its forecast (CM3): the item becomes that update and goes on through the
+ * checks as one, so check 3 and check 5 read it as any forecast.
+ */
+function readPromise(w: Work, s: Scope): string | null {
+  const p = w.p;
+  const live = s.ctx.commitments ?? [];
+  const named = p.commitmentId ? (live.find((c) => c.id === p.commitmentId) ?? null) : null;
+  if (p.newValue?.trim() === "done") {
+    // CM6: only a live commitment of the author's; anything else is not theirs to say done
+    if (!named) return "I couldn't find that among your promises";
+    w.promise = { act: "done", what: named.what, link: null, linkedState: null, match: named, dueFrom: null, dueWords: null };
+    return null;
+  }
+  const found = p.targetId ? s.findTarget(p.targetId) : null;
+  const record = found?.type === "record" && found.record.type !== "handover" ? found : null;
+  // CM3: their own work item or milestone, finished by a day they name, is its forecast; with no day it stays a promise
+  if (record && record.record.ownerId === s.ctx.author.id && FINISHING.test(p.quote ?? "") && readDateValue(p.quote ?? "", s.ctx.messageAt, null)) {
+    const name = record.record.number ?? record.record.title;
+    w.kind = "update";
+    w.field = "forecast";
+    w.p = { ...p, kind: "update", targetId: record.record.id, field: "forecast", projectId: record.project.id, routingReason: { basis: "target", evidence: name, label: name } };
+    w.target = record;
+    return null;
+  }
+  // A link only to a record or entry the author can open now (P10, CM9); any other id is dropped, not echoed
+  const link: CommitmentDraft["link"] = record
+    ? { type: record.record.type as "work_item" | "milestone", id: record.record.id, projectId: record.project.id, label: describe(record) }
+    : found?.type === "entry"
+      ? { type: "braid_entry", id: found.entry.id, projectId: found.project.id, label: found.entry.title }
+      : null;
+  const what = p.promise?.trim() ?? "";
+  // CM5: the same promise as a live one moves its date; Atlas's match, or the same words
+  const match = named ?? live.find((c) => sameWords(c.what, what)) ?? null;
+  w.promise = { act: "promise", what, link, linkedState: record?.record.type === "work_item" ? (record.record.values.state ?? null) : null, match, dueFrom: null, dueWords: null };
+  return null;
+}
+
+// CD5: someone else's promise is theirs to make ("Kyle will send it", "Jodian seh she a go do it"); the author's
+// own words about doing it ("I'll", "mi a go", "let me") keep it theirs
+const SAYS_I_WILL = /\b(?:i'?ll|i\s+will|i'?m\s+(?:going\s+to|gonna)|i\s+am\s+going\s+to|i'?d|i\s+promised|i\s+can|we'?ll|we\s+will|let\s+me|imma|i'?ma|mi\s+(?:a\s+go|ago|wi|will|gwine|gonna|ah\s+go|fi)|me\s+(?:a\s+go|wi|will|gwine))\b/i;
+
+function promiseGuard(w: Work, s: Scope): string | null {
+  if (!w.promise) return null;
+  if (w.promise.act === "promise" && !w.promise.what) return "a promise needs what you promised";
+  const names = s.ctx.projects
+    .flatMap((p) => p.people)
+    .filter((x) => x.personId !== s.ctx.author.id)
+    .map((x) => escapeRegex(x.name.split(" ")[0]));
+  const someone = `he|she|they|him|dem|${[...new Set(names)].join("|")}`.replace(/\|$/, "");
+  const theirs = new RegExp(`\\b(?:${someone})(?:'ll|\\s+(?:will|wi|is\\s+going\\s+to|are\\s+going\\s+to|'s\\s+going\\s+to|gonna|a\\s+go|ago|gwine|promised\\s+to|said\\s+(?:he|she|they)(?:'d|\\s+would)))\\b`, "i");
+  const quote = s.quoteText(w);
+  if (w.promise.act === "promise" && theirs.test(quote) && !SAYS_I_WILL.test(quote)) return "that is someone else's promise; it is theirs to keep";
+  return null;
+}
+
 const kindAllowed: Check = [
   11,
   (w, s) => {
     if (w.kind === "update") return null;
     if (w.kind === "new_work") return newWorkGuard(w);
+    if (w.kind === "commitment") return promiseGuard(w, s);
     const kind = w.braidKind as BraidKind;
     if (!BRAID_KINDS.includes(kind)) return `"${w.braidKind ?? ""}" is not a BRAID kind`;
     // Any member may say it is cleared: with the right it resolves, without it it is a proposal (S13)
@@ -618,7 +732,7 @@ const noHealthNoJudgement: Check = [
       return null;
     }
     if (w.kind === "update") return null;
-    const said = `${quote}\n${w.p.braidTitle ?? ""}\n${w.p.workTitle ?? ""}`;
+    const said = `${quote}\n${w.p.braidTitle ?? ""}\n${w.p.workTitle ?? ""}\n${w.p.promise ?? ""}`;
     if (HEALTH.some((h) => mentions(said, h))) return "Atlas keeps health out of project logs; the private care route is there if you want it";
     if (JUDGEMENTS.some((j) => mentions(said, j))) {
       const named = s.ctx.projects.flatMap((p) => p.people).find((person) => mentions(said, person.name) || mentions(said, person.name.split(" ")[0]));
@@ -772,7 +886,20 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
   if (w.ask) draft.ask = { ownerId: w.ask };
   if (w.closeMatches) draft.closeMatches = { ids: w.closeMatches, chosen: null };
   if (w.kind === "new_work") draft.newWork = { title: w.p.workTitle!.trim(), state: w.newValue as NewWorkState };
-  if (w.kind !== "update" && w.kind !== "new_work") {
+  if (w.kind === "commitment" && w.promise) {
+    const pr = w.promise;
+    draft.commitment = {
+      act: pr.act,
+      what: pr.what,
+      dueOn: pr.act === "promise" ? w.newValue : null,
+      dueFrom: pr.act === "promise" ? pr.dueFrom : null,
+      dueWords: pr.dueWords,
+      link: pr.link,
+      commitmentId: pr.match?.id ?? null,
+      seenDue: pr.match?.dueOn ?? null,
+    };
+  }
+  if (w.kind !== "update" && w.kind !== "new_work" && w.kind !== "commitment") {
     const title = w.match && w.matchState === "same_as" ? w.match.entry.title : w.p.braidTitle?.trim() || s.quoteText(w);
     draft.braid = { kind: w.braidKind as BraidKind, title, match: w.matchState, matchEntryId: w.match?.entry.id ?? null };
     if (w.match) draft.braid.seenState = w.match.entry.state; // compared again at save (E83)
@@ -817,6 +944,7 @@ function start(p: RawProposal): Work {
     ask: null,
     routedBy: null,
     closeMatches: null,
+    promise: null,
   };
 }
 

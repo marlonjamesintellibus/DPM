@@ -17,7 +17,8 @@ export function lowerTo(confidence: Confidence, cap: Confidence): Confidence {
 /** update: changes a record. braid_new: proposes a new BRAID entry. braid_same: adds a source to an existing one. */
 /** braid_resolve (D7, E93): "Kyle sent the feed" resolves a blocker or issue, or proposes it to those who may. */
 /** new_work (section 20, U7): work with no record, proposed to the PM and Leads. */
-export type ItemKind = "update" | "braid_new" | "braid_same" | "braid_resolve" | "new_work";
+/** commitment (conversational plan, phase E, M22): the author's own promise, or that one of theirs is done (CM6). */
+export type ItemKind = "update" | "braid_new" | "braid_same" | "braid_resolve" | "new_work" | "commitment";
 
 /** M14. routed: filed in a project (or personal). choose_project: two or more fit. not_filed: none fits; stays private. */
 export type RoutingState = "routed" | "choose_project" | "not_filed";
@@ -87,6 +88,27 @@ export type ExtractedItemDraft = {
    * chosen: where the author said which (M21 in the chat, or the review); until then it needs their OK.
    */
   closeMatches?: { ids: string[]; chosen: "chat" | "review" | null };
+  /** Phase E, M22: the author's own promise (act promise), or that a live one of theirs is done (act done, CM6). */
+  commitment?: CommitmentDraft;
+};
+
+/**
+ * Phase E. A promise is private to its author (CD3), so its item is personal ("You"), whatever it names.
+ * dueOn: the day it is due by, read by the server; the item's value, which the author corrects on the card (CM2).
+ * dueFrom: said (the words name a day), vague ("next week", read as a day, CM2) or none (CD4: the next working day).
+ * link: the record or BRAID entry the words name, one the author can open (CM9); label as the card shows it.
+ * commitmentId: CM5, the live commitment the same promise matches (its date moves); CM6, the one said to be done.
+ */
+export type CommitmentDraft = {
+  act: "promise" | "done";
+  what: string;
+  dueOn: IsoDate | null;
+  dueFrom: "said" | "vague" | "none" | null;
+  dueWords: string | null;
+  link: { type: "work_item" | "milestone" | "braid_entry"; id: string; projectId: string; label: string } | null;
+  commitmentId: string | null;
+  /** The matched commitment's due date when Atlas read it, so the card says what moves. */
+  seenDue: IsoDate | null;
 };
 
 /** The states new work may start in: what the author said they are doing. */

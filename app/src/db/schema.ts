@@ -23,6 +23,7 @@ import type { BraidAnswer, BraidEntryState, BraidLinkRelation, ProposedOutcome, 
 import type { CaptureState } from "../domain/machines/capture";
 import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy, WordAct } from "../domain/machines/chat-command";
 import type { ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
+import type { CommitmentEnd, CommitmentLink, CommitmentState } from "../domain/machines/commitment";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
@@ -760,6 +761,41 @@ export const signalMemory = pgTable(
     updatedAt: updated(),
   },
   (t) => [primaryKey({ columns: [t.projectId, t.rule, t.subjectId] })],
+);
+
+// ---- Commitments (phase E, M22) ----
+
+/**
+ * M22. The author's own promise, saved from their review ("I'll send Kyle the access request tomorrow").
+ * Private to its owner (CD3): no project reads it, and the link names only a record they can open (CM9).
+ */
+export const commitments = pgTable(
+  "commitments",
+  {
+    id: text("id").primaryKey(),
+    ownerId: text("owner_id").notNull().references(() => people.id),
+    /** The message and item it was saved from; null only for one from before DPM kept them (the seed). */
+    captureId: text("capture_id").references(() => captures.id),
+    extractionId: text("extraction_id").references(() => extractions.id),
+    what: text("what").notNull(),
+    dueOn: day("due_on").notNull(),
+    linkType: text("link_type").$type<CommitmentLink["type"]>(),
+    linkId: text("link_id"),
+    linkProjectId: text("link_project_id").references(() => projects.id),
+    state: text("state").$type<CommitmentState>().notNull(),
+    moves: integer("moves").notNull().default(0),
+    checkIns: integer("check_ins").notNull().default(0),
+    checkInOut: boolean("check_in_out").notNull().default(false),
+    checkInOn: day("check_in_on"),
+    stands: text("stands").$type<"asked" | "kept">(),
+    savedOn: day("saved_on").notNull(),
+    endedOn: day("ended_on"),
+    endedBy: text("ended_by").$type<CommitmentEnd>(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("commitments_owner_state").on(t.ownerId, t.state), index("commitments_link").on(t.linkId)],
 );
 
 // ---- Notices (D15) ----

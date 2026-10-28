@@ -32,7 +32,11 @@ import { CONFIDENCES } from "../domain/shared";
 // questions for leads and executives, topics who_free, not_updated (today only, LD10), my_decisions,
 // at_risk_week and portfolio. Phase Q: the explain_project topic ("What is Forager?"), and a name that fits
 // two listed projects names neither (EX5). Phase K adds nothing to the prompt.
-export const PROMPT_VERSION = "read-16";
+// read-wave4-e, phase E: the author's own promise is a commitment item, matched to a listed live one when it is
+// the same promise (CM5), and an update that says one was done says so (CM6); a promise to finish their own
+// record by a day stays its forecast (CM3), and someone else's promise is never theirs (CD5). The author's live
+// commitments are listed with the projects.
+export const PROMPT_VERSION = "read-wave4-e";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -66,9 +70,15 @@ What you may propose (kind)
   - A slip the author expects is a risk.
   - A slip that names no milestone or date: still a risk, and the rationale says the update does not say which date slips, so the PM can ask.
   - Work someone else has agreed to do, that the project waits on, is a dependency: "I've spoken with Kyle to update the harvest docs, he'll do it tomorrow". The title says who, what and by when, as a date worked out from when the update was sent: "Kyle to update the harvest docs by 21 Oct", never "by tomorrow". Quote the words with the date, so DPM can read it. It is never a promise for the author.
-  - If it is the author's own promise ("I'll send Kyle the request"), propose nothing for it. Something agreed is a decision, and it is only proposed: a decision is never approved by the update.
+  - If it is the author's own promise ("I'll send Kyle the request"), it is a commitment, never a BRAID entry. Something agreed is a decision, and it is only proposed: a decision is never approved by the update.
   - If it relates to an open entry of another kind, put that entry's id in matchEntryId.
   - A decision that reverses or replaces a listed decision ("we're going back to 5am" after "move the refresh to 6am"): a new decision, with that decision's id in supersedes. Never braid_same: it says something different. It is proposed like any other decision.
+- "commitment": something the author promises to do themselves ("I'll send Kyle the access request tomorrow", "Let me check the export with Andre on Friday", "Mi a go send it tumaro"). projectId null, routing basis "personal". promise: what they will do, in plain words, starting with the verb ("Send Kyle the access request"). newValue: "promised". Quote the words with the day, so DPM can read it; leave the day out of promise.
+  - targetId: the listed record or BRAID entry it is about, when the words name one ("the access request for #151"); otherwise null.
+  - When it is the same promise as one listed under the author's commitments (said again, or with a new day), put that commitment's id in commitmentId. Otherwise commitmentId is null.
+  - When the update says the author did something listed under their commitments ("Sent Kyle the request"), propose kind "commitment" with newValue "done" and that commitment's id in commitmentId, quoting the words that say it.
+  - Not a commitment: finishing or delivering their own listed work item or milestone by a day ("I'll finish #147 Monday") is that record's forecast; propose the update. Someone else's promise ("Kyle will send it", "Jodian said she'd do it") is never the author's: a dependency when the project waits on it, otherwise nothing. Work already done, or a plan with no promise in it, is not one either.
+  - A promise is the author's own and private: it never goes to a project.
 - "braid_same": the update reports the same thing as an open BRAID entry already listed. Put that entry's id in matchEntryId and its kind in braidKind.
 - "braid_resolve": the update says a listed blocker or issue is cleared ("Kyle sent the feed"). Put that entry's id in matchEntryId. If the work it held is moving again, also propose the work item's state change. DPM decides whether the author may resolve it or only tells those who may.
   - Also when a listed risk, assumption or dependency has ended. Put its id in matchEntryId and say how in outcome: a risk is "closed" (gone, no longer a worry) or "realised" (it happened); an assumption is "confirmed" or "broken"; a dependency is "met" (delivered) or "late". DPM sends it to the PM or Lead, who decide. Leave outcome null for a blocker or issue.
@@ -184,6 +194,8 @@ export function userMessage(ctx: CheckContext): string {
     leaveTargetId: ctx.leave.targetId,
     // Requested and approved leave: saying the same dates again is no change
     leave: ctx.leave.existing.map((l) => ({ start: l.start, end: l.end, state: l.state })),
+    // Phase E: their live commitments, for the same promise (CM5) and one said done (CM6)
+    commitments: (ctx.commitments ?? []).map((c) => ({ id: c.id, promise: c.what, due: c.dueOn, state: c.state, about: c.linkId })),
     projects,
   };
   const earlier = ctx.earlier?.length
@@ -218,7 +230,7 @@ ${ctx.text}
 const nullableString = z.string().nullable().optional();
 
 export const proposalSchema = z.object({
-  kind: z.enum(["update", "braid_new", "braid_same", "braid_resolve", "new_work"]),
+  kind: z.enum(["update", "braid_new", "braid_same", "braid_resolve", "new_work", "commitment"]),
   projectId: z.string().nullable(),
   routingReason: z.object({
     basis: z.enum(["target", "reference", "owned_record", "tied_person", "same_quote", "personal", "ambiguous"]),
@@ -239,6 +251,9 @@ export const proposalSchema = z.object({
   replacesItemId: nullableString,
   // Phase D: the records a vague update could mean; the checks keep only those they accept (M21)
   targetOptions: z.array(z.string()).nullable().optional(),
+  // Phase E: what the author promised, and the listed commitment it is the same as or says is done
+  promise: nullableString,
+  commitmentId: nullableString,
   quote: z.string(),
   confidence: z.enum(CONFIDENCES),
   rationale: z.string(),

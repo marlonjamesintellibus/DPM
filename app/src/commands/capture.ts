@@ -10,7 +10,7 @@ import { captureRecordOf, itemOf, leaveRecordOf, loadBraidLog, loadCapture, load
 import * as t from "../db/schema";
 import { mayChangeField, retarget, runChecks } from "../domain/atlas-checks/checks";
 import type { CheckContext, DroppedProposal, RawProposal } from "../domain/atlas-checks/types";
-import { fieldTaken, planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
+import { commitmentKeys, fieldTaken, planSave, saveOutcome, settleItems, targetKey, type BraidIntent, type PlannedWrite, type SaveConflict } from "../domain/capture-save";
 import { config } from "../domain/config";
 import { dateInZone, daysBetween, isIsoDate, isWorkingDay } from "../domain/dates";
 import type { Moved } from "../domain/machine";
@@ -64,6 +64,7 @@ import { logCandidate } from "./learning";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 import { createOwnerAsks } from "./owner-ask";
+import { answerCheckInInWords, applyCommitmentsAtSave } from "./commitment";
 import { answerStandupInWords, startStandup } from "./standup";
 import { noteBefore, toldBy, toldOfLeave, undoInTx, writeReceipt, type Receipt } from "./undo";
 import { proposeFromMoves, proposeVocabularyChange } from "./vocabulary";
@@ -401,12 +402,15 @@ export function failRead(ctx: CommandCtx, captureId: string, why: "model_error" 
 export function readAsAnswer(ctx: CommandCtx, captureId: string, attempt: number): Promise<boolean> {
   return runCommand(ctx, async (tx) => {
     const { row, record } = await attemptOf(tx, captureId, attempt, "reading");
-    const answered = await answerInWords(tx, ctx.now, row);
+    const clarified = await answerInWords(tx, ctx.now, row);
+    // Phase E: or a short reply to the check-in on their promise that waits on them ("done", "move it to Friday")
+    const promised = clarified ? null : await answerCheckInInWords(tx, ctx.now, row);
+    const answered = clarified ?? promised;
     if (!answered) return false;
     const r = moveCapture(record, { type: "PROPOSALS_READY", count: 0, asked: true });
     await persistCapture(tx, captureId, row.version, r.record, ctx.now);
     if (answered.note) await tx.update(t.captures).set({ commandNote: answered.note }).where(eq(t.captures.id, captureId));
-    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { items: 0, clarification: answered.id, attempt });
+    await auditCapture(tx, ctx.now, captureId, r.outcome, atlasActor, { items: 0, ...(promised ? { commitment: promised.id } : { clarification: answered.id }), attempt });
     return true;
   });
 }
@@ -681,6 +685,11 @@ function leaveRecords(rows: (typeof t.leave.$inferSelect)[]): LeaveRecord[] {
  * accept it, and a forecast may not fall before the project starts.
  */
 async function editRule(tx: Tx, item: ExtractedItem, authorId: string): Promise<(value: string) => string | null> {
+  // Phase E, CM2: the author corrects a promise's day on the card; it is a day still to come
+  if (item.draft.commitment?.act === "promise") {
+    const [{ messageAt }] = await tx.select({ messageAt: t.captures.messageAt }).from(t.captures).innerJoin(t.extractions, eq(t.extractions.captureId, t.captures.id)).where(eq(t.extractions.id, item.id));
+    return (value) => (!isIsoDate(value) ? "a promise's day is a date" : value < dateInZone(messageAt, config.timeZone) ? "pick a day from when you said it on" : null);
+  }
   const target = item.draft.target;
   if (item.draft.kind !== "update" || !target) return () => null; // a BRAID title: the machine wants it non-empty
   const world = await loadWorld(tx);
@@ -1066,6 +1075,18 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
 }
 
 /**
+ * Phase E: a fact a promise is saved against, keyed as commitmentKeys builds it: the linked work item's state, or
+ * the matched commitment's state and due day. Someone else's commitment reads as gone (CD3).
+ */
+async function readCommitmentFact(tx: Tx, key: string, authorId: string): Promise<string | null> {
+  const [type, id, field] = key.split(":");
+  if (type === "work_item") return (await tx.select({ state: t.workItems.state }).from(t.workItems).where(eq(t.workItems.id, id)))[0]?.state ?? null;
+  const [row] = await tx.select().from(t.commitments).where(eq(t.commitments.id, id));
+  if (!row || row.ownerId !== authorId) return null;
+  return field === "due" ? row.dueOn : row.state;
+}
+
+/**
  * Runs one planned write through its record's machine, with the author as actor. Returns the project it touched.
  * Also used by M37 when an owner accepts (section 20, U5), with the owner as `authorId`.
  */
@@ -1379,12 +1400,20 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
     for (const item of items.filter(isReady)) {
       const key = targetKey(item);
       if (key !== null && !(key in current)) current[key] = await readCurrent(tx, item, authorId);
+      // Phase E: a promise reads its linked work and the commitment it matches or ends, as they are now
+      for (const k of commitmentKeys(item)) if (!(k in current)) current[k] = await readCommitmentFact(tx, k, authorId);
     }
     let plan = planSave(saving.record, items, current);
     if (plan.outcome === "refused") throw new CommandRefused(plan.reason);
+    // Phase E: a promise said done after it was dropped or closed can never save; the author rejects it
+    const refusals = new Map<string, string>();
+    if (plan.outcome === "conflict" || plan.outcome === "apply") {
+      for (const c of plan.conflicts.filter((x) => x.key.startsWith("commitment:"))) {
+        refusals.set(c.itemId, `That promise is ${c.current === "lapsed" ? "closed" : (c.current ?? "gone")} now, so it can't be marked done. Reject it`);
+      }
+    }
     // D12: every write is checked against its record's machine before anything is written. A
     // refusal goes back to its card, and all or nothing (S3) means the rest waits with it
-    const refusals = new Map<string, string>();
     if (plan.outcome === "apply") {
       for (const w of plan.writes) {
         // Phase J: a write that goes back as an ask is not the author's to apply, so its record's rules do not run
@@ -1392,9 +1421,9 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
         const reason = (await editRule(tx, s0(items, w.itemId), authorId))(w.value);
         if (reason) refusals.set(w.itemId, `${reason}. Edit it or reject it`);
       }
-      if (refusals.size) {
-        const refused = plan.writes.filter((w) => refusals.has(w.itemId));
-        plan = { outcome: "conflict", conflicts: refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null })) };
+      const refused = plan.writes.filter((w) => refusals.has(w.itemId));
+      if (refused.length) {
+        plan = { outcome: "conflict", conflicts: [...plan.conflicts, ...refused.map((w) => ({ itemId: w.itemId, key: w.key, saw: w.expected, current: current[w.key] ?? null }))] };
       }
     }
     if (deciders.size) {
@@ -1468,6 +1497,8 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       // Section 20, U5 and U7: someone else's record, or new work, asks the person with the right (M37)
       await createOwnerAsks(tx, ctx.now, { id: captureId, authorId }, plan.asks);
       for (const a of plan.asks) touched.add(a.projectId);
+      // Phase E, M22: the author's own promises open, move or end their commitments; no project is touched (CD3)
+      await applyCommitmentsAtSave(tx, ctx.now, { id: captureId, authorId }, plan.commitments, world);
     });
     await syncReminder(tx, ctx.now, authorId, captureId, false, true);
     // Phase L: a set status the rules move after this save is part of it, and goes back with an undo

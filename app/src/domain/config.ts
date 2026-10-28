@@ -58,6 +58,14 @@ export const config = {
   standupIdleMinutes: 60,
   standupTime: "09:00",
 
+  // Phase E, M22 (conversational plan, section 23): a commitment that is due gets this many check-ins, one a
+  // working day the owner is in (CM7, CM8), before it lapses unanswered. CD24 and CM10: from this many moves
+  // to a new date, the check-in asks whether to drop it. A check-in goes out from commitmentCheckInTime (in
+  // the org time zone; section 23 names no time, so the morning standup's), never in the night after the due day
+  commitmentCheckIns: 2,
+  commitmentDropAfterMoves: 3,
+  commitmentCheckInTime: "09:00",
+
   // Phase S, M36 (conversational plan, section 23): a candidate for the eval set nobody accepts or
   // dismisses is deleted after this many days, with the person's words in it
   evalCandidateDays: 30,

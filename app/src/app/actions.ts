@@ -41,6 +41,7 @@ import {
 } from "@/commands/capture";
 import { cancelCommand, confirmCommand, tapLine, type CommandRun } from "@/commands/chat-command";
 import { answerClarification } from "@/commands/clarification";
+import { answerCommitment, type CheckInAnswer } from "@/commands/commitment";
 import { CommandRefused, StaleVersion, type CommandCtx } from "@/commands/core";
 import type { CommandAct, CommandInput } from "@/domain/machines/chat-command";
 import { archiveConversation, renameConversation, restoreConversation } from "@/commands/conversations";
@@ -169,6 +170,20 @@ export async function answerClarificationAction(clarificationId: string, option:
   let message = "";
   const r = await run(async (ctx) => {
     message = (await answerClarification(ctx, clarificationId, option)).message;
+  });
+  return r.ok ? { ok: true, message } : r;
+}
+
+// ---- Commitments (phase E, M22) ----
+
+/**
+ * The owner answers a check-in or CM11's question, in the chat or the inbox: Done, a new date, Drop, or "it still
+ * stands". The command checks it is theirs and still live, so a second tap is refused and changes nothing.
+ */
+export async function answerCommitmentAction(commitmentId: string, answer: CheckInAnswer): Promise<ActionResult> {
+  let message = "";
+  const r = await run(async (ctx) => {
+    message = (await answerCommitment(ctx, commitmentId, answer)).message;
   });
   return r.ok ? { ok: true, message } : r;
 }

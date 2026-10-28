@@ -15,7 +15,9 @@ import { getInbox, type InboxEntry } from "@/queries/inbox";
 import { getLeaveImpact } from "@/queries/leave";
 import { describeOwnerAsk } from "@/queries/owner-ask";
 import { signalsFor } from "@/queries/signals";
-import { clockTime, getProject, KIND_LABEL, projectReader, type ProjectView } from "@/queries/project";
+import { clockTime, getProject, KIND_LABEL, projectReader, todayIn, type ProjectView } from "@/queries/project";
+import { asksDrop } from "@/domain/machines/commitment";
+import { CommitmentButtons } from "@/components/chat/commitment";
 import { OUTCOME_ACT } from "@/queries/review";
 import { OUTCOMES, type ResolveOutcome } from "@/domain/machines/braid-entry";
 import { KindRequestControls } from "@/components/project/kind-request-controls";
@@ -41,6 +43,8 @@ const CAUSE_LABEL: Record<InboxEntry["cause"], string> = {
   owner_ask: "Asked of you",
   vocab_change: "Correction",
   signals: "Atlas noticed",
+  commitment_check: "Your promise",
+  commitment_stands: "Your promise",
 };
 
 /** Section 20, U3: the outcomes a kind can end in, the one first said first, as the PM's buttons. */
@@ -227,6 +231,20 @@ async function Detail({ item, label, viewerId, at }: { item: InboxEntry; label: 
           <LinkChangeForm workItemId={item.subject.id} />
         </DetailCard>
       );
+    case "commitment": {
+      // Phase E, M22: the viewer's own promise; answering it here is the same as in the chat
+      const [row] = await (await getDb()).select().from(t.commitments).where(eq(t.commitments.id, item.subject.id));
+      if (!row || row.ownerId !== viewerId) return null;
+      const check = item.cause === "commitment_check";
+      return (
+        <DetailCard label={label} title={item.title}>
+          <Explain>
+            Why it is here: {item.why}. Only you see your promises; nothing on a project changes when you answer.
+          </Explain>
+          <CommitmentButtons id={row.id} mode={check ? "check" : "stands"} today={todayIn(at)} dropFirst={check && asksDrop(row)} />
+        </DetailCard>
+      );
+    }
     case "capture":
       return (
         <DetailCard label={label} title={item.title}>
