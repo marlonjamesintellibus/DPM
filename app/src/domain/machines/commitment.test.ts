@@ -9,6 +9,8 @@ import {
   COMMITMENT_STATES,
   commitmentCauses,
   commitmentMachine,
+  deliversLinkedWork,
+  linkEndAsks,
   openCommitment,
   type CommitmentCtx,
   type CommitmentEvent,
@@ -47,9 +49,9 @@ describe("commitment arrows", () => {
     ["checking", { type: "CHECK_IN" }, { checkInOut: false }, { actorId: null }, "checking"],
     ["checking", { type: "NO_REPLY" }, { checkIns: config.commitmentCheckIns }, { actorId: null, today: "2026-10-23" }, "lapsed"],
     ["checking", { type: "NO_REPLY" }, {}, { actorId: null, today: "2026-10-23" }, "checking"],
-    ["open", { type: "WORK_CANCELLED" }, {}, { actorId: null, linked: "cancelled" }, "open"],
-    ["due", { type: "WORK_CANCELLED" }, {}, { actorId: null, linked: "cancelled" }, "due"],
-    ["checking", { type: "WORK_CANCELLED" }, {}, { actorId: null, linked: "cancelled" }, "checking"],
+    ["open", { type: "WORK_ENDED" }, {}, { actorId: null, linked: "cancelled" }, "open"],
+    ["due", { type: "WORK_ENDED" }, {}, { actorId: null, linked: "cancelled" }, "due"],
+    ["checking", { type: "WORK_ENDED" }, {}, { actorId: null, linked: "cancelled" }, "checking"],
     ...COMMITMENT_STATES.map((s): [CommitmentState, CommitmentEvent, Partial<CommitmentRecord>, Partial<CommitmentCtx>, CommitmentState] => [s, { type: "UNLINK" }, {}, { actorId: null }, s]),
   ];
   it.each(rows)("%s --%o--> (%o, %o) %s", (from, event, fields, ctx, to) => {
@@ -65,7 +67,7 @@ describe("commitment arrows", () => {
   });
 
   it("rule 2: nothing leaves done, dropped or lapsed (but CM9's unlink), and a refused event changes nothing", () => {
-    const events: CommitmentEvent[] = [{ type: "DONE", by: "owner" }, { type: "DONE", by: "work_done" }, { type: "DROP" }, { type: "NEW_DATE", dueOn: "2026-10-30" }, { type: "KEEP" }, { type: "DUE" }, { type: "CHECK_IN" }, { type: "NO_REPLY" }, { type: "WORK_CANCELLED" }];
+    const events: CommitmentEvent[] = [{ type: "DONE", by: "owner" }, { type: "DONE", by: "work_done" }, { type: "DROP" }, { type: "NEW_DATE", dueOn: "2026-10-30" }, { type: "KEEP" }, { type: "DUE" }, { type: "CHECK_IN" }, { type: "NO_REPLY" }, { type: "WORK_ENDED" }];
     for (const state of COMMITMENT_STATES) {
       for (const e of events) {
         const r = applyCommitmentEvent(at(state, { stands: "asked" }), e, { ...base, linked: "done", today: "2026-10-30" });
@@ -106,14 +108,14 @@ describe("the model check's fixes", () => {
   });
 
   it("CM11: asked once on cancelled work; any reply answers it, and it is never asked again once kept", () => {
-    const asked = applyCommitmentEvent(at("open"), { type: "WORK_CANCELLED" }, { ...rule, linked: "cancelled" }).record;
+    const asked = applyCommitmentEvent(at("open"), { type: "WORK_ENDED" }, { ...rule, linked: "cancelled" }).record;
     expect(asked.stands).toBe("asked");
     expect(commitmentCauses(asked)).toEqual(["commitment_stands:cm-1"]);
     expect(applyCommitmentEvent(asked, { type: "KEEP" }, base).record.stands).toBe("kept");
     expect(applyCommitmentEvent(asked, { type: "NEW_DATE", dueOn: "2026-10-23" }, base).record.stands).toBe("kept");
     expect(applyCommitmentEvent(asked, { type: "DONE", by: "owner" }, base).record.stands).toBeNull();
     const kept = { ...asked, stands: "kept" as const };
-    expect(applyCommitmentEvent(kept, { type: "WORK_CANCELLED" }, { ...rule, linked: "cancelled" }).outcome.ok).toBe(false);
+    expect(applyCommitmentEvent(kept, { type: "WORK_ENDED" }, { ...rule, linked: "cancelled" }).outcome.ok).toBe(false);
   });
 
   it("recordAtSave: a promise about cancelled work opens with CM11's question already asked", () => {
@@ -132,9 +134,26 @@ describe("guards", () => {
 
   it("M22: the rule's Done needs its linked work Done now, and a person cannot say it for the rule", () => {
     expect(applyCommitmentEvent(at("open"), { type: "DONE", by: "work_done" }, rule).outcome.ok).toBe(false);
-    expect(applyCommitmentEvent(at("open"), { type: "DONE", by: "work_done" }, { ...rule, linked: "done" }).record).toMatchObject({ state: "done", endedBy: "work_done" });
-    expect(applyCommitmentEvent(at("open"), { type: "DONE", by: "work_done" }, { ...base, linked: "done" }).outcome.ok).toBe(false);
-    expect(applyCommitmentEvent(at("open", { link: null }), { type: "DONE", by: "work_done" }, { ...rule, linked: "done" }).outcome.ok).toBe(false);
+    const deliver = at("open", { what: "Finish the access request" });
+    expect(applyCommitmentEvent(deliver, { type: "DONE", by: "work_done" }, { ...rule, linked: "done" }).record).toMatchObject({ state: "done", endedBy: "work_done" });
+    expect(applyCommitmentEvent(deliver, { type: "DONE", by: "work_done" }, { ...base, linked: "done" }).outcome.ok).toBe(false);
+    expect(applyCommitmentEvent({ ...deliver, link: null }, { type: "DONE", by: "work_done" }, { ...rule, linked: "done" }).outcome.ok).toBe(false);
+  });
+
+  it("CD51: Done work ends only a promise to deliver it; one only about it is asked whether it still stands", () => {
+    expect(deliversLinkedWork("Finish the #208 backfill")).toBe(true);
+    expect(deliversLinkedWork("Ship the trend model")).toBe(true);
+    expect(deliversLinkedWork("Walk Andre through #208")).toBe(false);
+    expect(deliversLinkedWork("Send Kyle the access request")).toBe(false);
+    const about = at("open", { what: "Walk Andre through #208" });
+    expect(applyCommitmentEvent(about, { type: "DONE", by: "work_done" }, { ...rule, linked: "done" }).outcome).toMatchObject({ ok: false });
+    const asked = applyCommitmentEvent(about, { type: "WORK_ENDED" }, { ...rule, linked: "done" }).record;
+    expect(asked).toMatchObject({ state: "open", stands: "asked" });
+    // A promise to deliver it is not asked: the rule's Done ends it instead
+    expect(applyCommitmentEvent(at("open", { what: "Finish the access request" }), { type: "WORK_ENDED" }, { ...rule, linked: "done" }).outcome.ok).toBe(false);
+    expect(linkEndAsks("Walk Andre through #208", "done")).toBe(true);
+    expect(linkEndAsks("Finish the access request", "done")).toBe(false);
+    expect(linkEndAsks("Finish the access request", "cancelled")).toBe(true);
   });
 
   it("TIMER due fires only once the due day has ended, in the org time zone", () => {

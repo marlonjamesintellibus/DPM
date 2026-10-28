@@ -49,6 +49,8 @@ const PROMISE: RawProposal = {
   confidence: "high",
   rationale: "Your promise.",
 };
+/** CD51: a promise to deliver its linked work, which that work going Done ends. */
+const FINISH: RawProposal = { ...PROMISE, promise: "Submit the access request", quote: "I'll submit the access request for #151 tomorrow" };
 
 let n = 0;
 /** Kemar says it in the DPM chat, accepts every item and saves. Returns the commitment the save opened. */
@@ -101,14 +103,26 @@ describe("a promise saved from the review (M22 SAVE)", () => {
     await expect(decideExtraction(as("kemar", 1), items[0].id, { type: "edit", value: "2026-10-19" })).rejects.toThrow();
   });
 
-  it("recordAtSave: a promise about work Done since Atlas read it saves as No change, and opens nothing", async () => {
-    const { captureId } = await createCapture(as("kemar"), { channel: "app", messageId: "d", kind: "text", text: `${PROMISE.quote}.`, messageAt: at(0), receivedAt: at(0) });
-    const { items } = await proposeItems(as("kemar"), captureId, [PROMISE]);
+  it("recordAtSave: a promise to deliver work Done since Atlas read it saves as No change, and opens nothing", async () => {
+    const { captureId } = await createCapture(as("kemar"), { channel: "app", messageId: "d", kind: "text", text: `${FINISH.quote}.`, messageAt: at(0), receivedAt: at(0) });
+    const { items } = await proposeItems(as("kemar"), captureId, [FINISH]);
     await openReview(as("kemar"), captureId);
     await decideExtraction(as("kemar"), items[0].id, { type: "accept" });
     await moveWorkItem(as("kemar", 1), "wi-151", "mark_done");
     expect(await saveCapture(as("kemar", 2), captureId)).toMatchObject({ outcome: "saved", noChange: [items[0].id] });
     expect(await row(`cm-${items[0].id}`)).toBeUndefined();
+  });
+
+  it("recordAtSave, CD51: a promise only about work Done since Atlas read it saves with its question asked", async () => {
+    const { captureId } = await createCapture(as("kemar"), { channel: "app", messageId: "d2", kind: "text", text: `${PROMISE.quote}.`, messageAt: at(0), receivedAt: at(0) });
+    const { items } = await proposeItems(as("kemar"), captureId, [PROMISE]);
+    await openReview(as("kemar"), captureId);
+    await decideExtraction(as("kemar"), items[0].id, { type: "accept" });
+    await moveWorkItem(as("kemar", 1), "wi-151", "mark_done");
+    await saveCapture(as("kemar", 2), captureId);
+    const id = `cm-${items[0].id}`;
+    expect(await row(id)).toMatchObject({ state: "open", stands: "asked" });
+    expect(await notices("kemar", id)).toEqual(["#151 Store sales feed access is Done. Does your promise still stand: Send Kyle the access request?"]);
   });
 
   it("recordAtSave, CM11: a promise about cancelled work saves with its question already asked", async () => {
@@ -327,13 +341,25 @@ describe("the rules on a commitment's link, and a later update (M22, CM6, CM9, C
     db = await seededDb({ kemarNote: false, aliciaSetsStatus: false });
   }, 30_000);
 
-  it("its linked work going Done ends it as done by the rule, withdrawing a check-in that is out, and Kemar is told", async () => {
-    const { id } = await kemarSays(PROMISE);
+  it("its linked work going Done ends a promise to deliver it as done by the rule, withdrawing a check-in that is out, and Kemar is told", async () => {
+    const { id } = await kemarSays(FINISH);
     await timers(morning(2));
     await moveWorkItem(as("kemar", morning(2) + 1), "wi-151", "mark_done");
     expect(await row(id)).toMatchObject({ state: "done", endedBy: "work_done", checkInOut: false });
-    expect((await notices("kemar", id)).at(-1)).toBe("#151 Store sales feed access is Done, so I marked your promise done: Send Kyle the access request.");
+    expect((await notices("kemar", id)).at(-1)).toBe("#151 Store sales feed access is Done, so I marked your promise done: Submit the access request.");
     expect(await live("kemar")).not.toContain(`commitment_check:${id}`);
+  });
+
+  it("CD51: its linked work going Done asks once whether a promise only about it still stands; It still stands keeps it", async () => {
+    const { id } = await kemarSays(PROMISE);
+    await moveWorkItem(as("kemar", 5), "wi-151", "mark_done");
+    expect(await row(id)).toMatchObject({ state: "open", stands: "asked", endedBy: null });
+    expect(await notices("kemar", id)).toEqual(["#151 Store sales feed access is Done. Does your promise still stand: Send Kyle the access request?"]);
+    expect(await live("kemar")).toEqual([`commitment_stands:${id}`]);
+    await answer(as("kemar", 7), id, { act: "keep" });
+    await db.transaction((tx) => evaluateProject(tx, "forager", at(8)));
+    expect(await row(id)).toMatchObject({ state: "open", stands: "kept" });
+    expect(await notices("kemar", id)).toHaveLength(1);
   });
 
   it("CM11: its work cancelled asks once; It still stands keeps it, and it is never asked again", async () => {

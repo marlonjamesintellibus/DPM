@@ -135,7 +135,7 @@ export async function applyCommitmentsAtSave(tx: Tx, now: Date, capture: { id: s
     const link = p.link && isCandidate(capture.authorId, orgTags, p.link.projectId, world) ? { type: p.link.type, id: p.link.id, projectId: p.link.projectId } : null;
     const record = openCommitment({ id: `cm-${p.itemId}`, ownerId: capture.authorId, captureId: capture.id, extractionId: p.itemId, what: p.what, dueOn: p.dueOn, link, savedOn: todayOf(now), standsAsked: p.standsAsked });
     await write(tx, now, null, record, { event: "SAVE", from: null, to: "open" }, by, { link: link?.id ?? null, standsAsked: record.stands === "asked" });
-    if (record.stands === "asked") await askStands(tx, now, record);
+    if (record.stands === "asked") await askStands(tx, now, record, await linkedState(tx, record.link));
   }
 }
 
@@ -301,9 +301,11 @@ export async function answerCheckInInWords(tx: Tx, now: Date, capture: { id: str
 
 // ---- The rules and the timer ----
 
-async function askStands(tx: Tx, now: Date, r: CommitmentRecord): Promise<void> {
+/** CM11's question, or CD51's when the work is Done and the promise was only about it. */
+async function askStands(tx: Tx, now: Date, r: CommitmentRecord, linked: string | null): Promise<void> {
   const label = (await linkLabel(tx, r.ownerId, r.link)) ?? "The work it was about";
-  await notice(tx, now, [r.ownerId], `${label} was cancelled. Does your promise still stand: ${r.what}?`, { type: "commitment", id: r.id, projectId: null, act: "stands" });
+  const ended = linked === "done" ? "is Done" : "was cancelled";
+  await notice(tx, now, [r.ownerId], `${label} ${ended}. Does your promise still stand: ${r.what}?`, { type: "commitment", id: r.id, projectId: null, act: "stands" });
 }
 
 /** The check-in: "Did you send Kyle the access request? You said you would by Wed 21 Oct." (CD24 after 3 moves). */
@@ -317,8 +319,9 @@ export async function checkInText(conn: Conn, r: CommitmentRecord): Promise<stri
 
 /**
  * The drawn rules on a commitment's link, run after a change to its project (evaluate) and by the timer: its
- * linked work going Done ends it as done (the model's WorkDone), going cancelled asks once whether it still
- * stands (CM11), and an owner who left the project keeps it without the link (CM9). Each is told in their chat.
+ * linked work going Done ends a promise to deliver it as done (the model's WorkDone); going cancelled, or Done
+ * under a promise only about it (CD51), asks once whether it still stands (CM11); and an owner who left the
+ * project keeps it without the link (CM9). Each is told in their chat.
  */
 async function followLinks(tx: Tx, now: Date, rows: readonly Row[], world: World): Promise<void> {
   const rule: By = { actorType: "rule", actorId: null };
@@ -341,7 +344,7 @@ async function followLinks(tx: Tx, now: Date, rows: readonly Row[], world: World
       const label = (await linkLabel(tx, before.ownerId, before.link, world)) ?? "Its work";
       await notice(tx, now, [record.ownerId], `${label} is Done, so I marked your promise done: ${record.what}.`, { type: "commitment", id: record.id, projectId: null, act: "work_done" });
     });
-    if (isLive(record)) await step({ type: "WORK_CANCELLED" }, () => askStands(tx, now, record));
+    if (isLive(record)) await step({ type: "WORK_ENDED" }, async () => askStands(tx, now, record, await linkedState(tx, record.link)));
   }
 }
 

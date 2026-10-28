@@ -8,7 +8,7 @@ import type { CaptureEvent, CaptureState } from "./machines/capture";
 import { applyItemEvent, isReady, UNDECIDED_STATES, type ExtractedItem, type ItemState } from "./machines/extracted-item";
 import type { BraidKind } from "./rights";
 import type { CommitmentDraft, TargetType } from "./shared";
-import { LIVE_COMMITMENT, type CommitmentState } from "./machines/commitment";
+import { deliversLinkedWork, linkEndAsks, LIVE_COMMITMENT, type CommitmentState } from "./machines/commitment";
 import type { ResolveOutcome } from "./machines/braid-entry";
 
 /**
@@ -166,14 +166,15 @@ export function planSave(
         else conflicts.push({ itemId: item.id, key: `commitment:${id}:state`, saw: item.saw, current: now });
         continue;
       }
-      // recordAtSave: the linked work item as it is now. Done is No change; cancelled saves with CM11's question.
+      // recordAtSave: the linked work item as it is now. Done is No change for a promise to deliver it; cancelled, or
+      // Done under a promise only about it (CD51), saves with CM11's question.
       // Membership comes first: work the author can no longer read reads as null (CM9), so neither applies
       const linked = promise.link?.type === "work_item" ? valueOf(`work_item:${promise.link.id}:state`) : null;
       // CM5: the match holds only while that commitment is live; otherwise this promise opens a new one
       const matchId = promise.commitmentId && isLive(stateOf(promise.commitmentId)) ? promise.commitmentId : null;
       const sameDay = matchId !== null && stateOf(matchId) === "open" && valueOf(`commitment:${matchId}:due`) === item.value;
-      if (linked === "done" || sameDay) noChange.push(item.id);
-      else commitments.push({ itemId: item.id, act: "promise", what: promise.what, dueOn: item.value!, link: promise.link, matchId, standsAsked: linked === "cancelled" });
+      if ((linked === "done" && deliversLinkedWork(promise.what)) || sameDay) noChange.push(item.id);
+      else commitments.push({ itemId: item.id, act: "promise", what: promise.what, dueOn: item.value!, link: promise.link, matchId, standsAsked: linkEndAsks(promise.what, linked) });
       continue;
     }
     // Section 20, U7: new work changes no record; it asks the PM and Leads
