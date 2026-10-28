@@ -11,7 +11,8 @@
 //   received --EXPIRE [config.reviewExpiryDays, attendees never confirmed]--> expired       final
 //   transcribing --TRANSCRIBED--> reading                                     as M2
 //   reading --PROPOSALS_READY--> split
-//   reading --READ_FAILED [M2 failed after its tries]--> failed              final
+//   transcribing | reading --READ_FAILED [M2 failed after its tries]--> failed     final; M2 can fail while
+//                                                          transcribing a voice note too ("as M2", section 17)
 //   split --DONE [every part saved, confirmed, declined or expired]--> done  final
 // M2 itself waits in received while its meeting does (its START is refused), and ends expired with it: both are
 // arrows of this machine, read by captureMachine's guards.
@@ -122,12 +123,19 @@ export function receiveMeeting(fields: Pick<MeetingRecord, "id" | "captureId" | 
 }
 
 /**
- * MT7, CD18: whether two notes are of the same meeting: the same project, from someone else, said within
- * config.meetingMatchMinutes of each other. Only a note that was read for its attendees (not own notes) is one
- * to merge with: own notes sent nothing.
+ * MT7, CD18: whether a new note (a) is of the same meeting as another's note (b): the same project, from someone
+ * else, said within config.meetingMatchMinutes of each other. Only a note that was read for its attendees (not
+ * own notes) is one to merge with: own notes sent nothing. And only one whose recorder named a's recorder as
+ * there (fix check, 28 Oct, M1 and P10): a note is its recorder's alone, so someone who was not at that meeting
+ * never learns of it, nor when it was sent. Once a's recorder says who was there (attendees), b's recorder must be
+ * among them too; before that (the card offering the merge) attendees is null.
  */
-export function sameMeeting(a: { projectId: string; recorderId: string; at: Date }, b: { projectId: string; recorderId: string; at: Date; mode: MeetingMode | null; state: MeetingState }): boolean {
+export function sameMeeting(
+  a: { projectId: string; recorderId: string; at: Date; attendees: readonly string[] | null },
+  b: { projectId: string; recorderId: string; at: Date; attendees: readonly string[]; mode: MeetingMode | null; state: MeetingState },
+): boolean {
   if (a.projectId !== b.projectId || a.recorderId === b.recorderId || b.mode !== "meeting") return false;
   if (b.state === "failed" || b.state === "expired") return false;
+  if (!b.attendees.includes(a.recorderId) || (a.attendees && !a.attendees.includes(b.recorderId))) return false;
   return Math.abs(a.at.getTime() - b.at.getTime()) <= config.meetingMatchMinutes * 60_000;
 }

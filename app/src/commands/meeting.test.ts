@@ -9,9 +9,9 @@ import type { Db } from "../db/client";
 import * as t from "../db/schema";
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { config } from "../domain/config";
-import { getThread } from "../queries/chat";
+import { getChatSummary, getThread } from "../queries/chat";
 import { getInbox } from "../queries/inbox";
-import { describeAttributed } from "../queries/meeting";
+import { describeAttributed, heldForReview } from "../queries/meeting";
 import { getReview } from "../queries/review";
 import { at, seededDb } from "../test/seeded-db";
 import { createFixtureExtractor, MEETING_NOTE } from "../atlas/fixture";
@@ -19,7 +19,7 @@ import type { Extractor } from "../atlas/extractor";
 import type { CheckContext } from "../domain/atlas-checks/types";
 import { capturesToRead, readCapture } from "./atlas";
 import { beginRead, decideExtraction, discardCapture, openReview, proposeItems, runCaptureTimers, saveCapture } from "./capture";
-import { confirmAttendees, confirmAttributed, createMeetingNote, declineAttributed, editAttributed, fixSpeaker, readAsOwnNotes, runMeetingTimers } from "./meeting";
+import { confirmAttendees, confirmAttributed, createMeetingNote, declineAttributed, editAttributed, fixSpeaker, readAsOwnNotes, runMeetingTimers, withdrawOnLeave } from "./meeting";
 import { undoSave } from "./undo";
 
 let db: Db;
@@ -208,7 +208,7 @@ describe("M33 split: each part goes where it belongs", () => {
   it("MT2: only the recorder says who, only someone who was there, and only while the review is open", async () => {
     const m = await meet(ALL);
     await expect(fixSpeaker(as("alicia"), m.att(UNSURE), "alicia")).rejects.toMatchObject({ code: "not_found" });
-    await expect(fixSpeaker(as("kemar"), m.att(UNSURE), "andre")).rejects.toThrow("someone who was there");
+    await expect(fixSpeaker(as("kemar"), m.att(UNSURE), "andre")).rejects.toThrow("someone who was there: on the project, or one of its contacts");
     await fixSpeaker(as("kemar"), m.att(UNSURE), "jodian");
     expect(await item(m.att(UNSURE))).toMatchObject({ state: "proposed", personId: "jodian" });
     expect(await asks("jodian")).toHaveLength(2);
@@ -255,6 +255,41 @@ describe("M33 split: each part goes where it belongs", () => {
     const review = await getReview(db, "kemar", m.captureId);
     if (!review.found) throw new Error("no review");
     expect(review.items.map((i) => i.title)).toEqual(["Jodian to send the runbook by 23 Oct"]);
+  });
+
+  it("MT3: the recorder may name someone on the project they did not list, which adds them: it goes to them", async () => {
+    const m = await meet([UNSURE], { text: "Someone will update the runbook tomorrow.", attendees: ["alicia"] });
+    expect((await heldForReview(db, m.captureId, "kemar"))[0].choices).toEqual([
+      { id: "kemar", name: "Me" },
+      { id: "alicia", name: "Alicia Campbell" },
+      { id: "jodian", name: "Jodian Taylor (not listed as there)" },
+      { id: "kyle", name: "Kyle (not listed as there)" },
+    ]);
+    await fixSpeaker(as("kemar"), m.att(UNSURE), "jodian");
+    expect(await item(m.att(UNSURE))).toMatchObject({ state: "proposed", personId: "jodian" });
+    expect(await asks("jodian")).toEqual([`attributed:${m.att(UNSURE)}`]);
+    const [fixed] = await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.subjectId, m.att(UNSURE)), eq(t.auditEntries.action, "FIX_SPEAKER")));
+    expect(fixed.detail).toMatchObject({ added: true });
+  });
+
+  it("M33 split: an update that changes nothing asks nobody; it stays in Kemar's review as no change", async () => {
+    const STILL: RawProposal = { ...JODIAN, newValue: "in_progress", quote: "Jodian is still on the backfill #160", rationale: "Still going." };
+    const m = await meet([STILL], { text: "Jodian is still on the backfill #160." });
+    expect(await item(m.att(STILL))).toBeUndefined();
+    expect(m.proposed.items).toEqual([expect.objectContaining({ state: "no_change" })]);
+    expect(await asks("jodian")).toEqual([]);
+    expect(await notices("jodian")).toEqual([]);
+  });
+
+  it("M33 split: a record Atlas only guessed is not asked of its owner; it waits in Kemar's review for him to say which", async () => {
+    const GUESS: RawProposal = { ...JODIAN, targetOptions: ["wi-145"] };
+    const m = await meet([GUESS], { text: "Jodian finished the backfill #160." });
+    expect(await item(m.att(GUESS))).toBeUndefined();
+    expect(await asks("jodian")).toEqual([]);
+    expect(await notices("jodian")).toEqual([]);
+    const review = await getReview(db, "kemar", m.captureId);
+    if (!review.found) throw new Error("no review");
+    expect(review.items).toEqual([expect.objectContaining({ state: "needs_ok" })]);
   });
 
   it("MT8: an item about another project is routed there, and an attendee is asked only on the item's own project", async () => {
@@ -361,11 +396,48 @@ describe("M34: the person it is about confirms, changes or declines it (rule 10)
     expect(await asks("jodian")).toEqual([]);
   });
 
-  it("rule 4: a confirm after she left is refused, whatever the Ask showed", async () => {
+  it("rule 4: a confirm after she left files nothing, whatever the Ask showed; it is withdrawn then and there", async () => {
     const m = await meet(ALL);
     await leave("forager", "alicia");
-    await expect(confirmAttributed(as("alicia", 1), m.att(ALICIA))).rejects.toThrow("you are no longer on this project");
+    expect(await confirmAttributed(as("alicia", 1), m.att(ALICIA))).toMatchObject({ message: "You are no longer on this project, so this was withdrawn. Nothing was filed.", record: { state: "withdrawn" } });
     expect(await db.select().from(t.commitments).where(eq(t.commitments.ownerId, "alicia"))).toEqual([]);
+    expect(await asks("alicia")).toEqual([]);
+  });
+
+  it("withdrawOnLeave (E77): taken off Forager, her open Asks there are withdrawn in that transaction, and the chat stops showing them (P10)", async () => {
+    const m = await meet(ALL);
+    expect((await getChatSummary(db, "jodian", undefined, at(1))).notices).toHaveLength(1);
+    await db.transaction(async (tx) => {
+      await tx.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "jodian")));
+      expect(await withdrawOnLeave(tx, at(1), "jodian", "forager")).toEqual([m.att(JODIAN)]);
+    });
+    expect(await item(m.att(JODIAN))).toMatchObject({ state: "withdrawn", reason: "they left the project" });
+    expect(await asks("jodian")).toEqual([]);
+    expect((await getChatSummary(db, "jodian", undefined, at(2))).notices).toEqual([]);
+    // Alicia's is hers, still on Forager: untouched
+    expect((await item(m.att(ALICIA))).state).toBe("proposed");
+  });
+
+  it("ownerAtConfirm (rules 4 and 10): #160 is Alicia's now, so Jodian's confirm changes nothing of Alicia's and withdraws it", async () => {
+    const m = await meet(ALL);
+    await db.update(t.workItems).set({ ownerId: "alicia" }).where(eq(t.workItems.id, "wi-160"));
+    expect(await confirmAttributed(as("jodian", 30), m.att(JODIAN))).toMatchObject({ message: "This is no longer yours, so it was withdrawn. Nothing was filed.", record: { state: "withdrawn", reason: "it is no longer theirs" } });
+    expect((await db.select().from(t.workItems).where(eq(t.workItems.id, "wi-160")))[0].state).toBe("in_progress");
+    expect(await db.select().from(t.auditEntries).where(and(eq(t.auditEntries.subjectId, "wi-160"), eq(t.auditEntries.machine, "work_item")))).toEqual([]);
+    expect(await asks("jodian")).toEqual([]);
+    // Nothing goes to Alicia on Jodian's word, nor on Kemar's: he sees it withdrawn on his note's card
+    expect(await asks("alicia")).toEqual([`attributed:${m.att(ALICIA)}`]);
+    const thread = await getThread(db, "kemar", (await capture(m.captureId)).conversationId!, at(31));
+    if (!thread.found) throw new Error("no thread");
+    expect(thread.turns[0].meeting!.parts.find((p) => p.id === m.att(JODIAN))).toMatchObject({ state: "withdrawn", outcome: "Withdrawn: it is no longer theirs." });
+  });
+
+  it("ownerAtConfirm: the daily timer withdraws an Ask whose record changed hands that nobody answered", async () => {
+    const m = await meet(ALL);
+    await db.update(t.workItems).set({ ownerId: "alicia" }).where(eq(t.workItems.id, "wi-160"));
+    await timers(1);
+    expect(await item(m.att(JODIAN))).toMatchObject({ state: "withdrawn", reason: "it is no longer theirs" });
+    expect(await asks("jodian")).toEqual([]);
   });
 });
 
@@ -422,9 +494,43 @@ describe("MT7: two notes of the same meeting (CD18)", () => {
     expect(await notices("kemar")).toEqual(["Jodian says that's not right: #160 Feature store backfill: In progress to Done."]);
   });
 
+  it("whichever is read first: the second, merged before the first was read, asks; the first asks nothing again", async () => {
+    // Alicia says who was there, but her note is not read yet
+    const first = await createMeetingNote(as("alicia"), { text, projectId: "forager", messageId: "m-first" });
+    await confirmAttendees(as("alicia"), first.meetingId, { attendees: ["jodian", "kemar"], told: true });
+    const second = await meet([JODIAN], { text, attendees: ["jodian", "alicia"], minutes: 30, merge: true });
+    expect((await meetingRow(second.meetingId)).mergedWith).toBe(first.meetingId);
+    expect(await asks("jodian")).toEqual([`attributed:${second.att(JODIAN)}`]);
+    await proposeItems(as("alicia", 40), first.captureId, [JODIAN]);
+    expect(await asks("jodian")).toEqual([`attributed:${second.att(JODIAN)}`]);
+    expect(await notices("jodian")).toHaveLength(1);
+    expect(await db.select().from(t.attributedItems).where(eq(t.attributedItems.meetingId, first.meetingId))).toEqual([]);
+    expect((await item(second.att(JODIAN))).alsoFrom).toEqual([{ recorderId: "alicia", captureId: first.captureId, meetingId: first.meetingId }]);
+  });
+
+  it("M1, P10: a note of a meeting she was not named at is never offered to Alicia, nor merged with", async () => {
+    await meet([JODIAN], { text, attendees: ["jodian"] });
+    const hers = await createMeetingNote(as("alicia", 30), { text, projectId: "forager", messageId: "m-hers" });
+    const thread = await getThread(db, "alicia", (await capture(hers.captureId)).conversationId!, at(30));
+    if (!thread.found) throw new Error("no thread");
+    expect(thread.turns[0].meeting!.merge).toBeNull();
+    await confirmAttendees(as("alicia", 30), hers.meetingId, { attendees: ["jodian", "kemar"], told: true, merge: true });
+    expect((await meetingRow(hers.meetingId)).mergedWith).toBeNull();
+  });
+
+  it("M1, P10: named at Alicia's meeting, Kemar is offered the merge, but it is taken only if he names her as there too", async () => {
+    const first = await meet([JODIAN], { by: "alicia", text, attendees: ["jodian", "kemar"] });
+    const mine = await createMeetingNote(as("kemar", 30), { text, projectId: "forager", messageId: "m-mine" });
+    const thread = await getThread(db, "kemar", (await capture(mine.captureId)).conversationId!, at(30));
+    if (!thread.found) throw new Error("no thread");
+    expect(thread.turns[0].meeting!.merge).toMatchObject({ id: first.meetingId });
+    await confirmAttendees(as("kemar", 30), mine.meetingId, { attendees: ["jodian"], told: true, merge: true });
+    expect((await meetingRow(mine.meetingId)).mergedWith).toBeNull();
+  });
+
   it("kept separate, the second note asks again; a note from another project or hours later is no match", async () => {
-    await meet([JODIAN], { by: "alicia", text, attendees: ["jodian"] });
-    await meet([JODIAN], { text, attendees: ["jodian"], minutes: 30, merge: false });
+    await meet([JODIAN], { by: "alicia", text, attendees: ["jodian", "kemar"] });
+    await meet([JODIAN], { text, attendees: ["jodian", "alicia"], minutes: 30, merge: false });
     expect(await asks("jodian")).toHaveLength(2);
     const later = await createMeetingNote(as("kemar", 4 * 60), { text, projectId: "forager", messageId: "m-late" });
     const thread = await getThread(db, "kemar", (await capture(later.captureId)).conversationId!, at(4 * 60));

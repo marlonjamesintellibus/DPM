@@ -5,14 +5,17 @@
 // The model check's fixes: an item whose speaker Atlas is unsure of waits in the recorder's review until they
 // say who it was (holdUnsure, MT2); only a member of the item's project is asked, and anyone else's item goes to
 // the recorder, as MT1 does for people not in DPM (sendToMembers); leaving the project withdraws it
-// (withdrawOnLeave); and its timer does not run while they are on leave (pauseOnLeave, MT12).
+// (withdrawOnLeave); and its timer does not run while they are on leave (pauseOnLeave, MT12). The fix check of 28
+// Oct added ownerAtConfirm (rules 4 and 10): an update is about the record's owner, so only its owner now confirms
+// it; once the record is someone else's, the Ask is withdrawn, never confirmed as the person it first went to.
 //   (none) --SPLIT--> held [speaker unsure] | mine [own notes, or not a member] | waiting [on leave] | proposed
 //   held --FIX_SPEAKER(person) [the recorder, while the review is open]--> mine | waiting | proposed
 //   held --REVIEW_ENDED [the recorder discards, or the review expires]--> withdrawn | expired       final
 //   waiting --BACK [no longer on leave]--> proposed                       the timer starts
 //   waiting | proposed --LEFT [no longer a member of its project]--> withdrawn                  final
+//   waiting | proposed --REASSIGNED [an update whose record is no longer theirs]--> withdrawn   final
 //   proposed --EDIT(their words) [the person]--> proposed
-//   proposed --CONFIRM [the person, a member now; the record as the note saw it]--> confirmed     final
+//   proposed --CONFIRM [the person, a member now; still the record's owner; the record as the note saw it]--> confirmed
 //   proposed --DECLINE [the person]--> declined; the recorder is told "Kemar says that's not right"  final
 //   proposed --EXPIRE [config.attributedExpiryDays working days they were in]--> expired          final
 // mine is final here: the item is the recorder's own, in their review (a promise by someone not asked becomes a
@@ -76,7 +79,9 @@ export type AttributedEvent =
   | { type: "DECLINE"; reason?: string | null }
   | { type: "EXPIRE" }
   /** E77: they left the item's project. */
-  | { type: "LEFT" };
+  | { type: "LEFT" }
+  /** ownerAtConfirm: the record an update is about is someone else's now (or gone). */
+  | { type: "REASSIGNED" };
 
 type Ctx = {
   record: AttributedItemRecord;
@@ -93,12 +98,16 @@ type Ctx = {
   away?: boolean;
   /** FIX_SPEAKER: the recorder's review is still open. */
   reviewOpen?: boolean;
+  /** CONFIRM and REASSIGNED of an update: who owns its record now; null when it is gone (rules 4 and 10). */
+  owner?: string | null;
   /** CONFIRM of an update: the field as it is now, compared with what the note saw (NeverOverwriteUnseen). */
   current?: string | null;
   /** EXPIRE: working days they were in since it reached them. */
   inDays?: number;
 };
 
+/** An update whose record has another owner now, or is gone: it is no longer the person's to confirm. */
+const notTheirs = (c: Ctx) => c.record.kind === "update" && c.owner !== c.record.personId;
 const byPerson = (c: Ctx) => (c.actorId !== null && c.actorId === c.record.personId ? null : `only ${c.record.personId ? "the person it is about" : "someone named"} answers this`);
 const byRecorder = (c: Ctx) => (c.actorId !== null && c.actorId === c.record.recorderId ? null : "only the person who recorded it");
 const yes = (v: boolean | undefined, why: string) => (v === true ? null : why);
@@ -116,6 +125,8 @@ function confirmGuard(c: Ctx): string | null {
   if (refused) return refused;
   // Rule 4: the right is checked when it runs, whatever the Ask showed
   if (c.member !== true) return "you are no longer on this project";
+  // ownerAtConfirm (rule 10): the note said it of the record's owner; whoever owns it now is the one to say so
+  if (notTheirs(c)) return "it is no longer yours";
   const d = c.record.draft;
   if (c.record.kind === "update" && d.target && c.current !== d.target.oldValue) return `it is ${c.current ?? "empty"} now, not ${d.target.oldValue ?? "empty"} as the note saw it`;
   const due = promiseDay(c.record);
@@ -154,6 +165,8 @@ export const attributedItemMachine = defineMachine<AttributedState, AttributedEv
     { from: ["waiting"], on: "BACK", to: "proposed", guard: (c) => no(c.away, "still on leave") },
     // The model's fix withdrawOnLeave (E77): an open Ask names the project's records, so only a member holds one
     { from: ["waiting", "proposed"], on: "LEFT", to: "withdrawn", guard: (c) => no(c.member, "still a member") },
+    // The fix ownerAtConfirm: an Ask about a record that changed hands is withdrawn, never answered by its old owner
+    { from: ["waiting", "proposed"], on: "REASSIGNED", to: "withdrawn", guard: (c) => (notTheirs(c) ? null : "still theirs") },
     { from: ["proposed"], on: "EDIT", to: "proposed", guard: editGuard },
     { from: ["proposed"], on: "CONFIRM", to: "confirmed", guard: confirmGuard },
     { from: ["proposed"], on: "DECLINE", to: "declined", guard: byPerson },
@@ -187,6 +200,8 @@ export function applyAttributedEvent(record: AttributedItemRecord, event: Attrib
       return { outcome, record: { ...next, decidedOn: ctx.today, reason: event.reason?.trim() || null } };
     case "LEFT":
       return { outcome, record: { ...next, reason: "they left the project" } };
+    case "REASSIGNED":
+      return { outcome, record: { ...next, reason: "it is no longer theirs" } };
     case "REVIEW_ENDED":
       return { outcome, record: { ...next, reason: event.how === "discarded" ? "the note was discarded" : "the note's review expired" } };
     default:

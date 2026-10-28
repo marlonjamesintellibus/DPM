@@ -1,6 +1,6 @@
 // M34 (conversational plan, section 17): every arrow and its guards, with the model check's fixes holdUnsure
-// (MT2), sendToMembers (MT1), withdrawOnLeave and pauseOnLeave (MT12), and rule 10: only the person it is about
-// confirms, edits or declines it.
+// (MT2), sendToMembers (MT1), withdrawOnLeave and pauseOnLeave (MT12), ownerAtConfirm (28 Oct), and rule 10: only
+// the person it is about confirms, edits or declines it.
 import { describe, expect, it } from "vitest";
 import { config } from "../config";
 import type { ExtractedItemDraft } from "../shared";
@@ -80,6 +80,8 @@ describe("attributed item arrows", () => {
     ["waiting", { type: "BACK" }, { actorId: null }, {}, "proposed"],
     ["waiting", { type: "LEFT" }, { actorId: null, member: false }, {}, "withdrawn"],
     ["proposed", { type: "LEFT" }, { actorId: null, member: false }, {}, "withdrawn"],
+    ["waiting", { type: "REASSIGNED" }, { actorId: null, owner: "alicia" }, { kind: "update", draft: UPDATE, personId: "jodian" }, "withdrawn"],
+    ["proposed", { type: "REASSIGNED" }, { actorId: null, owner: null }, { kind: "update", draft: UPDATE, personId: "jodian" }, "withdrawn"],
     ["proposed", { type: "EDIT", value: "Send Kyle the full buyer list", dueOn: "2026-10-26" }, {}, {}, "proposed"],
     ["proposed", { type: "CONFIRM" }, {}, {}, "confirmed"],
     ["proposed", { type: "DECLINE", reason: "Andre is sending it" }, {}, {}, "declined"],
@@ -109,8 +111,20 @@ describe("attributed item guards", () => {
     expect(applyAttributedEvent(at("proposed"), { type: "CONFIRM" }, { ...base, member: false }).outcome).toMatchObject({ ok: false, reason: "you are no longer on this project" });
   });
 
+  it("ownerAtConfirm (rules 4 and 10): an update is confirmed only by the record's owner now; once it changed hands it is withdrawn", () => {
+    const jodians = at("proposed", { kind: "update", draft: UPDATE, personId: "jodian" });
+    const asJodian = { ...base, actorId: "jodian" };
+    expect(applyAttributedEvent(jodians, { type: "CONFIRM" }, { ...asJodian, owner: "jodian" }).outcome.ok).toBe(true);
+    expect(applyAttributedEvent(jodians, { type: "CONFIRM" }, { ...asJodian, owner: "alicia" }).outcome).toMatchObject({ ok: false, reason: "it is no longer yours" });
+    expect(applyAttributedEvent(jodians, { type: "CONFIRM" }, asJodian).outcome).toMatchObject({ ok: false, reason: "it is no longer yours" });
+    expect(applyAttributedEvent(jodians, { type: "REASSIGNED" }, { ...base, actorId: null, owner: "alicia" }).record).toMatchObject({ state: "withdrawn", reason: "it is no longer theirs" });
+    expect(applyAttributedEvent(jodians, { type: "REASSIGNED" }, { ...base, actorId: null, owner: "jodian" }).outcome.ok).toBe(false);
+    // A promise is the speaker's own, whoever owns the record it names
+    expect(applyAttributedEvent(at("proposed"), { type: "REASSIGNED" }, { ...base, actorId: null, owner: "jodian" }).outcome.ok).toBe(false);
+  });
+
   it("an update confirms only while the record is as the note saw it (NeverOverwriteUnseen)", () => {
-    const r = applyAttributedEvent(at("proposed", { kind: "update", draft: UPDATE, personId: "jodian" }), { type: "CONFIRM" }, { ...base, actorId: "jodian", current: "blocked" });
+    const r = applyAttributedEvent(at("proposed", { kind: "update", draft: UPDATE, personId: "jodian" }), { type: "CONFIRM" }, { ...base, actorId: "jodian", owner: "jodian", current: "blocked" });
     expect(r.outcome).toMatchObject({ ok: false, reason: "it is blocked now, not in_progress as the note saw it" });
   });
 

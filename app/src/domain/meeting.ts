@@ -26,6 +26,10 @@ export type SplitPart =
  * Each item, in message order: the recorder's own, or about someone else. An update is about the record's owner
  * when they were there (an attendee) and are not the recorder; one about someone who was not there stays the
  * recorder's, and Save asks its owner as for any update (U5, MT3). A promise is about whoever made it (CD5).
+ * Only a change the checks found, to a record they are sure of, is asked of anyone (fix check, 28 Oct): an update
+ * that changes nothing (no_change) is not news to its owner, and one whose record Atlas only guessed (Phase D,
+ * closeMatches) stays in the recorder's review, where they say which record was meant; Save then asks whoever
+ * owns that one (U5). A promise about work already done (no_change) asks nothing either.
  */
 export function splitMeeting(drafts: readonly ExtractedItemDraft[], ctx: { recorderId: string; meeting: MeetingContext; projects: readonly CandidateProject[] }): SplitPart[] {
   const attended = new Set(ctx.meeting.attendees.map((a) => a.personId));
@@ -33,6 +37,7 @@ export function splitMeeting(drafts: readonly ExtractedItemDraft[], ctx: { recor
   return [...drafts]
     .sort((a, b) => a.ordinal - b.ordinal)
     .map((draft): SplitPart => {
+      if (draft.mark === "no_change" || draft.closeMatches) return { to: "own", draft };
       if (draft.kind === "commitment" && draft.speaker && draft.commitment?.act === "promise") {
         const link = draft.commitment.link;
         const projectId = link && ctx.projects.some((p) => p.id === link.projectId) ? link.projectId : ctx.meeting.projectId;

@@ -83,15 +83,21 @@ describe("meeting guards", () => {
 });
 
 describe("MT7, sameMeeting", () => {
-  const first = { projectId: "forager", recorderId: "alicia", at: new Date("2026-10-20T15:00:00Z"), mode: "meeting" as const, state: "split" as const };
+  const first = { projectId: "forager", recorderId: "alicia", at: new Date("2026-10-20T15:00:00Z"), attendees: ["jodian", "kemar"], mode: "meeting" as const, state: "split" as const };
+  const second = { projectId: "forager", recorderId: "kemar", at: first.at, attendees: null };
   it("the same project, someone else, within the window", () => {
-    expect(sameMeeting({ projectId: "forager", recorderId: "kemar", at: new Date("2026-10-20T16:30:00Z") }, first)).toBe(true);
+    expect(sameMeeting({ ...second, at: new Date("2026-10-20T16:30:00Z") }, first)).toBe(true);
+    expect(sameMeeting({ ...second, attendees: ["alicia", "jodian"] }, first)).toBe(true);
   });
   it("not the same: another project, the same recorder, too far apart, own notes, or a note that was never read", () => {
-    expect(sameMeeting({ projectId: "gq", recorderId: "kemar", at: first.at }, first)).toBe(false);
-    expect(sameMeeting({ projectId: "forager", recorderId: "alicia", at: first.at }, first)).toBe(false);
-    expect(sameMeeting({ projectId: "forager", recorderId: "kemar", at: new Date(first.at.getTime() + (config.meetingMatchMinutes + 1) * 60_000) }, first)).toBe(false);
-    expect(sameMeeting({ projectId: "forager", recorderId: "kemar", at: first.at }, { ...first, mode: "own" })).toBe(false);
-    expect(sameMeeting({ projectId: "forager", recorderId: "kemar", at: first.at }, { ...first, state: "expired" })).toBe(false);
+    expect(sameMeeting({ ...second, projectId: "gq" }, first)).toBe(false);
+    expect(sameMeeting({ ...second, recorderId: "alicia" }, first)).toBe(false);
+    expect(sameMeeting({ ...second, at: new Date(first.at.getTime() + (config.meetingMatchMinutes + 1) * 60_000) }, first)).toBe(false);
+    expect(sameMeeting(second, { ...first, mode: "own" })).toBe(false);
+    expect(sameMeeting(second, { ...first, state: "expired" })).toBe(false);
+  });
+  it("M1, P10: never a note whose recorder did not name this one as there, nor, once said, one whose recorder this one did not name", () => {
+    expect(sameMeeting(second, { ...first, attendees: ["jodian"] })).toBe(false);
+    expect(sameMeeting({ ...second, attendees: ["jodian"] }, first)).toBe(false);
   });
 });

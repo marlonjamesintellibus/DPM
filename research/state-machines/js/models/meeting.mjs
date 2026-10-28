@@ -7,7 +7,8 @@
 //   The recorder confirms the attendees, and that they knew it was recorded, before anything is read
 //   (MT4). Kemar's items go to his review (M3), each thing about an attendee goes to them as an M34 Ask
 //   (rule 10), and the decision goes to the deciders as an M15 proposal. Alicia may go on leave (MT12),
-//   lose the PM role, or leave the project at any time.
+//   lose the PM role, or leave the project at any time. The thing about Alicia may be a change to a record
+//   of hers (an update), and that record may be given to someone else at any time.
 //
 // Design 'as_written' takes the arrows exactly as section 17 draws them. Design 'fixed' adds the
 // smallest change for each place the checker found the drawing breaks a rule:
@@ -19,6 +20,9 @@
 //                    item goes to the recorder, as MT1 does for people not in DPM
 //   withdrawOnLeave  rule 3, E77: leaving the project withdraws that person's open asks there
 //   pauseOnLeave     MT12: the attributedExpiryDays timer does not run while the person is on leave
+//   ownerAtConfirm   rules 4 and 10 (added by the fix check of 28 Oct): an update is confirmed only by the
+//                    record's owner now; once the record is someone else's the ask is withdrawn, so the
+//                    person it first went to never changes another person's record
 // A Bug named after a fix turns that fix off, so each property is shown to catch something.
 import { clone, product } from '../lib.mjs';
 
@@ -36,7 +40,7 @@ const OWN_FINAL = ['saved', 'rejected', 'expired'];
 const DEC_SETTLED = ['proposed', 'approved', 'declined', 'rejected', 'expired'];
 const SENT = ['proposed', 'approved', 'declined'];
 
-const FIXES = ['ownNotes', 'holdUnsure', 'reviewDecisions', 'sendToMembers', 'withdrawOnLeave', 'pauseOnLeave'];
+const FIXES = ['ownNotes', 'holdUnsure', 'reviewDecisions', 'sendToMembers', 'withdrawOnLeave', 'pauseOnLeave', 'ownerAtConfirm'];
 const FIX_BUG = {
   ownNotes: 'noOwnNotes',
   holdUnsure: 'sendOnGuess',
@@ -44,11 +48,13 @@ const FIX_BUG = {
   sendToMembers: 'askOutsider',
   withdrawOnLeave: 'noWithdrawOnLeave',
   pauseOnLeave: 'timerOnLeave',
+  ownerAtConfirm: 'ownerAtAsk',
 };
 
-// The drawn arrows, as from>to. Section 17 first, then what each fix adds.
+// The drawn arrows, as from>to. Section 17 first, then what each fix adds. "transcribing ... (as M2)":
+// M2 can fail while transcribing a voice note as well as while reading it.
 const ARROWS = {
-  job: ['received>transcribing', 'transcribing>reading', 'reading>split', 'reading>failed', 'split>done', 'received>expired'],
+  job: ['received>transcribing', 'transcribing>reading', 'reading>split', 'transcribing>failed', 'reading>failed', 'split>done', 'received>expired'],
   own: ['none>review', 'review>saved', 'review>rejected', 'review>expired'],
   dec: ['none>proposed', 'proposed>approved', 'proposed>declined'],
   ask: ['none>proposed', 'none>waiting', 'waiting>proposed', 'proposed>confirmed', 'proposed>declined', 'proposed>expired'],
@@ -61,6 +67,7 @@ const ADDS = {
   sendToMembers: { ask: ['none>mine'] },
   withdrawOnLeave: { ask: ['proposed>withdrawn', 'waiting>withdrawn'] },
   pauseOnLeave: {},
+  ownerAtConfirm: { ask: ['proposed>withdrawn', 'waiting>withdrawn'] },
 };
 
 export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
@@ -105,7 +112,7 @@ export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
         dec: { st: 'none', pmAtAsk: false },
         a: { st: 'none', worded: false, fixed: false, recorderTold: false },
         n: { st: 'none', worded: false, fixed: false, recorderTold: false },
-        alicia: { role: 'pm', leave: 'in' },
+        alicia: { role: 'pm', leave: 'in', owns: true }, // owns: the record the thing about her changes
         filed: { own: 0, a: 0, n: 0, kyle: 0, dec: 0 },
         by: null,
       })),
@@ -134,10 +141,10 @@ export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
         step: (s) => (s.job === 'transcribing' ? [Object.assign(t0(s, 'atlas'), { job: 'reading' })] : []),
       },
       {
-        // As M2: reading fails after its retries
+        // As M2: transcribing or reading fails after its retries
         name: 'ReadFails',
         params: [[]],
-        step: (s) => (s.job === 'reading' ? [Object.assign(t0(s, 'atlas'), { job: 'failed' })] : []),
+        step: (s) => (['transcribing', 'reading'].includes(s.job) ? [Object.assign(t0(s, 'atlas'), { job: 'failed' })] : []),
       },
       {
         // PROPOSALS_READY, then the split. Atlas may or may not be sure who said the thing about Alicia.
@@ -239,6 +246,8 @@ export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
           const late = s[x].st === 'expired' && Bug === 'lateConfirm';
           if (s[x].st !== 'proposed' && !again && !late) return [];
           if (!member(s, by)) return [];
+          // ownerAtConfirm: the record is checked as it is now, not as it was when the note was read
+          if (fix.ownerAtConfirm && x === 'a' && !s.alicia.owns) return [];
           const t = t0(s, by);
           t[x].st = 'confirmed';
           t.filed[x] += 1;
@@ -293,6 +302,18 @@ export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
         },
       },
       {
+        // ownerAtConfirm: an ask about a record that is someone else's now is withdrawn (by her tap, or the timer)
+        name: 'OwnerMoved',
+        params: [[]],
+        fair: true,
+        step(s) {
+          if (!fix.ownerAtConfirm || s.alicia.owns || !['proposed', 'waiting'].includes(s.a.st)) return [];
+          const t = t0(s, 'timer');
+          t.a.st = 'withdrawn';
+          return [t];
+        },
+      },
+      {
         // Every part saved, confirmed, declined or expired
         name: 'Done',
         params: [[]],
@@ -320,6 +341,7 @@ export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
       // The world: Alicia goes on leave and comes back, loses the PM role, or leaves Forager. Once each.
       { name: 'LeaveStarts', params: [[]], step: (s) => (s.alicia.leave === 'in' ? [Object.assign(t0(s, 'alicia'), { alicia: { ...s.alicia, leave: 'away' } })] : []) },
       { name: 'LeaveEnds', params: [[]], fair: true, step: (s) => (s.alicia.leave === 'away' ? [Object.assign(t0(s, 'timer'), { alicia: { ...s.alicia, leave: 'back' } })] : []) },
+      { name: 'Reassigned', params: [[]], step: (s) => (s.alicia.owns ? [Object.assign(t0(s, 'group'), { alicia: { ...s.alicia, owns: false } })] : []) },
       { name: 'Demoted', params: [[]], step: (s) => (s.alicia.role === 'pm' ? [Object.assign(t0(s, 'group'), { alicia: { ...s.alicia, role: 'member' } })] : []) },
       {
         name: 'LeavesProject',
@@ -359,9 +381,10 @@ export default function Meeting({ Design = 'as_written', Bug = null } = {}) {
       // Rule 10: what is said about Alicia or Andre is filed as theirs only when they confirm it
       YourWordOnlyYours: (s, t) =>
         ITEMS.every((x) => t.filed[x] === s.filed[x] || t.by === PERSON[x]) && (t.filed.own === s.filed.own || t.by === RECORDER),
-      // Rule 4: a confirm or an approval is refused once the right is gone, whatever the ask showed
+      // Rule 4: a confirm or an approval is refused once the right is gone, whatever the ask showed. Rule 10:
+      // the right to confirm a change to a record is its owner's, so it goes when the record changes hands
       RightCheckedWhenItRuns: (s, t) =>
-        ITEMS.every((x) => t.filed[x] === s.filed[x] || member(s, PERSON[x])) && (t.filed.dec === s.filed.dec || isPm(s, t.by)),
+        ITEMS.every((x) => t.filed[x] === s.filed[x] || (member(s, PERSON[x]) && (x !== 'a' || s.alicia.owns))) && (t.filed.dec === s.filed.dec || isPm(s, t.by)),
       // MT2: nothing goes to another person while Atlas is unsure who said it
       NoAskOnAGuess: (s, t) =>
         !(['none', 'held'].includes(s.a.st) && ['proposed', 'waiting'].includes(t.a.st)) || t.sure || t.a.fixed,

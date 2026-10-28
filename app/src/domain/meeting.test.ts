@@ -42,6 +42,13 @@ describe("splitMeeting", () => {
     expect(split([decision, own]).map((p) => p.to)).toEqual(["own", "own"]);
   });
 
+  it("only a change the checks found, to a record they are sure of, is asked: no_change and a guessed record stay the recorder's (fix check, 28 Oct)", () => {
+    const same: ExtractedItemDraft = { ...update("ms-release-1", 1), mark: "no_change" };
+    const guessed: ExtractedItemDraft = { ...update("ms-release-1", 2), mark: "needs_ok", closeMatches: { ids: ["ms-release-1", "wi-145"], chosen: null } };
+    const doneWork: ExtractedItemDraft = { ...promise("alicia", 3), mark: "no_change" };
+    expect(split([same, guessed, doneWork, update("ms-release-1", 4)]).map((p) => p.to)).toEqual(["own", "own", "own", "attributed"]);
+  });
+
   it("keeps message order", () => {
     expect(split([update("wi-145", 3), promise("alicia", 1)]).map((p) => p.draft.ordinal)).toEqual([1, 3]);
   });

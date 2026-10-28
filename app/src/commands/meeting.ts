@@ -5,10 +5,12 @@
 // as theirs only when they confirm it, run as them and checked when it runs (rules 4 and 10). An item whose
 // speaker Atlas is unsure of is held in the recorder's review until they say who (MT2); someone who is not a
 // member of the item's project is never asked, and their item is the recorder's (MT1); someone on leave gets it
-// when they are back, and its timer counts only days they are in (MT12). A second note of the same meeting may
-// merge with the first, so nothing is asked twice (MT7, CD18). Every move runs its machine and writes an audit
-// entry. Atlas cannot speak first yet (phase F): what is asked of someone is a notice in their DPM chat plus an
-// inbox item.
+// when they are back, and its timer counts only days they are in (MT12). An Ask whose person left its project, or
+// whose record is someone else's now, is withdrawn where that is first seen: the membership's LEAVE
+// (withdrawOnLeave), their own answer, or the daily timer (E77, ownerAtConfirm). A second note of the same meeting
+// may merge with the first, so nothing is asked twice, whichever is read first (MT7, CD18). Every move runs its
+// machine and writes an audit entry. Atlas cannot speak first yet (phase F): what is asked of someone is a notice
+// in their DPM chat plus an inbox item.
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
@@ -41,7 +43,7 @@ import { openFromMeeting } from "./commitment";
 import { audit, CommandRefused, moved, runCommand, todayOf, type CommandCtx } from "./core";
 import { evaluateProject, syncInbox } from "./evaluate";
 import { notice } from "./notices";
-import { fieldNow } from "./owner-ask";
+import { fieldNow, ownerNow } from "./owner-ask";
 
 type MeetingRow = typeof t.meetings.$inferSelect;
 type By = { actorType: "person" | "atlas" | "rule"; actorId: string | null };
@@ -147,7 +149,8 @@ export function confirmAttendees(ctx: CommandCtx, meetingId: string, input: { at
     if (!(await projectReader(tx, ctx.actorId)).mayRead(m.projectId)) throw new CommandRefused("you can no longer read this project", "not_found");
     const allowed = new Set((await mayAttend(tx, m.projectId, m.recorderId)).map((p) => p.id));
     const [capture] = await tx.select({ at: t.captures.messageAt }).from(t.captures).where(eq(t.captures.id, m.captureId));
-    const mergeWith = input.merge ? ((await matchingMeeting(tx, m, capture.at))?.id ?? null) : null;
+    // MT7, P10: only a note whose recorder this one names as there, and which named this recorder, is merged with
+    const mergeWith = input.merge ? ((await matchingMeeting(tx, m, capture.at, input.attendees))?.id ?? null) : null;
     const r = applyMeetingEvent(m, { type: "ATTENDEES_CONFIRMED", attendees: input.attendees, told: input.told, mergeWith }, { actorId: ctx.actorId, today: todayOf(ctx.now), mayAttend: (p) => allowed.has(p) });
     const outcome = moved(r.outcome);
     await persistMeeting(tx, r.record, row.version, ctx.now);
@@ -200,9 +203,9 @@ export async function meetingReadFailed(tx: Tx, now: Date, captureId: string): P
 /**
  * M33 PROPOSALS_READY, then the split, in the read's transaction: each item about an attendee becomes an M34 Ask
  * (SPLIT decides held, waiting, proposed or mine), and what is the recorder's own comes back for their review,
- * an item that became theirs (mine) in its recorder's form (mineDraft). MT7: an Ask that an earlier note of the
- * same meeting, merged with, already made is not made again; that one names this recorder too. Returns the
- * recorder's drafts and how many are held for who said it.
+ * an item that became theirs (mine) in its recorder's form (mineDraft). MT7: an Ask that another note of the
+ * same meeting, merged with this one either way, already made is not made again; that one names this recorder
+ * too. Returns the recorder's drafts and how many are held for who said it.
  */
 export async function splitMeetingNote(tx: Tx, now: Date, capture: Pick<typeof t.captures.$inferSelect, "id" | "authorId" | "text">, drafts: readonly ExtractedItemDraft[], ctx: CheckContext): Promise<{ own: ExtractedItemDraft[]; held: number }> {
   const [row] = await tx.select().from(t.meetings).where(eq(t.meetings.captureId, capture.id));
@@ -216,7 +219,11 @@ export async function splitMeetingNote(tx: Tx, now: Date, capture: Pick<typeof t
   if (current.state === "reading") await step({ type: "PROPOSALS_READY" });
   const m = meetingOf(current);
   const today = todayOf(now);
-  const earlier = m.mergedWith ? (await tx.select().from(t.attributedItems).where(eq(t.attributedItems.meetingId, m.mergedWith))).map((r) => ({ row: r, record: attributedOf(r) })) : [];
+  // MT7, CD18: what a note of the same meeting already asked: the earlier one this merged with, or a later one that
+  // merged with this one and was read first (it merges once this one's attendees are confirmed, before its read)
+  const later = (await tx.select({ id: t.meetings.id }).from(t.meetings).where(eq(t.meetings.mergedWith, m.id))).map((r) => r.id);
+  const linked = [...(m.mergedWith ? [m.mergedWith] : []), ...later];
+  const earlier = linked.length ? (await tx.select().from(t.attributedItems).where(inArray(t.attributedItems.meetingId, linked))).map((r) => ({ row: r, record: attributedOf(r) })) : [];
   const nameIn = (id: string | null) => (id ? (ctx.meeting!.attendees.find((a) => a.personId === id)?.name ?? ctx.projects.flatMap((p) => p.people).find((p) => p.personId === id)?.name ?? null) : null);
   const projectName = (id: string) => ctx.projects.find((p) => p.id === id)?.name ?? "the project";
   const own: ExtractedItemDraft[] = [];
@@ -250,7 +257,7 @@ export async function splitMeetingNote(tx: Tx, now: Date, capture: Pick<typeof t
     const away = pid ? (await awayOn(tx, pid))(today) : false;
     const r = applyAttributedEvent(record, { type: "SPLIT" }, { actorId: null, today, ownNotes: m.mode === "own", sure: part.sure, member, away });
     const outcome = moved(r.outcome);
-    // MT7, CD18: the earlier note already asked them this; it is not asked twice
+    // MT7, CD18: the other note already asked them this; it is not asked twice
     const same = r.record.state === "proposed" || r.record.state === "waiting" ? earlier.find((e) => ["waiting", "proposed", "confirmed", "declined"].includes(e.record.state) && sameAttributed(e.record, r.record)) : undefined;
     if (same) {
       const joined = { ...same.record, alsoFrom: [...same.record.alsoFrom, { recorderId: m.recorderId, captureId: capture.id, meetingId: m.id }] };
@@ -309,13 +316,16 @@ export async function settleMeeting(tx: Tx, now: Date, captureId: string): Promi
 /**
  * FIX_SPEAKER, while the review is open: the recorder says who said a held item, themselves or someone who was
  * there. It then goes to that person (or waits for them, MT12), or joins the recorder's review as theirs (mine).
+ * MT3: someone on the project or one of its contacts whom the recorder did not list may be named too; naming
+ * them is the recorder adding them, for this item.
  */
 export function fixSpeaker(ctx: CommandCtx, attributedId: string, personId: string): Promise<AttributedItemRecord> {
   return runCommand(ctx, async (tx) => {
     const [row] = await tx.select().from(t.attributedItems).where(eq(t.attributedItems.id, attributedId));
     if (!row || row.recorderId !== ctx.actorId) throw new CommandRefused("no such item", "not_found");
     const [meeting] = await tx.select().from(t.meetings).where(eq(t.meetings.id, row.meetingId));
-    if (personId !== row.recorderId && !meeting.attendees.includes(personId)) throw new CommandRefused("choose yourself or someone who was there");
+    const listed = personId === row.recorderId || meeting.attendees.includes(personId);
+    if (!listed && !(await mayAttend(tx, meeting.projectId, row.recorderId)).some((p) => p.id === personId)) throw new CommandRefused("choose yourself or someone who was there: on the project, or one of its contacts");
     const [capture] = await tx.select({ state: t.captures.state }).from(t.captures).where(eq(t.captures.id, row.captureId));
     const today = todayOf(ctx.now);
     const member = (await projectReader(tx, personId)).mayRead(row.projectId);
@@ -323,7 +333,7 @@ export function fixSpeaker(ctx: CommandCtx, attributedId: string, personId: stri
     const r = applyAttributedEvent(attributedOf(row), { type: "FIX_SPEAKER", personId }, { actorId: ctx.actorId, today, member, away, reviewOpen: capture.state === "proposed" || capture.state === "reviewing" });
     const outcome = moved(r.outcome);
     await persistAttributed(tx, r.record, row.version, ctx.now);
-    await auditItem(tx, ctx.now, r.record, outcome, person(ctx.actorId), { member, away });
+    await auditItem(tx, ctx.now, r.record, outcome, person(ctx.actorId), { member, away, ...(listed ? {} : { added: true }) });
     if (r.record.state === "mine") {
       const [project] = await tx.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).where(eq(t.projects.id, row.projectId));
       const [named] = await tx.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, personId));
@@ -333,6 +343,51 @@ export function fixSpeaker(ctx: CommandCtx, attributedId: string, personId: stri
     if (r.record.state === "proposed") await deliver(tx, ctx.now, r.record);
     return r.record;
   });
+}
+
+// ---- No longer theirs: withdrawn (E77, ownerAtConfirm) ----
+
+/**
+ * The model's withdrawOnLeave (E77) and the fix check's ownerAtConfirm (rules 4 and 10): an open Ask whose person
+ * is no longer a member of its project, or an update whose record is someone else's now (or gone), is withdrawn,
+ * and leaves their inbox. null when it still stands. Nothing is filed, and nobody else is asked: the new owner was
+ * not named in the meeting, so the recorder sees it withdrawn on the note's card and may report it again.
+ */
+async function withdrawIfNotTheirs(tx: Tx, now: Date, row: typeof t.attributedItems.$inferSelect): Promise<AttributedItemRecord | null> {
+  const r0 = attributedOf(row);
+  if ((r0.state !== "waiting" && r0.state !== "proposed") || !r0.personId) return null;
+  const member = (await projectReader(tx, r0.personId)).mayRead(r0.projectId);
+  const owner = r0.kind === "update" && r0.draft.target ? await ownerNow(tx, r0.draft.target) : null;
+  const event: AttributedEvent | null = !member ? { type: "LEFT" } : r0.kind === "update" && owner !== r0.personId ? { type: "REASSIGNED" } : null;
+  if (!event) return null;
+  const r = applyAttributedEvent(r0, event, { actorId: null, today: todayOf(now), member, owner });
+  if (!r.outcome.ok) return null;
+  await persistAttributed(tx, r.record, row.version, now);
+  await auditItem(tx, now, r.record, r.outcome, RULE, r0.kind === "update" ? { owner } : {});
+  await syncItems(tx, now, r.record, false);
+  return r.record;
+}
+
+/**
+ * E77, the model's withdrawOnLeave: in the transaction that takes someone off a project (M13 LEAVE), their open
+ * Asks there are withdrawn, so an open Ask is only ever a member's (OpenAsksOnlyToMembers). DPM has no command
+ * for leaving yet (membership comes from the Atlas group, D2): whatever changes it calls this; until then their
+ * own answer and the daily timer withdraw it, and the chat stops showing its notice once they cannot read the
+ * project (P10).
+ */
+export async function withdrawOnLeave(tx: Tx, now: Date, personId: string, projectId: string): Promise<string[]> {
+  const rows = await tx
+    .select()
+    .from(t.attributedItems)
+    .where(and(eq(t.attributedItems.personId, personId), eq(t.attributedItems.projectId, projectId), inArray(t.attributedItems.state, ["waiting", "proposed"])));
+  const withdrawn: string[] = [];
+  for (const row of rows) {
+    const r = await withdrawIfNotTheirs(tx, now, row);
+    if (!r) continue;
+    withdrawn.push(r.id);
+    await settleMeeting(tx, now, r.captureId);
+  }
+  return withdrawn;
 }
 
 // ---- The person it is about: confirm, edit or decline (M34) ----
@@ -361,10 +416,18 @@ function answer(ctx: CommandCtx, id: string, event: AttributedEvent, done: strin
     if (!row || row.personId !== ctx.actorId) throw new CommandRefused("no such item", "not_found");
     const before = attributedOf(row);
     if (ATTRIBUTED_FINAL.includes(before.state)) return { record: before, message: endedText(before) };
+    // Rule 4, E77, ownerAtConfirm: no longer on its project, or the record is someone else's now: it is withdrawn
+    // here, in the answer's transaction, and nothing is filed
+    const gone = await withdrawIfNotTheirs(tx, ctx.now, row);
+    if (gone) {
+      await settleMeeting(tx, ctx.now, before.captureId);
+      return { record: gone, message: gone.reason === "they left the project" ? "You are no longer on this project, so this was withdrawn. Nothing was filed." : "This is no longer yours, so it was withdrawn. Nothing was filed." };
+    }
     const today = todayOf(ctx.now);
     const member = (await projectReader(tx, ctx.actorId)).mayRead(before.projectId);
-    const current = before.kind === "update" && before.draft.target ? await fieldNow(tx, before.draft.target) : null;
-    const r = applyAttributedEvent(before, event, { actorId: ctx.actorId, today, member, away: (await awayOn(tx, ctx.actorId))(today), current });
+    const target = before.kind === "update" ? (before.draft.target ?? null) : null;
+    const [current, owner] = target ? [await fieldNow(tx, target), await ownerNow(tx, target)] : [null, null];
+    const r = applyAttributedEvent(before, event, { actorId: ctx.actorId, today, member, away: (await awayOn(tx, ctx.actorId))(today), current, owner });
     const outcome = moved(r.outcome);
     if (then) await then(tx, before, r.record);
     await persistAttributed(tx, r.record, row.version, ctx.now);
@@ -421,9 +484,9 @@ export function declineAttributed(ctx: CommandCtx, id: string, reason?: string |
 /**
  * The meeting timers (rule 5), cheap when nothing waits: a note whose attendees were never confirmed expires after
  * config.reviewExpiryDays, and its recorder is told; an Ask waiting for someone on leave reaches them when they are
- * back (MT12); one whose person left its project is withdrawn (E77); one nobody answered in
- * config.attributedExpiryDays working days they were in expires unfiled, and its recorder is told; and a meeting
- * whose every part is settled is done.
+ * back (MT12); one whose person left its project, or whose record is someone else's now, is withdrawn (E77,
+ * ownerAtConfirm); one nobody answered in config.attributedExpiryDays working days they were in expires unfiled,
+ * and its recorder is told; and a meeting whose every part is settled is done.
  */
 export function runMeetingTimers(ctx: { db: Db; now: Date }): Promise<{ id: string; to: string }[]> {
   const today = todayOf(ctx.now);
@@ -440,14 +503,20 @@ export function runMeetingTimers(ctx: { db: Db; now: Date }): Promise<{ id: stri
     const open = await tx.select().from(t.attributedItems).where(inArray(t.attributedItems.state, ["waiting", "proposed"]));
     const captures = new Set<string>();
     for (const row of open) {
+      // E77, ownerAtConfirm: whatever the membership's LEAVE or their own answer did not withdraw yet
+      const gone = await withdrawIfNotTheirs(tx, ctx.now, row);
+      if (gone) {
+        moves.push({ id: gone.id, to: gone.state });
+        captures.add(gone.captureId);
+        continue;
+      }
       const r0 = attributedOf(row);
       const pid = r0.personId!;
-      const member = (await projectReader(tx, pid)).mayRead(r0.projectId);
       const wasAway = await awayOn(tx, pid);
       const away = wasAway(today);
-      const event: AttributedEvent = !member ? { type: "LEFT" } : r0.state === "waiting" ? { type: "BACK" } : { type: "EXPIRE" };
+      const event: AttributedEvent = r0.state === "waiting" ? { type: "BACK" } : { type: "EXPIRE" };
       const inDays = r0.askedOn ? workingDaysIn(r0.askedOn, today, wasAway) : 0;
-      const r = applyAttributedEvent(r0, event, { actorId: null, today, member, away, inDays });
+      const r = applyAttributedEvent(r0, event, { actorId: null, today, member: true, away, inDays });
       if (!r.outcome.ok) continue;
       await persistAttributed(tx, r.record, row.version, ctx.now);
       await auditItem(tx, ctx.now, r.record, r.outcome, RULE, event.type === "EXPIRE" ? { inDays } : {});

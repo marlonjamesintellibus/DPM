@@ -90,6 +90,21 @@ export async function fieldNow(tx: Tx, target: { type: string; id: string; field
   return null;
 }
 
+/** Who owns a record today (a handover step is its leaver's); null when it is gone. Phase O's M34 reads it (rule 10). */
+export async function ownerNow(tx: Tx, target: { type: string; id: string }): Promise<string | null> {
+  switch (target.type) {
+    case "work_item":
+      return (await tx.select({ ownerId: t.workItems.ownerId }).from(t.workItems).where(eq(t.workItems.id, target.id)))[0]?.ownerId ?? null;
+    case "milestone":
+      return (await tx.select({ ownerId: t.milestones.ownerId }).from(t.milestones).where(eq(t.milestones.id, target.id)))[0]?.ownerId ?? null;
+    case "handover": {
+      const [row] = await tx.select({ ownerId: t.handovers.fromPersonId }).from(t.handoverSteps).innerJoin(t.handovers, eq(t.handovers.id, t.handoverSteps.handoverId)).where(eq(t.handoverSteps.id, target.id));
+      return row?.ownerId ?? null;
+    }
+  }
+  return null;
+}
+
 async function loadAsk(tx: Tx, askId: string) {
   const [row] = await tx.select().from(t.ownerAsks).where(eq(t.ownerAsks.id, askId));
   if (!row) throw new CommandRefused(`no ask ${askId}`, "not_found");

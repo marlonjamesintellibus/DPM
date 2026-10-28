@@ -49,9 +49,11 @@ export async function mayAttend(conn: Conn, projectId: string, recorderId: strin
 
 /**
  * MT7, CD18: an earlier note of the same meeting from someone else, which this one may merge with. Only one the
- * recorder can know of: on the project they marked theirs with, which they read now (P10).
+ * recorder can know of: on the project they marked theirs with, which they read now (P10), whose recorder named
+ * them as there (M1), and, once they say who was there (attendees; null on the card before that), whose recorder
+ * they name too (sameMeeting).
  */
-export async function matchingMeeting(conn: Conn, meeting: MeetingRecord, at: Date): Promise<{ id: string; recorder: string; time: string } | null> {
+export async function matchingMeeting(conn: Conn, meeting: MeetingRecord, at: Date, attendees: readonly string[] | null = null): Promise<{ id: string; recorder: string; time: string } | null> {
   const rows = await conn
     .select({ m: t.meetings, at: t.captures.messageAt, recorder: t.people.name })
     .from(t.meetings)
@@ -59,7 +61,7 @@ export async function matchingMeeting(conn: Conn, meeting: MeetingRecord, at: Da
     .innerJoin(t.people, eq(t.people.id, t.meetings.recorderId))
     .where(eq(t.meetings.projectId, meeting.projectId));
   const first = rows
-    .filter((r) => r.m.id !== meeting.id && r.at <= at && sameMeeting({ projectId: meeting.projectId, recorderId: meeting.recorderId, at }, { ...meetingOf(r.m), at: r.at }))
+    .filter((r) => r.m.id !== meeting.id && r.at <= at && sameMeeting({ projectId: meeting.projectId, recorderId: meeting.recorderId, at, attendees }, { ...meetingOf(r.m), at: r.at }))
     .sort((a, b) => a.at.getTime() - b.at.getTime())[0];
   if (!first || !(await projectReader(conn, meeting.recorderId)).mayRead(meeting.projectId)) return null;
   return { id: first.m.id, recorder: firstName(first.recorder), time: clockTime(first.at) };
@@ -221,7 +223,9 @@ export async function heldForReview(conn: Conn, captureId: string, viewerId: str
   const held = (await conn.select().from(t.attributedItems).where(and(eq(t.attributedItems.meetingId, row.id), eq(t.attributedItems.state, "held")))).map(attributedOf);
   if (!held.length) return [];
   const people = row.attendees.length ? await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(inArray(t.people.id, row.attendees)) : [];
-  const choices = [{ id: viewerId, name: "Me" }, ...people.sort((a, b) => a.name.localeCompare(b.name))];
+  // MT3: someone on the project the recorder did not list may be named too, which adds them (after those listed)
+  const others = (await projectReader(conn, viewerId)).mayRead(row.projectId) ? (await mayAttend(conn, row.projectId, viewerId)).filter((p) => !row.attendees.includes(p.id)) : [];
+  const choices = [{ id: viewerId, name: "Me" }, ...people.sort((a, b) => a.name.localeCompare(b.name)), ...others.map((p) => ({ id: p.id, name: `${p.name} (not listed as there)` }))];
   return Promise.all(held.map(async (a) => ({ id: a.id, quote: a.quote, title: (await attributedSummary(conn, a, viewerId)) ?? a.quote, choices })));
 }
 
