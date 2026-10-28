@@ -6,7 +6,7 @@ import { ruleQuestion, topicOf } from "../question";
 
 describe("catch_up, without a model", () => {
   it("knows how people ask to catch up after time away", () => {
-    for (const said of ["Catch me up", "Catch me up on Forager", "I'm back, what did I miss?", "What have I missed?", "What happened while I was away?", "Anything new since I was off?", "Wah mi miss?"]) {
+    for (const said of ["Catch me up", "Catch me up on Forager", "I'm back, what did I miss?", "What have I missed?", "What happened while I was away?", "Anything new since I was off?", "What happened on Forager while I was off?", "Wah mi miss?"]) {
       expect(topicOf(said), said).toBe("catch_up");
     }
   });
@@ -17,6 +17,10 @@ describe("catch_up, without a model", () => {
       ["What's new on Forager?", "updates"],
       ["What did I promise while I was away?", "commitments"],
       ["Who has mentioned me?", "mentions"],
+      // Away words do not take another topic's question: the catch-up is not a mentions, blocked or due list
+      ["Who mentioned me while I was away?", "mentions"],
+      ["What's blocked since I was out?", "blocked"],
+      ["What is due on Forager while I was off?", "due"],
     ];
     for (const [said, topic] of stays) expect(topicOf(said), said).toBe(topic);
   });

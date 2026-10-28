@@ -6,6 +6,7 @@ import {
   acceptExtractedLeave,
   applyLeaveEvent,
   changeLeave,
+  endsOnReturn,
   fitLeave,
   LEAVE_STATES,
   leaveAdmins,
@@ -65,6 +66,36 @@ describe("leave matching (M8, D6)", () => {
   it("the new dates of a change waiting on approved leave count as no change", () => {
     const waiting = changeLeave(APPROVED, { start: "2026-10-26", end: "2026-11-02" });
     expect(fitLeave(out("2026-10-26", "2026-11-02"), [waiting]).kind).toBe("matches");
+  });
+
+  it("phase P, LV6: back early ends the leave they are on the day before, a D6 change; back on time changes nothing", () => {
+    // Back Thu 29 Oct: the approved leave now ends Wed 28 Oct
+    const ends = endsOnReturn("kemar", "2026-10-29", [APPROVED, REQUESTED])!;
+    expect(ends).toEqual({ start: "2026-10-26", end: "2026-10-28" });
+    expect(fitLeave({ personId: "kemar", ...ends, back: true }, [APPROVED, REQUESTED])).toEqual({
+      kind: "change",
+      leaveId: "leave-1",
+      requested: false,
+      from: { start: "2026-10-26", end: "2026-10-30" },
+      to: { start: "2026-10-26", end: "2026-10-28" },
+    });
+    // Without the day back, the shorter dates are inside the leave, so they would match it
+    expect(fitLeave(out("2026-10-26", "2026-10-28"), [APPROVED]).kind).toBe("matches");
+    // Approved, the change waits on the admin (D6); a request just moves
+    expect(acceptExtractedLeave({ personId: "kemar", ...ends, back: true }, [APPROVED])).toEqual({ kind: "change", leaveId: "leave-1", to: ends });
+    // Back Mon 2 Nov, after the leave: nothing to change
+    const onTime = endsOnReturn("kemar", "2026-11-02", [APPROVED])!;
+    expect(fitLeave({ personId: "kemar", ...onTime, back: true }, [APPROVED]).kind).toBe("matches");
+    // A change already asked for that end is no change either
+    const asked = changeLeave(APPROVED, ends);
+    expect(fitLeave({ personId: "kemar", ...ends, back: true }, [asked]).kind).toBe("matches");
+  });
+
+  it("phase P, LV6: back from no leave begun by then is refused", () => {
+    expect(endsOnReturn("kemar", "2026-10-26", [APPROVED])).toBeNull();
+    expect(endsOnReturn("kemar", "2026-10-20", [APPROVED, REQUESTED])).toBeNull();
+    expect(endsOnReturn("kemar", "2026-10-29", [{ ...APPROVED, state: "withdrawn" }])).toBeNull();
+    expect(fitLeave({ personId: "kemar", start: "2026-10-27", end: "2026-10-28", back: true }, [APPROVED])).toEqual({ kind: "refused", reason: "you're not on leave then" });
   });
 
   it("refuses leave that ends before it starts (E22)", () => {

@@ -8,9 +8,12 @@ import { createFixtureExtractor } from "../atlas/fixture";
 import { readCapture } from "../commands/atlas";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "../commands/capture";
 import { answerCover, askCover } from "../commands/cover";
+import { approveLeave } from "../commands/leave";
 import type { Db } from "../db/client";
 import * as t from "../db/schema";
 import { at, seededDb } from "../test/seeded-db";
+import { getChatSummary } from "./chat";
+import { getReview } from "./review";
 
 let db: Db;
 let n = 0;
@@ -39,6 +42,17 @@ async function coveredBeforeLeave() {
   await answerCover(as("jodian", 2), record.id, { act: "accept" }, "yes");
 }
 
+/** Kemar says he is back early, in the DPM chat, at a time; Atlas proposes it as his leave, quoting those words. */
+async function saysBack(text: string, minutes: number) {
+  const ctx = as("kemar", minutes);
+  const { captureId } = await createCapture(ctx, { channel: "app", messageId: `c-${++n}`, kind: "text", text, messageAt: ctx.now, receivedAt: ctx.now });
+  const quote = text.replace(/\.$/, "");
+  const { items } = await proposeItems(ctx, captureId, [
+    { kind: "update", projectId: null, routingReason: { basis: "personal", evidence: "back", label: "Personal" }, targetId: "leave-kemar", field: "dates", newValue: "", quote, confidence: "high", rationale: "Back early" },
+  ]);
+  return { captureId, items };
+}
+
 /** A notice to Kemar at a time, about a project or none, as Atlas tells him things (D15). */
 const noticeAt = (minutes: number, text: string, projectId: string | null) =>
   db.insert(t.notices).values({ id: `ntc-test-${++n}`, personId: "kemar", at: at(minutes), text, subjectType: "braid_entry", subjectId: "br-feed-blocker", projectId });
@@ -61,11 +75,33 @@ describe("catch me up", () => {
     ]);
   });
 
-  it("LV6: back early, it covers every day since the leave began", async () => {
+  it("LV6: back early, the leave ends the day before (a D6 change), and the catch-up covers the days he was away", async () => {
     await coveredBeforeLeave();
     await noticeAt(morning(6) + 60, "Alicia approved your risk: Monday.", "forager");
-    const { answer } = await ask("kemar", "Catch me up", morning(8));
+    // Wed 28 Oct: back a day and a half early
+    const { captureId, items } = await saysBack("I'm back early, back to work today.", morning(8));
+    expect(items.map((i) => [i.state, i.value, i.draft.leave])).toEqual([["needs_ok", "2026-10-26/2026-10-27", { fit: "change", leaveId: "lv-kemar-oct", requested: false, back: true }]]);
+    await openReview(as("kemar", morning(8)), captureId);
+    const review = await getReview(db, "kemar", captureId);
+    if (!review.found) throw new Error("no review");
+    expect(review.items[0].change).toBe("Change 26 to 30 Oct to 26 to 27 Oct");
+    // Back early is not time away: nothing to cover shows under it
+    expect((await getChatSummary(db, "kemar", captureId, at(morning(8)))).latest!.away).toBeNull();
+    await decideExtraction(as("kemar", morning(8)), items[0].id, { type: "accept" });
+    expect((await saveCapture(as("kemar", morning(8)), captureId)).outcome).toBe("saved");
+    // The approved dates stand until an admin decides (D6)
+    expect((await db.select().from(t.leave).where(eq(t.leave.id, "lv-kemar-oct")))[0]).toMatchObject({ startDate: "2026-10-26", endDate: "2026-10-30", changeStart: "2026-10-26", changeEnd: "2026-10-27" });
+    const { answer } = await ask("kemar", "Catch me up", morning(8) + 5);
     expect(answer.text).toBe("Since your leave began Mon 26 Oct: 1 update on your projects. 1 thing was covered for you.");
+    // Approved, the leave ends Tue 27 Oct, and the catch-up still reads from its start
+    await approveLeave(as("alicia", morning(8) + 10), "lv-kemar-oct");
+    expect((await db.select().from(t.leave).where(eq(t.leave.id, "lv-kemar-oct")))[0]).toMatchObject({ endDate: "2026-10-27", changeStart: null });
+    expect((await ask("kemar", "Catch me up", morning(8) + 15)).answer.text).toBe("Since your leave began Mon 26 Oct: 1 update on your projects. 1 thing was covered for you.");
+  });
+
+  it("LV6: back before any leave of his began is nothing to change", async () => {
+    const { items } = await saysBack("I'm back early, back to work today.", 5);
+    expect(items).toEqual([]);
   });
 
   it("LV7: a project he left while away is not shown, nor what was covered on it", async () => {

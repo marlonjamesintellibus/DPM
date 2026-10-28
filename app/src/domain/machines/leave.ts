@@ -4,7 +4,7 @@
 // request. A capture never approves leave: the admin does. Approved dates stay approved while a
 // change waits. A leave reason never reaches a record a lead can see (A5.2, A7.3): the types below
 // have no reason field, and every function copies dates only.
-import { daysBetween, isIsoDate, type IsoDate } from "../dates";
+import { addDays, daysBetween, isIsoDate, type IsoDate } from "../dates";
 import { defineMachine, transition, type Outcome } from "../machine";
 import { isMember, type World } from "./membership";
 
@@ -26,13 +26,18 @@ export type LeaveRecord = {
   change?: LeaveRange | null;
 };
 
-/** What Atlas may extract about leave: dates only, never why ("not feeling well" stays out, E17). */
-export type ExtractedLeave = { personId: string; start: IsoDate; end: IsoDate | null };
+/**
+ * What Atlas may extract about leave: dates only, never why ("not feeling well" stays out, E17). back (phase P,
+ * LV6): the dates are the leave they are on, as it now ends because they are back early (see endsOnReturn).
+ */
+export type ExtractedLeave = { personId: string; start: IsoDate; end: IsoDate | null; back?: boolean };
 
 export type LeaveRequest = { personId: string; start: IsoDate; end: IsoDate; state: "requested" };
 
 /** Leave that still counts: not declined, withdrawn or over. */
 export const LIVE_LEAVE: readonly LeaveState[] = ["requested", "approved", "handover_in_progress", "covered", "uncovered", "active"];
+/** Phase P, LV4 and declineCancels: leave called off, by the person or the admin. A leave that ended is not off. */
+export const CALLED_OFF_LEAVE: readonly LeaveState[] = ["declined", "withdrawn"];
 // Approved and every state after it, while it can still change
 const CHANGEABLE: readonly LeaveState[] = ["approved", "handover_in_progress", "covered", "uncovered"];
 
@@ -69,6 +74,16 @@ export function fitLeave(said: ExtractedLeave, leaves: readonly LeaveRecord[]): 
   const ranges = (l: LeaveRecord): LeaveRange[] => [{ start: l.start, end: l.end }, ...(l.change ? [l.change] : [])];
   const requested = (l: LeaveRecord) => l.state === "requested";
 
+  if (said.back) {
+    // Phase P, LV6: back early, the leave they are on ends sooner. Shorter dates inside live leave would match it
+    // (covered is no change), so a day back is its own reading: same start, an earlier end, a D6 change
+    const on = live.find((l) => l.start === said.start && inside(end, l));
+    if (!on) return { kind: "refused", reason: "you're not on leave then" };
+    const range = { start: said.start, end };
+    if (ranges(on).some((r) => r.start === range.start && r.end === range.end)) return { kind: "matches", leaveId: on.id, requested: requested(on), range };
+    return { kind: "change", leaveId: on.id, requested: requested(on), from: { start: on.start, end: on.end }, to: range };
+  }
+
   if (said.end === null) {
     for (const l of live) for (const r of ranges(l)) if (r.start === said.start) return { kind: "matches", leaveId: l.id, requested: requested(l), range: r };
     const within = live.find((l) => inside(said.start, l));
@@ -80,6 +95,20 @@ export function fitLeave(said: ExtractedLeave, leaves: readonly LeaveRecord[]): 
   const touching = live.find((l) => overlaps(l, range));
   if (touching) return { kind: "change", leaveId: touching.id, requested: requested(touching), from: { start: touching.start, end: touching.end }, to: range };
   return { kind: "new", range };
+}
+
+/**
+ * Phase P, LV6: back at work on `day`, the live leave they are on (begun before that day, the latest) as it now
+ * ends: the day before they are back, or its own end when they are back on time or later. Null when no leave of
+ * theirs has begun by then: there is nothing to come back from.
+ */
+export function endsOnReturn(personId: string, day: IsoDate, leaves: readonly LeaveRecord[]): LeaveRange | null {
+  const on = leaves
+    .filter((l) => l.personId === personId && LIVE_LEAVE.includes(l.state) && daysBetween(l.start, day) > 0)
+    .sort((a, b) => b.start.localeCompare(a.start))[0];
+  if (!on) return null;
+  const last = addDays(day, -1);
+  return { start: on.start, end: daysBetween(last, on.end) > 0 ? last : on.end };
 }
 
 export type LeaveOutcome =

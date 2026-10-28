@@ -4,7 +4,7 @@
 // nothing here asks a model, and nothing the model says about current values or states is used.
 import { config } from "../config";
 import { OUTCOME_FROM, OUTCOMES, type BraidEntryState, type ResolveOutcome } from "../machines/braid-entry";
-import { fitLeave, type LeaveFit } from "../machines/leave";
+import { endsOnReturn, fitLeave, type LeaveFit } from "../machines/leave";
 import { leaveMoves } from "../away";
 import { namesPerson } from "../names";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind, type ProjectRole } from "../rights";
@@ -256,10 +256,15 @@ function isDateField(w: Work): boolean {
 
 const leaveValue = (start: string, end: string | null) => `${start}/${end ?? ".."}`;
 
-// D6: matched against every live leave of the author's, requested or approved (fitLeave, M8)
+// D6: matched against every live leave of the author's, requested or approved (fitLeave, M8). Phase P, LV6: a day
+// back ends the leave they are on the day before, a D6 change like any other
 function leaveFitOf(range: LeaveRange | null, ctx: CheckContext): LeaveFit | null {
   if (!range) return null;
   const leaves = ctx.leave.existing.map((l) => ({ ...l, personId: ctx.author.id }));
+  if (range.back) {
+    const ends = endsOnReturn(ctx.author.id, range.start, leaves);
+    return ends ? fitLeave({ personId: ctx.author.id, ...ends, back: true }, leaves) : { kind: "refused", reason: "you're not on leave then" };
+  }
   return fitLeave({ personId: ctx.author.id, start: range.start, end: range.end }, leaves);
 }
 
@@ -404,7 +409,9 @@ const datesResolve: Check = [
       if (!w.leave) return "no leave dates found in what you said";
       w.newValue = leaveValue(w.leave.start, w.leave.end);
       if (w.leave.weekdayMismatch) w.needsOk = true;
-      return null;
+      // LV6: back from no leave they are on is nothing to change
+      const fit = w.leave.back ? leaveFitOf(w.leave, s.ctx) : null;
+      return fit?.kind === "refused" ? fit.reason : null;
     }
     if (!w.date) return "no date found in what you said";
     // WF2: a work forecast is when it will be done, so never a day already past
@@ -898,7 +905,7 @@ function toDraft(w: Work, ordinal: number, s: Scope): ExtractedItemDraft {
     else if (t.type === "leave") {
       draft.target = { type: "leave", id: s.ctx.leave.targetId, field: "dates", oldValue: w.oldValue, newValue: w.newValue ?? "" };
       const fit = w.leaveFit;
-      if (fit && fit.kind !== "refused") draft.leave = { fit: fit.kind, leaveId: fit.kind === "new" ? null : fit.leaveId, requested: fit.kind !== "new" && fit.requested };
+      if (fit && fit.kind !== "refused") draft.leave = { fit: fit.kind, leaveId: fit.kind === "new" ? null : fit.leaveId, requested: fit.kind !== "new" && fit.requested, ...(w.leave?.back ? { back: true as const } : {}) };
     }
     // Checks 3 and 12 drop every other target; reaching here means one of them was skipped
     else throw new Error(`check ${t.type === "entry" ? 12 : 3} let through an update to ${describe(t)}`);

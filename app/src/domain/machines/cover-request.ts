@@ -10,9 +10,12 @@
 //   asked ──DECLINE_ITEM (one of several, LV8)──▶ asked, without that item
 //   asked ──TIMER coverAskHours──▶ unanswered; the person is told                                               final
 //   asked ──LEAVE_OFF | LEFT_PROJECT (told to nobody) | DATES (nothing left due)──▶ withdrawn                     final
+//   accepted ──LEAVE_OFF | LEFT_PROJECT──▶ accepted, its live handover cancelled (through M7 when one was proposed)
+//   accepted ──LEAVE_APPROVED (both still read every item)──▶ accepted, the handover that waited proposed (LV9)
 // An accepted cover's handover is a field: none, waiting (the leave is not approved yet, LV9), proposed (M7 started),
-// cancelled (the leave was cancelled or declined after, LV4). Nothing here changes a record by itself (rule 1): the
-// teammate's tap makes the cover (rule 10), and the person's tap sends the ask (rule 9).
+// cancelled (the leave was cancelled or declined after, LV4, or the person or the teammate left the project). Nothing
+// here changes a record by itself (rule 1): the teammate's tap makes the cover (rule 10), and the person's tap sends
+// the ask (rule 9). A leave that simply ends is not off: a finished leave's handover stays as it is.
 import { config } from "../config";
 import { defineMachine, transition, type Outcome } from "../machine";
 
@@ -67,14 +70,19 @@ export type CoverEvent =
   | { type: "LEAVE_APPROVED" }
   /** LV3: the leave's dates changed, or an item is no longer due then; what is not due leaves the ask. */
   | { type: "DATES" }
-  /** leaveProjectWithdraws: the person or the teammate can no longer read an item; told to nobody. */
+  /**
+   * leaveProjectWithdraws: the person or the teammate can no longer read an item. An ask is withdrawn, told to
+   * nobody; an accepted cover's live handover is cancelled, so no handover starts for someone off the project.
+   */
   | { type: "LEFT_PROJECT" };
 
 /**
- * What the command reads now (rule 4). due: the keys of the person's own items due while away, on projects they
- * read now. taken: keys in another asked request or a live cover (oneCoverPerItem). teammateReads: the keys the
- * teammate named in a PICK, or the request's teammate, may read now. teammateAway: the project shows the teammate on
- * leave then (LV2). askerReads: the person still reads every item of the request.
+ * What the command reads now (rule 4). leaveLive: requested or approved and not over; leaveOff: cancelled, withdrawn
+ * or declined (declineCancels), never a leave that simply ended. due: the keys of the person's own items due while
+ * away (the approved dates, D6), on projects they read now. taken: keys in another asked request or a live cover
+ * (oneCoverPerItem). teammateReads: the keys the teammate named in a PICK, or the request's teammate, may read now.
+ * teammateAway: the project shows the teammate on leave then (LV2). askerReads: the person still reads every item of
+ * the request. handoverEnds: M7 takes CANCEL on the cover's proposed handover now, or has it cancelled already.
  */
 type Ctx = {
   record: CoverRecord;
@@ -82,6 +90,7 @@ type Ctx = {
   actorId: string | null;
   now: Date;
   leaveLive: boolean;
+  leaveOff: boolean;
   leaveApproved: boolean;
   leaveStarted: boolean;
   due: readonly string[];
@@ -89,6 +98,7 @@ type Ctx = {
   teammateReads: readonly string[];
   teammateAway: boolean;
   askerReads: boolean;
+  handoverEnds: boolean;
 };
 
 const byAsker = (c: Ctx) => (c.actorId !== null && c.actorId === c.record.askerId ? null : "only the person going on leave");
@@ -96,12 +106,16 @@ const byTeammate = (c: Ctx) => (c.actorId !== null && c.actorId === c.record.toI
 const byRule = (c: Ctx) => (c.actorId === null ? null : "only a timer or a rule");
 const keys = (items: readonly Pick<CoverItem, "type" | "id">[]) => items.map(itemKey);
 const leaveOn = (c: Ctx) => (c.leaveLive ? null : "the leave is off");
+/** Rule 4, P10: both still read every item, or nothing about them is said or started. */
+const bothRead = (c: Ctx) => c.askerReads && keys(c.record.items).every((k) => c.teammateReads.includes(k));
+const shared = (c: Ctx) => (bothRead(c) ? null : "that is no longer on a project you share");
 
 function pickGuard(c: Ctx, e: Extract<CoverEvent, { type: "PICK" }>): string | null {
   const refused = byAsker(c) ?? leaveOn(c);
   if (refused) return refused;
   if (c.leaveStarted) return "your leave has started";
   if (!e.items.length) return "pick at least one thing to cover";
+  if (new Set(keys(e.items)).size < e.items.length) return "name each thing once";
   // LV8: one request lists one project's items, so one teammate who reads all of them
   if (new Set(e.items.map((i) => i.projectId)).size > 1) return "ask for one project at a time";
   if (!keys(e.items).every((k) => c.due.includes(k))) return "that is not yours, or not due while you're away";
@@ -113,10 +127,12 @@ function pickGuard(c: Ctx, e: Extract<CoverEvent, { type: "PICK" }>): string | n
   return null;
 }
 
-const acceptGuard = (c: Ctx) => byTeammate(c) ?? leaveOn(c) ?? (c.askerReads && keys(c.record.items).every((k) => c.teammateReads.includes(k)) ? null : "that is no longer on a project you share");
+const acceptGuard = (c: Ctx) => byTeammate(c) ?? leaveOn(c) ?? shared(c);
+// P10: a decline tells the person which items, so it too needs both still on the project (rule 4)
+const declineGuard = (c: Ctx) => byTeammate(c) ?? shared(c);
 
 function declineItemGuard(c: Ctx, e: Extract<CoverEvent, { type: "DECLINE_ITEM" }>): string | null {
-  const refused = byTeammate(c);
+  const refused = declineGuard(c);
   if (refused) return refused;
   if (!keys(c.record.items).includes(itemKey(e.item))) return "that is not in this request";
   return c.record.items.length > 1 ? null : "it is the only thing asked: decline the request";
@@ -138,8 +154,12 @@ const datesGuard = (keepsSome: boolean) => (c: Ctx) => {
   return keepsSome === left > 0 ? null : keepsSome ? "nothing asked is due then any more" : "something asked is still due then";
 };
 
-const leftGuard = (c: Ctx) => byRule(c) ?? (c.askerReads && keys(c.record.items).every((k) => c.teammateReads.includes(k)) ? "both still read every item" : null);
-const offGuard = (c: Ctx) => byRule(c) ?? (c.leaveLive ? "the leave is still on" : null);
+const leftGuard = (c: Ctx) => byRule(c) ?? (bothRead(c) ? "both still read every item" : null);
+const offGuard = (c: Ctx) => byRule(c) ?? (c.leaveOff ? null : "the leave is not cancelled");
+/** An accepted cover's handover can be cancelled: it is live, and M7 takes CANCEL on one it proposed (LV4). */
+const liveCover = (c: Ctx) =>
+  !LIVE_HANDOVER.includes(c.record.handover) ? "no handover to cancel" : c.record.handover === "proposed" && !c.handoverEnds ? "the handover will not cancel" : null;
+const approvedGuard = (c: Ctx) => byRule(c) ?? (c.record.handover === "waiting" && c.leaveApproved ? null : "no handover waits on the approval") ?? shared(c);
 
 export const coverMachine = defineMachine<CoverState, CoverEvent, Ctx>({
   name: "cover_request",
@@ -149,16 +169,19 @@ export const coverMachine = defineMachine<CoverState, CoverEvent, Ctx>({
     { from: ["suggested"], on: "DISMISS", to: "withdrawn", guard: byAsker },
     { from: ["suggested"], on: "LAPSE", to: "withdrawn", guard: (c) => byRule(c) ?? (c.leaveStarted ? null : "the leave has not started") },
     { from: ["asked"], on: "ACCEPT", to: "accepted", guard: acceptGuard },
-    { from: ["asked"], on: "DECLINE", to: "declined", guard: byTeammate },
+    { from: ["asked"], on: "DECLINE", to: "declined", guard: declineGuard },
     { from: ["asked"], on: "DECLINE_ITEM", to: "asked", guard: declineItemGuard },
     { from: ["asked"], on: "NO_ANSWER", to: "unanswered", guard: noAnswerGuard },
     { from: OPEN_COVER, on: "LEAVE_OFF", to: "withdrawn", guard: offGuard },
     // An accepted cover stays accepted; its handover is cancelled through M7 (LV4)
-    { from: ["accepted"], on: "LEAVE_OFF", to: "accepted", guard: (c) => offGuard(c) ?? (LIVE_HANDOVER.includes(c.record.handover) ? null : "no handover to cancel") },
-    { from: ["accepted"], on: "LEAVE_APPROVED", to: "accepted", guard: (c) => byRule(c) ?? (c.record.handover === "waiting" && c.leaveApproved ? null : "no handover waits on the approval") },
+    { from: ["accepted"], on: "LEAVE_OFF", to: "accepted", guard: (c) => offGuard(c) ?? liveCover(c) },
+    // LV9, rule 4: the handover that waited starts only for two people still on the project
+    { from: ["accepted"], on: "LEAVE_APPROVED", to: "accepted", guard: approvedGuard },
     { from: ["asked"], on: "DATES", to: "asked", guard: datesGuard(true) },
     { from: ["asked"], on: "DATES", to: "withdrawn", guard: datesGuard(false) },
     { from: ["asked"], on: "LEFT_PROJECT", to: "withdrawn", guard: leftGuard },
+    // leaveProjectWithdraws for a cover: its handover, waiting or proposed, is cancelled (through M7 when proposed)
+    { from: ["accepted"], on: "LEFT_PROJECT", to: "accepted", guard: (c) => leftGuard(c) ?? liveCover(c) },
   ],
 });
 
@@ -196,7 +219,7 @@ export function applyCoverEvent(record: CoverRecord, event: CoverEvent, ctx: Cov
     case "DATES":
       return { outcome, record: outcome.to === "withdrawn" ? ended("not_due") : { ...next, items: record.items.filter((i) => ctx.due.includes(itemKey(i))) } };
     case "LEFT_PROJECT":
-      return { outcome, record: ended("left_project") };
+      return { outcome, record: record.state === "accepted" ? { ...next, handover: "cancelled" } : ended("left_project") };
   }
 }
 

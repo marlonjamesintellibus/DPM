@@ -3,10 +3,11 @@
 // of several; an accepted cover proposes a handover (M7) with no PM OK, and the PM is told (CD19); the leave's own
 // moves reach every request (LV3, LV4, LV9, and the model's declineCancels); the minute timer ends an ask nobody
 // answered in config.coverAskHours, lapses an offer once the leave starts, and withdraws, telling nobody, an ask
-// whose person or teammate left the project (leaveProjectWithdraws). Every move runs the machine
+// whose person or teammate left the project (leaveProjectWithdraws); a cover whose person or teammate left has its
+// handover cancelled, so none starts for someone off the project (LV9). Every move runs the machine
 // (domain/machines/cover-request.ts), checked now (rule 4), and writes an audit entry. Atlas cannot speak first yet
 // (phase F): the ask reaches the teammate as an inbox item plus a notice in their DPM chat.
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import type { Tx } from "../db/conn";
 import { coverOf, leaveRecordOf, loadWorld, orgTagsOf, persistCover } from "../db/records";
@@ -20,6 +21,7 @@ import {
   coverCauses,
   itemKey,
   LIVE_HANDOVER,
+  OPEN_COVER,
   offerCover,
   takenBy,
   type CoverCtx,
@@ -29,7 +31,7 @@ import {
   type CoverState,
 } from "../domain/machines/cover-request";
 import { applyHandover, type HandoverRecord } from "../domain/machines/handover";
-import { DECIDED_LEAVE, LIVE_LEAVE } from "../domain/machines/leave";
+import { CALLED_OFF_LEAVE, DECIDED_LEAVE, LIVE_LEAVE } from "../domain/machines/leave";
 import { isCandidate } from "../domain/machines/membership";
 import { awayDuring } from "../queries/people";
 import { awayFor, awayLabel, itemsSaid } from "../queries/cover";
@@ -44,19 +46,30 @@ type By = { actorType: "person" | "rule" | "atlas"; actorId: string | null };
 const RULE: By = { actorType: "rule", actorId: null };
 const person = (id: string): By => ({ actorType: "person", actorId: id });
 
-/** The leave as it is now: live, decided by an admin, started; its dates are the ones asked for (a change waiting, D6). */
+/**
+ * The leave as it is now: live, called off, decided by an admin, started. Its dates are the approved ones (LV3, D6):
+ * a change still waiting on the admin moves nothing due, and the offer lapses on the approved start; once the admin
+ * approves the change, the leave's own move settles every request again.
+ */
 async function leaveFacts(tx: Tx, leaveId: string, now: Date) {
   const [row] = await tx.select().from(t.leave).where(eq(t.leave.id, leaveId));
   if (!row) return null;
   const l = leaveRecordOf(row);
-  const range: AwayRange = l.change ?? { start: l.start, end: l.end };
-  return { row, range, live: LIVE_LEAVE.includes(l.state), approved: DECIDED_LEAVE.includes(l.state), started: daysBetween(range.start, todayIn(now)) >= 0 };
+  const range: AwayRange = { start: l.start, end: l.end };
+  return { row, range, live: LIVE_LEAVE.includes(l.state), off: CALLED_OFF_LEAVE.includes(l.state), approved: DECIDED_LEAVE.includes(l.state), started: daysBetween(range.start, todayIn(now)) >= 0 };
+}
+
+/** LV4: whether M7 takes CANCEL on the cover's proposed handover now, or has it cancelled already. */
+async function handoverEnds(tx: Tx, r: CoverRecord): Promise<boolean> {
+  if (r.handover !== "proposed" || !r.handoverId) return true;
+  const m7 = await handoverOf(tx, r.handoverId);
+  return !m7 || m7.state === "cancelled" || applyHandover(m7, { type: "CANCEL" }).outcome.ok;
 }
 
 /**
  * What the machine reads now (rule 4): the leave, what the person has due while away on projects they read now,
  * what another of their requests holds (oneCoverPerItem), whether the teammate reads each item and is shown away then
- * (LV2), and whether the person still reads every item.
+ * (LV2), whether the person still reads every item, and whether M7 would cancel the handover (LV4).
  */
 async function ctxFor(tx: Tx, now: Date, r: CoverRecord, actorId: string | null, pick?: { toId: string; items: readonly CoverItem[] }): Promise<CoverCtx> {
   const leave = await leaveFacts(tx, r.leaveId, now);
@@ -78,6 +91,7 @@ async function ctxFor(tx: Tx, now: Date, r: CoverRecord, actorId: string | null,
     actorId,
     now,
     leaveLive: !!leave?.live,
+    leaveOff: !!leave?.off,
     leaveApproved: !!leave?.approved,
     leaveStarted: !!leave?.started,
     due,
@@ -85,6 +99,7 @@ async function ctxFor(tx: Tx, now: Date, r: CoverRecord, actorId: string | null,
     teammateReads: teammate ? items.filter((i) => teammate(i.projectId)).map(itemKey) : [],
     teammateAway: !!toId && away.has(toId),
     askerReads: items.every((i) => asker(i.projectId)),
+    handoverEnds: await handoverEnds(tx, r),
   };
 }
 
@@ -188,7 +203,8 @@ export function askCover(ctx: CommandCtx, leaveId: string, toId: string, keys: r
     if (!offer && (await offerIn(tx, ctx.now, leaveId, null))) [offer] = await tx.select().from(t.coverRequests).where(and(eq(t.coverRequests.leaveId, leaveId), eq(t.coverRequests.state, "suggested")));
     if (!offer) throw new CommandRefused(leave.started ? "Your leave has started, so it's too late to ask from here." : "Nothing of yours is left to ask cover for.");
     const { things } = await awayFor(tx, ctx.actorId, leave.range, ctx.now);
-    const items = keys.map((k) => things.find((x) => x.key === k)?.item);
+    // The keys come from the form as sent: each thing is asked once, however often it is named
+    const items = [...new Set(keys)].map((k) => things.find((x) => x.key === k)?.item);
     if (!items.length || items.some((i) => !i)) throw new CommandRefused("That is not yours, or not due while you're away.");
     const record = coverOf(offer);
     const event: CoverEvent = { type: "PICK", toId, items: items as CoverItem[] };
@@ -217,18 +233,23 @@ async function askedText(tx: Tx, r: CoverRecord): Promise<string> {
   return `Asked ${who} to cover ${itemsSaid(await labelsOf(tx, r.items))}. I'll tell you when they answer.`;
 }
 
-/** DISMISS: the person needs no cover; the offer ends and nothing is asked. A later message about the leave offers again. */
-export function dismissCover(ctx: CommandCtx, leaveId: string): Promise<{ message: string }> {
+/**
+ * DISMISS: the person needs no cover; the offer ends and nothing is asked. A later message about the leave offers
+ * again. The button names the offer it was shown with and carries a command id (rule 6), so a late or repeated tap
+ * never ends a newer offer Atlas made after a decline or no answer; with no offer shown, nothing is open to end.
+ */
+export function dismissCover(ctx: CommandCtx, leaveId: string, offerId: string | null, commandId: string): Promise<{ message: string }> {
   return runCommand(ctx, async (tx) => {
     const leave = await leaveFacts(tx, leaveId, ctx.now);
     if (!leave || leave.row.personId !== ctx.actorId) throw new CommandRefused("Not found, or not yours to see", "not_found");
-    const [offer] = await tx.select().from(t.coverRequests).where(and(eq(t.coverRequests.leaveId, leaveId), eq(t.coverRequests.state, "suggested")));
-    // A second tap finds nothing open, and changes nothing (rule 6)
-    if (!offer) return { message: "No cover asked." };
+    const said = { message: "No cover asked." };
+    const [offer] = offerId ? await tx.select().from(t.coverRequests).where(and(eq(t.coverRequests.id, offerId), eq(t.coverRequests.leaveId, leaveId))) : [];
+    // The offer shown is no longer open (a second tap, or it was asked or lapsed since): nothing changes
+    if (!offer || offer.state !== "suggested") return said;
     const record = coverOf(offer);
     const r = applyCoverEvent(record, { type: "DISMISS" }, await ctxFor(tx, ctx.now, record, ctx.actorId));
-    await write(tx, ctx.now, offer, r.record, moved(r.outcome), person(ctx.actorId));
-    return { message: "No cover asked." };
+    await write(tx, ctx.now, offer, r.record, moved(r.outcome), person(ctx.actorId), { commandId });
+    return said;
   });
 }
 
@@ -236,17 +257,18 @@ export function dismissCover(ctx: CommandCtx, leaveId: string): Promise<{ messag
 
 export type CoverAnswer = { act: "accept" } | { act: "decline" } | { act: "decline_item"; key: string };
 
-const ANSWER_REFUSED: Record<string, string> = {
-  "that is no longer on a project you share": "That is no longer on a project you share, so it can't be accepted.",
-  "the leave is off": "They no longer need cover for that.",
-  "it is the only thing asked: decline the request": "It's the only thing asked: decline the request instead.",
+const ANSWER_REFUSED: Record<string, (act: CoverAnswer["act"]) => string> = {
+  "that is no longer on a project you share": (act) => `That is no longer on a project you share, so ${act === "accept" ? "it can't be accepted" : "there is nothing to answer"}.`,
+  "the leave is off": () => "They no longer need cover for that.",
+  "it is the only thing asked: decline the request": () => "It's the only thing asked: decline the request instead.",
 };
 
 /**
  * The teammate answers (rule 10: only their own tap makes them cover). Accept proposes the handover, or keeps it
  * waiting while the leave is not approved (LV9), and tells the person and the project's PM (CD19); decline, or
- * declining one item of several (LV8), tells the person, and Atlas offers again. Someone else's ask is not found
- * (P10), and the command id makes a repeat change nothing (rule 6).
+ * declining one item of several (LV8), tells the person, and Atlas offers again. Every answer needs both still on
+ * the project (rule 4, P10: a decline names the items to the person). Someone else's ask is not found (P10), and the
+ * command id makes a repeat change nothing (rule 6).
  */
 export function answerCover(ctx: CommandCtx, requestId: string, answer: CoverAnswer, commandId: string): Promise<{ record: CoverRecord; message: string }> {
   return runCommand(ctx, async (tx) => {
@@ -262,7 +284,7 @@ export function answerCover(ctx: CommandCtx, requestId: string, answer: CoverAns
     if (record.state !== "asked") throw new CommandRefused(record.state === "withdrawn" ? "They no longer need cover for that." : `You already answered: ${record.state}.`);
     const event: CoverEvent = answer.act === "accept" ? { type: "ACCEPT" } : answer.act === "decline" ? { type: "DECLINE" } : { type: "DECLINE_ITEM", item: keyItem(answer.key) };
     const r = applyCoverEvent(record, event, await ctxFor(tx, ctx.now, record, ctx.actorId));
-    if (!r.outcome.ok) throw new CommandRefused(ANSWER_REFUSED[r.outcome.reason] ?? r.outcome.reason);
+    if (!r.outcome.ok) throw new CommandRefused(ANSWER_REFUSED[r.outcome.reason]?.(answer.act) ?? r.outcome.reason);
     let next = r.record;
     const names = await firstNames(tx, [record.askerId, ctx.actorId]);
     const [asker, me] = [names.get(record.askerId)!, names.get(ctx.actorId)!];
@@ -315,44 +337,61 @@ async function startHandover(tx: Tx, now: Date, r: CoverRecord, by: By): Promise
   return id;
 }
 
-/** LV4: the leave behind it is off, so the handover is cancelled through M7's own CANCEL. */
-async function cancelHandover(tx: Tx, now: Date, handoverId: string): Promise<void> {
+async function handoverOf(tx: Tx, handoverId: string): Promise<(HandoverRecord & { version: number }) | null> {
   const [row] = await tx.select().from(t.handovers).where(eq(t.handovers.id, handoverId));
-  if (!row) return;
+  if (!row) return null;
   const steps = await tx.select().from(t.handoverSteps).where(eq(t.handoverSteps.handoverId, handoverId));
-  const record: HandoverRecord = { ...row, stepsDone: steps.filter((s) => s.state === "handed_over").length, stepsTotal: steps.length };
-  const r = applyHandover(record, { type: "CANCEL" });
-  if (!r.outcome.ok) return;
+  return { ...row, stepsDone: steps.filter((s) => s.state === "handed_over").length, stepsTotal: steps.length };
+}
+
+/**
+ * LV4 and leaveProjectWithdraws: the cover behind it ended, so the handover is cancelled through M7's own CANCEL.
+ * One M7 has cancelled already stays so. The machine asked handoverEnds first, so M7 refusing here is a bug.
+ */
+async function cancelHandover(tx: Tx, now: Date, handoverId: string, why: "leave_off" | "left_project"): Promise<void> {
+  const row = await handoverOf(tx, handoverId);
+  if (!row || row.state === "cancelled") return;
+  const r = applyHandover(row, { type: "CANCEL" });
+  if (!r.outcome.ok) throw new Error(`handover ${handoverId} refused CANCEL: ${r.outcome.reason}`);
   const rows = await tx
     .update(t.handovers)
     .set({ state: r.record.state, version: nextVersion(t.handovers.version), updatedAt: now })
     .where(and(eq(t.handovers.id, handoverId), eq(t.handovers.version, row.version)))
     .returning({ id: t.handovers.id });
   expectOne(rows, `handover ${handoverId}`);
-  await audit(tx, now, { ...RULE, action: "CANCEL", machine: "handover", subjectType: "handover", subjectId: handoverId, fromState: r.outcome.from, toState: r.outcome.to, detail: { why: "leave_off" } });
+  await audit(tx, now, { ...RULE, action: "CANCEL", machine: "handover", subjectType: "handover", subjectId: handoverId, fromState: r.outcome.from, toState: r.outcome.to, detail: { why } });
 }
 
 // ---- The rules: the leave's own moves, and the timer ----
 
 /**
- * Every rule that can move one request now, in order, each read again after the last: the leave is off (LV4,
- * declineCancels), the leave started with the offer open (suggestedWayOut), the person or the teammate left the
- * project (leaveProjectWithdraws, told to nobody), what is no longer due leaves the ask (LV3), the leave was approved
- * so a waiting handover starts (LV9), and no answer in config.coverAskHours. Returns whether something became free.
+ * Every rule that can move one request now, in order, each read again after the last: the person or the teammate
+ * left the project (leaveProjectWithdraws: an ask withdrawn, told to nobody; a cover's handover cancelled, told only
+ * to whichever of the two still reads every item), so nothing after it names an item to someone off the project
+ * (P10); the leave is off (LV4, declineCancels); the leave started with the offer open (suggestedWayOut); what is no
+ * longer due leaves the ask (LV3); the leave was approved so a waiting handover starts (LV9); and no answer in
+ * config.coverAskHours. Returns whether something became free.
  */
 async function settle(tx: Tx, now: Date, id: string): Promise<boolean> {
   let freed = false;
   let row = await reread(tx, id);
   let facts = await ctxFor(tx, now, coverOf(row), null);
-  for (const type of ["LEAVE_OFF", "LAPSE", "LEFT_PROJECT", "DATES", "LEAVE_APPROVED", "NO_ANSWER"] as const) {
+  for (const type of ["LEFT_PROJECT", "LEAVE_OFF", "LAPSE", "DATES", "LEAVE_APPROVED", "NO_ANSWER"] as const) {
     const record = coverOf(row);
     const r = applyCoverEvent(record, { type }, facts);
     if (!r.outcome.ok) continue;
     let next = r.record;
     const names = await firstNames(tx, [record.askerId, ...(record.toId ? [record.toId] : [])]);
     const subject = { type: "cover_request", id: record.id, projectId: record.projectId };
+    if (type === "LEFT_PROJECT" && record.state === "accepted") {
+      if (record.handover === "proposed" && record.handoverId) await cancelHandover(tx, now, record.handoverId, "left_project");
+      const what = itemsSaid(await labelsOf(tx, record.items));
+      // Whoever is still on the project hears the cover ended; who left, and where, is not said
+      if (facts.askerReads) await notice(tx, now, [record.askerId], `${names.get(record.toId!)} no longer covers ${what}, so the handover is cancelled. You can ask someone else.`, { ...subject, act: "cover_ended" });
+      else if (record.items.every((i) => facts.teammateReads.includes(itemKey(i)))) await notice(tx, now, [record.toId!], `${names.get(record.askerId)} no longer needs cover for ${what}, so the handover is cancelled.`, { ...subject, act: "cancelled" });
+    }
     if (type === "LEAVE_OFF" && record.state === "accepted") {
-      if (record.handoverId) await cancelHandover(tx, now, record.handoverId);
+      if (record.handover === "proposed" && record.handoverId) await cancelHandover(tx, now, record.handoverId, "leave_off");
       await notice(tx, now, [record.toId!], `${names.get(record.askerId)} no longer needs cover for ${itemsSaid(await labelsOf(tx, record.items))}, so the handover is cancelled.`, { ...subject, act: "cancelled" });
     }
     if (type === "LEAVE_APPROVED") {
@@ -383,11 +422,26 @@ export async function coverOnLeave(tx: Tx, now: Date, leaveId: string): Promise<
   await offerIn(tx, now, leaveId, null);
 }
 
-/** The minute timer: every open request, and every live cover, settles; Atlas offers again where something was freed. */
+/**
+ * The minute timer: every open request, and every live cover whose leave has not ended, settles; Atlas offers again
+ * where something was freed. A cover is settled only while its leave lasts (the later of the approved dates and a
+ * change asked for): once the leave is over nothing can move it, so the timer's work stays with the covers of today.
+ */
 export async function runCoverTimers(ctx: { db: Db; now: Date }): Promise<{ settled: string[] }> {
-  const rows = await ctx.db.select().from(t.coverRequests).where(inArray(t.coverRequests.state, ["suggested", "asked", "accepted"]));
+  const today = todayIn(ctx.now);
+  const rows = await ctx.db
+    .select({ id: t.coverRequests.id, leaveId: t.coverRequests.leaveId })
+    .from(t.coverRequests)
+    .innerJoin(t.leave, eq(t.leave.id, t.coverRequests.leaveId))
+    .where(
+      or(
+        inArray(t.coverRequests.state, [...OPEN_COVER]),
+        and(eq(t.coverRequests.state, "accepted"), inArray(t.coverRequests.handover, [...LIVE_HANDOVER]), or(gte(t.leave.endDate, today), gte(t.leave.changeEnd, today))),
+      ),
+    )
+    .orderBy(t.coverRequests.id);
   const settled: string[] = [];
-  for (const row of rows.filter((x) => x.state !== "accepted" || LIVE_HANDOVER.includes(x.handover))) {
+  for (const row of rows) {
     await ctx.db.transaction(async (tx) => {
       if (await settle(tx, ctx.now, row.id)) await offerIn(tx, ctx.now, row.leaveId, null);
     });

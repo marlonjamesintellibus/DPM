@@ -254,8 +254,10 @@ export function readPromiseDate(text: string, messageAt: Date, timeZone: string 
 
 export type LeaveRange = {
   start: IsoDate;
-  /** Null when only a start was said ("I'm out from Monday the 26th"). */
+  /** Null when only a start was said ("I'm out from Monday the 26th"), or for a day back. */
   end: IsoDate | null;
+  /** Phase P, LV6: the words say they are back ("I'm back early, back to work today"): start is the day back. */
+  back?: true;
   relative: boolean;
   weekdayMismatch: boolean;
   /** The date words in the text searched. */
@@ -272,9 +274,22 @@ const WEEKS: { re: RegExp; range: (today: IsoDate) => { start: IsoDate; end: Iso
   },
 ];
 
-/** Leave dates: "from X" (start only), "X to Y", or a single day "X"; with no day said, a whole week ("next week"). */
+// Phase P, LV6: words that say the person is back at work, not away. Phase R: "mi back"
+const BACK = /\b(?:i[’']?m|i am|mi)\s+back\b|\bback\s+(?:early|to\s+work|at\s+work|in\s+(?:the\s+)?office|from\s+(?:my\s+)?(?:leave|holiday|vacation|time off))\b|\b(?:came|coming|come)\s+back\b/i;
+
+/**
+ * Leave dates: "from X" (start only), "X to Y", or a single day "X"; with no day said, a whole week ("next week").
+ * Phase P, LV6: "I'm back early" with one day or none is the day they are back (today when none is said); the checks
+ * end the leave they are on the day before.
+ */
 export function readLeaveRange(text: string, messageAt: Date, timeZone: string = config.timeZone): LeaveRange | null {
   const dates = saidDates(text, messageAt, timeZone);
+  const back = BACK.exec(text);
+  if (back && dates.length <= 1) {
+    const [day] = dates;
+    if (day) return { start: day.date, end: null, back: true, relative: day.relative, weekdayMismatch: day.weekdayMismatch, span: { start: Math.min(back.index, day.start), end: Math.max(back.index + back[0].length, day.end) } };
+    return { start: messageDay(messageAt, timeZone), end: null, back: true, relative: true, weekdayMismatch: false, span: { start: back.index, end: back.index + back[0].length } };
+  }
   if (!dates.length) {
     for (const { re, range } of WEEKS) {
       const m = re.exec(text);

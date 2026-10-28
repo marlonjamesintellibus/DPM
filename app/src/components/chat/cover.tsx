@@ -60,12 +60,14 @@ export function AskCover({ leaveId, projectName, things, teammates }: { leaveId:
   );
 }
 
-export function NoCoverNeeded({ leaveId }: { leaveId: string }) {
+/** Ends the offer it was shown with, by id, so a late tap never ends a newer one (rule 6). */
+export function NoCoverNeeded({ leaveId, offerId }: { leaveId: string; offerId: string | null }) {
   const [pending, start] = useTransition();
   const [result, setResult] = useState<ActionResult | null>(null);
+  const [commandId] = useState(() => crypto.randomUUID());
   return (
     <span className="flex flex-col gap-1">
-      <Button variant="link" className="self-start" disabled={pending || !!result?.ok} onClick={() => start(async () => setResult(await dismissCoverAction(leaveId)))}>
+      <Button variant="link" className="self-start" disabled={pending || !!result?.ok} onClick={() => start(async () => setResult(await dismissCoverAction(leaveId, offerId, commandId)))}>
         No cover needed
       </Button>
       <ActionNote result={result} />

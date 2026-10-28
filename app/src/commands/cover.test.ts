@@ -120,15 +120,35 @@ describe("Atlas offers cover when a leave is saved (M35 OFFER)", () => {
     expect((await awayFor(db, "kemar", { start: "2026-10-26", end: "2026-10-30" }, at(0))).things.map((x) => x.label)).toEqual(["#152 Store feed connector"]);
   });
 
-  it("DISMISS: no cover needed ends the offer, and nothing is asked", async () => {
+  it("DISMISS: no cover needed ends the offer it was shown with, and nothing is asked", async () => {
     const { captureId } = await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
-    await expect(dismissCover(as("alicia", 1), OCT)).rejects.toBeInstanceOf(CommandRefused);
-    await dismissCover(as("kemar", 1), OCT);
+    const { offerId } = await away(captureId);
+    expect(offerId).toBe("cv-lv-kemar-oct-1");
+    await expect(dismissCover(as("alicia", 1), OCT, offerId, "d-0")).rejects.toBeInstanceOf(CommandRefused);
+    await dismissCover(as("kemar", 1), OCT, offerId, "d-1");
     expect((await requests()).map((r) => [r.state, r.endedWhy])).toEqual([["withdrawn", "dismissed"]]);
-    expect((await away(captureId)).dismissed).toBe(true);
+    expect(await away(captureId)).toMatchObject({ dismissed: true, offerId: null });
     // A second tap finds nothing open and changes nothing
-    await dismissCover(as("kemar", 2), OCT);
+    await dismissCover(as("kemar", 2), OCT, offerId, "d-1");
     expect(await requests()).toHaveLength(1);
+  });
+
+  it("rule 6: a late \"No cover needed\" never ends the newer offer Atlas made after an ask", async () => {
+    await trendOnMonday();
+    const { captureId } = await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
+    const shown = (await away(captureId)).offerId;
+    // He asks Jodian for #152 from the first offer; the Trend model is still free, so Atlas offers again
+    await askCover(as("kemar", 1), OCT, "jodian", ["work_item:wi-152"], "pick-1");
+    const newer = (await away(captureId, 2)).offerId;
+    expect(newer).not.toBe(shown);
+    // The tap made on the old offer arrives late: nothing changes
+    expect((await dismissCover(as("kemar", 2), OCT, shown, "late")).message).toBe("No cover asked.");
+    expect((await requests()).map((r) => r.state)).toEqual(["asked", "suggested"]);
+    await dismissCover(as("kemar", 3), OCT, newer, "now");
+    expect((await requests()).map((r) => [r.state, r.endedWhy])).toEqual([
+      ["asked", null],
+      ["withdrawn", "dismissed"],
+    ]);
   });
 
   it("the offer lapses when the leave starts (suggestedWayOut); before that the timer leaves it", async () => {
@@ -401,5 +421,174 @@ describe("LV10: a promise due while away", () => {
     const view = await away(captureId);
     expect(view.line).toBe('While you\'re away (Mon 26 Oct to Fri 30 Oct): #152 Store feed connector is due Tue 27 Oct and your promise "Send Andre the export notes" is due Wed 28 Oct.');
     expect(view.promises.map((p) => p.id)).toEqual(["cm-wed"]);
+  });
+});
+
+describe("someone leaves the project (leaveProjectWithdraws, rule 4, P10)", () => {
+  const leaves = (who: string, projectId = "forager") =>
+    db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, projectId), eq(t.projectMemberships.personId, who)));
+
+  /** Kemar asks for new leave 9 to 13 Nov with #152 due Tue 10 Nov; Jodian accepts, so the handover waits on the approval. */
+  async function waitingCover() {
+    await db.update(t.workItems).set({ dueDate: "2026-11-10" }).where(eq(t.workItems.id, "wi-152"));
+    await says("kemar", "I'm off Monday 9 Nov to Friday 13 Nov");
+    const [nov] = await db.select().from(t.leave).where(and(eq(t.leave.personId, "kemar"), eq(t.leave.startDate, "2026-11-09")));
+    const { record } = await askCover(as("kemar", 1), nov.id, "jodian", ["work_item:wi-152"], `pick-${++n}`);
+    await answer("jodian", record.id, { act: "accept" });
+    return { leaveId: nov.id, id: record.id };
+  }
+
+  it("LV9: the teammate left before the approval, so approving starts no handover for her and tells her nothing", async () => {
+    const { leaveId, id } = await waitingCover();
+    const before = await notices("jodian");
+    await leaves("jodian");
+    await approveLeave(as("alicia", 3), leaveId);
+    const [r, offer] = await requests(leaveId);
+    expect(r).toMatchObject({ state: "accepted", handover: "cancelled", handoverId: null });
+    expect(await db.select().from(t.handovers).where(eq(t.handovers.id, `ho-${id}`))).toEqual([]);
+    expect(await notices("jodian")).toEqual(before);
+    // Kemar, still on Forager, hears the cover ended; #152 is free again, so Atlas offers again
+    expect(await notices("kemar")).toContain("Jodian no longer covers #152 Store feed connector, so the handover is cancelled. You can ask someone else.");
+    expect(offer.state).toBe("suggested");
+  });
+
+  it("the teammate left with the leave still waiting: the minute timer cancels the cover's handover before anything else names it", async () => {
+    const { leaveId } = await waitingCover();
+    await leaves("jodian");
+    await runCoverTimers({ db, now: at(5) });
+    expect((await requests(leaveId))[0]).toMatchObject({ state: "accepted", handover: "cancelled" });
+    // A leave declined later tells her nothing either
+    const before = await notices("jodian");
+    await declineLeave(as("alicia", 6), leaveId);
+    expect(await notices("jodian")).toEqual(before);
+  });
+
+  it("the person going on leave left: an ask is withdrawn by the timer, telling nobody; a proposed handover is cancelled through M7", async () => {
+    await trendOnMonday();
+    await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
+    const asked = (await askCover(as("kemar", 1), OCT, "jodian", ["work_item:wi-152"], "p-1")).record;
+    const covered = (await askCover(as("kemar", 1), OCT, "alicia", ["milestone:ms-trend"], "p-2")).record;
+    await answer("alicia", covered.id, { act: "accept" });
+    const [kemarBefore, jodianBefore] = [await notices("kemar"), await notices("jodian")];
+    await leaves("kemar");
+    await runCoverTimers({ db, now: at(5) });
+    const rows = await requests();
+    expect(rows.find((r) => r.id === asked.id)).toMatchObject({ state: "withdrawn", endedWhy: "left_project" });
+    expect(rows.find((r) => r.id === covered.id)).toMatchObject({ state: "accepted", handover: "cancelled" });
+    expect((await db.select().from(t.handovers).where(eq(t.handovers.id, `ho-${covered.id}`)))[0].state).toBe("cancelled");
+    // Nobody is told of the ask; Alicia, still on Forager, hears the cover ended; nothing goes to Kemar
+    expect(await notices("kemar")).toEqual(kemarBefore);
+    expect(await notices("jodian")).toEqual(jodianBefore);
+    expect(await notices("alicia")).toContain("Kemar no longer needs cover for Trend model, so the handover is cancelled.");
+    expect(await inbox("jodian", 6)).toEqual([]);
+    // He reads no Forager work now, so nothing is offered again
+    expect(rows.filter((r) => r.state === "suggested")).toEqual([]);
+  });
+
+  it("the person left and then withdrew the leave: the leave's own move settles it the same way (coverOnLeave)", async () => {
+    await db.update(t.workItems).set({ dueDate: "2026-11-10" }).where(eq(t.workItems.id, "wi-152"));
+    await says("kemar", "I'm off Monday 9 Nov to Friday 13 Nov");
+    const [nov] = await db.select().from(t.leave).where(and(eq(t.leave.personId, "kemar"), eq(t.leave.startDate, "2026-11-09")));
+    await askCover(as("kemar", 1), nov.id, "jodian", ["work_item:wi-152"], "p-1");
+    await leaves("kemar");
+    await withdrawLeave(as("kemar", 2), nov.id);
+    expect((await requests(nov.id)).map((r) => [r.state, r.endedWhy])).toEqual([["withdrawn", "left_project"]]);
+    expect(await notices("kemar")).toEqual([]);
+  });
+
+  it('P10: the person left, so the teammate\'s "I can\'t" is refused before it names the item to him; the timer then withdraws it', async () => {
+    await trendOnMonday();
+    await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
+    const { record } = await askCover(as("kemar", 1), OCT, "jodian", ["milestone:ms-trend", "work_item:wi-152"], "p-1");
+    await leaves("kemar");
+    for (const a of [{ act: "decline" }, { act: "decline_item", key: "work_item:wi-152" }] as CoverAnswer[]) {
+      await expect(answer("jodian", record.id, a)).rejects.toThrow("That is no longer on a project you share, so there is nothing to answer.");
+    }
+    expect(await notices("kemar")).toEqual([]);
+    await runCoverTimers({ db, now: at(5) });
+    expect((await requests())[0]).toMatchObject({ state: "withdrawn", endedWhy: "left_project" });
+    expect(await notices("kemar")).toEqual([]);
+  });
+});
+
+describe("the leave goes off with an offer still open (suggestedWayOut, LV4, declineCancels)", () => {
+  /** New leave 9 to 13 Nov: #152 due Tue 10 Nov is asked of Jodian, the Trend model forecast Wed 11 Nov is left free. */
+  async function askedAndOffered() {
+    await db.update(t.workItems).set({ dueDate: "2026-11-10" }).where(eq(t.workItems.id, "wi-152"));
+    await db.update(t.milestones).set({ forecastDate: "2026-11-11" }).where(eq(t.milestones.id, "ms-trend"));
+    const said = await says("kemar", "I'm off Monday 9 Nov to Friday 13 Nov");
+    const [nov] = await db.select().from(t.leave).where(and(eq(t.leave.personId, "kemar"), eq(t.leave.startDate, "2026-11-09")));
+    await askCover(as("kemar", 1), nov.id, "jodian", ["work_item:wi-152"], `pick-${++n}`);
+    expect((await requests(nov.id)).map((r) => r.state)).toEqual(["asked", "suggested"]);
+    return { ...said, leaveId: nov.id };
+  }
+  const ended = async (leaveId: string) => (await requests(leaveId)).map((r) => [r.state, r.endedWhy]);
+  const BOTH_OFF = [
+    ["withdrawn", "leave_off"],
+    ["withdrawn", "leave_off"],
+  ];
+
+  it("withdrawn by the person", async () => {
+    const { leaveId } = await askedAndOffered();
+    await withdrawLeave(as("kemar", 2), leaveId);
+    expect(await ended(leaveId)).toEqual(BOTH_OFF);
+  });
+
+  it("declined by the admin", async () => {
+    const { leaveId } = await askedAndOffered();
+    await declineLeave(as("alicia", 2), leaveId);
+    expect(await ended(leaveId)).toEqual(BOTH_OFF);
+    expect(await inbox("jodian", 3)).toEqual([]);
+  });
+
+  it("undone with the save that asked for it", async () => {
+    const { leaveId, captureId } = await askedAndOffered();
+    expect(await undoSave(as("kemar", 2), { commandId: "undo-off", captureId })).toMatchObject({ kind: "job" });
+    expect(await ended(leaveId)).toEqual(BOTH_OFF);
+  });
+});
+
+describe("LV3: a change waiting on the admin moves nothing (D6)", () => {
+  it("#152 due Tue 27 Oct stays asked, and the offer lapses on the approved start", async () => {
+    await trendOnMonday();
+    const { captureId } = await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
+    const { record } = await askCover(as("kemar", 1), OCT, "jodian", ["work_item:wi-152"], "p-1");
+    await says("kemar", "I'm off Wednesday 28 Oct to Friday 6 Nov", { minutes: 2 });
+    expect((await db.select().from(t.leave).where(eq(t.leave.id, OCT)))[0]).toMatchObject({ startDate: "2026-10-26", endDate: "2026-10-30", changeStart: "2026-10-28", changeEnd: "2026-11-06" });
+    await runCoverTimers({ db, now: at(5) });
+    expect((await requests()).find((r) => r.id === record.id)).toMatchObject({ state: "asked" });
+    expect((await away(captureId, 6)).line).toBe("While you're away (Mon 26 Oct to Fri 30 Oct): Trend model is forecast Mon 26 Oct and #152 Store feed connector is due Tue 27 Oct.");
+    // Mon 26 Oct 10:10: the approved leave has started, whatever the change asks
+    const monday = 6 * 24 * HOUR + 60;
+    await runCoverTimers({ db, now: at(monday) });
+    expect((await requests()).filter((r) => r.state === "suggested")).toEqual([]);
+    await expect(askCover(as("kemar", monday), OCT, "alicia", ["milestone:ms-trend"], "late")).rejects.toThrow("Your leave has started");
+  });
+});
+
+describe("the timer and a leave that is over", () => {
+  it("settles a cover only while its leave lasts; a leave that ended is not off, so its handover stays", async () => {
+    await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
+    const { record } = await askCover(as("kemar", 1), OCT, "jodian", ["work_item:wi-152"], "p-1");
+    await answer("jodian", record.id, { act: "accept" });
+    expect((await runCoverTimers({ db, now: at(8 * 24 * HOUR) })).settled).toEqual([record.id]);
+    // Sat 31 Oct: the leave is over, and the cover is left as it stands
+    expect((await runCoverTimers({ db, now: at(11 * 24 * HOUR) })).settled).toEqual([]);
+    await db.update(t.leave).set({ state: "ended" }).where(eq(t.leave.id, OCT));
+    await db.transaction((tx) => coverOnLeave(tx, at(11 * 24 * HOUR), OCT));
+    expect((await requests())[0]).toMatchObject({ state: "accepted", handover: "proposed" });
+    expect((await db.select().from(t.handovers).where(eq(t.handovers.id, `ho-${record.id}`)))[0].state).toBe("not_started");
+  });
+});
+
+describe("rule 6: a thing named twice is asked once", () => {
+  it("the same key twice from the form is one item, one line in each notice and one handover step", async () => {
+    await says("kemar", "I'm off Monday 26 Oct to Friday 30 Oct");
+    const { record, message } = await askCover(as("kemar", 1), OCT, "jodian", ["work_item:wi-152", "work_item:wi-152"], "twice");
+    expect(message).toBe("Asked Jodian to cover #152 Store feed connector. I'll tell you when they answer.");
+    expect(record.items.map((i) => i.id)).toEqual(["wi-152"]);
+    expect(await notices("jodian")).toEqual(["Kemar asks if you can cover #152 Store feed connector on Forager 2.0 while they're away Mon 26 Oct to Fri 30 Oct. Accept, or say you can't."]);
+    await answer("jodian", record.id, { act: "accept" });
+    expect(await db.select().from(t.handoverSteps).where(eq(t.handoverSteps.handoverId, `ho-${record.id}`))).toHaveLength(1);
   });
 });

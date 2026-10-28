@@ -1,7 +1,8 @@
 // M35 (conversational plan, phase P): every arrow, its guards, and the model check's four fixes: an offer withdrawn
 // when the leave starts, is cancelled or on DISMISS (suggestedWayOut); a declined leave acts as a cancelled one
 // (declineCancels: LEAVE_OFF either way); an ask withdrawn when the person or the teammate can no longer read an item
-// (leaveProjectWithdraws); PICK refused for an item in an asked request or a live cover (oneCoverPerItem).
+// (leaveProjectWithdraws), and an accepted cover's live handover cancelled then, so none starts for someone off the
+// project; PICK refused for an item in an asked request or a live cover (oneCoverPerItem).
 import { describe, expect, it } from "vitest";
 import { config } from "../config";
 import {
@@ -35,6 +36,7 @@ const base: CoverCtx = {
   actorId: "kemar",
   now: ASKED_AT,
   leaveLive: true,
+  leaveOff: false,
   leaveApproved: true,
   leaveStarted: false,
   due: ["milestone:ms-trend", "work_item:wi-152", "work_item:wi-208"],
@@ -42,7 +44,9 @@ const base: CoverCtx = {
   teammateReads: ["milestone:ms-trend", "work_item:wi-152"],
   teammateAway: false,
   askerReads: true,
+  handoverEnds: true,
 };
+const OFF: Partial<CoverCtx> = { actorId: null, leaveLive: false, leaveOff: true };
 const later = new Date(ASKED_AT.getTime() + config.coverAskHours * 3_600_000);
 const PICK: CoverEvent = { type: "PICK", toId: "jodian", items: [TREND, W152] };
 
@@ -51,18 +55,19 @@ describe("cover request arrows", () => {
     ["suggested", PICK, {}, {}, "asked"],
     ["suggested", { type: "DISMISS" }, {}, {}, "withdrawn"],
     ["suggested", { type: "LAPSE" }, {}, { actorId: null, leaveStarted: true }, "withdrawn"],
-    ["suggested", { type: "LEAVE_OFF" }, {}, { actorId: null, leaveLive: false }, "withdrawn"],
+    ["suggested", { type: "LEAVE_OFF" }, {}, OFF, "withdrawn"],
     ["asked", { type: "ACCEPT" }, {}, { actorId: "jodian" }, "accepted"],
     ["asked", { type: "DECLINE" }, {}, { actorId: "jodian" }, "declined"],
     ["asked", { type: "DECLINE_ITEM", item: W152 }, {}, { actorId: "jodian" }, "asked"],
     ["asked", { type: "NO_ANSWER" }, {}, { actorId: null, now: later }, "unanswered"],
-    ["asked", { type: "LEAVE_OFF" }, {}, { actorId: null, leaveLive: false }, "withdrawn"],
+    ["asked", { type: "LEAVE_OFF" }, {}, OFF, "withdrawn"],
     ["asked", { type: "DATES" }, {}, { actorId: null, due: ["milestone:ms-trend"] }, "asked"],
     ["asked", { type: "DATES" }, {}, { actorId: null, due: [] }, "withdrawn"],
     ["asked", { type: "LEFT_PROJECT" }, {}, { actorId: null, teammateReads: [] }, "withdrawn"],
     ["asked", { type: "LEFT_PROJECT" }, {}, { actorId: null, askerReads: false }, "withdrawn"],
-    ["accepted", { type: "LEAVE_OFF" }, {}, { actorId: null, leaveLive: false }, "accepted"],
+    ["accepted", { type: "LEAVE_OFF" }, {}, OFF, "accepted"],
     ["accepted", { type: "LEAVE_APPROVED" }, { handover: "waiting" }, { actorId: null }, "accepted"],
+    ["accepted", { type: "LEFT_PROJECT" }, { handover: "waiting" }, { actorId: null, teammateReads: [] }, "accepted"],
   ];
   it.each(rows)("%s --%o--> (%o, %o) %s", (from, event, fields, ctx, to) => {
     const r = applyCoverEvent(at(from, fields), event, { ...base, ...ctx });
@@ -91,9 +96,27 @@ describe("what each arrow does", () => {
 
   it("LV4: the leave off cancels an accepted cover's handover, waiting or proposed; one already cancelled has nothing to cancel", () => {
     for (const handover of ["waiting", "proposed"] as const) {
-      expect(applyCoverEvent(at("accepted", { handover }), { type: "LEAVE_OFF" }, { ...base, actorId: null, leaveLive: false }).record.handover).toBe("cancelled");
+      expect(applyCoverEvent(at("accepted", { handover }), { type: "LEAVE_OFF" }, { ...base, ...OFF }).record.handover).toBe("cancelled");
     }
-    expect(applyCoverEvent(at("accepted", { handover: "cancelled" }), { type: "LEAVE_OFF" }, { ...base, actorId: null, leaveLive: false }).outcome).toMatchObject({ ok: false, reason: "no handover to cancel" });
+    expect(applyCoverEvent(at("accepted", { handover: "cancelled" }), { type: "LEAVE_OFF" }, { ...base, ...OFF }).outcome).toMatchObject({ ok: false, reason: "no handover to cancel" });
+    // A proposed handover is cancelled through M7; when M7 will not take CANCEL, the cover says nothing is cancelled
+    expect(applyCoverEvent(at("accepted"), { type: "LEAVE_OFF" }, { ...base, ...OFF, handoverEnds: false }).outcome).toMatchObject({ ok: false, reason: "the handover will not cancel" });
+    // A leave that simply ended is not off: what was handed over stays
+    expect(applyCoverEvent(at("accepted"), { type: "LEAVE_OFF" }, { ...base, actorId: null, leaveLive: false }).outcome).toMatchObject({ ok: false, reason: "the leave is not cancelled" });
+  });
+
+  it("leaveProjectWithdraws for a cover: someone off the project cancels its handover, so approving the leave starts none (LV9)", () => {
+    for (const handover of ["waiting", "proposed"] as const) {
+      for (const gone of [{ teammateReads: [] }, { askerReads: false }]) {
+        const r = applyCoverEvent(at("accepted", { handover }), { type: "LEFT_PROJECT" }, { ...base, actorId: null, ...gone });
+        expect([r.record.state, r.record.handover, r.record.endedWhy]).toEqual(["accepted", "cancelled", null]);
+      }
+    }
+    expect(applyCoverEvent(at("accepted", { handover: "cancelled" }), { type: "LEFT_PROJECT" }, { ...base, actorId: null, teammateReads: [] }).outcome).toMatchObject({ ok: false, reason: "no handover to cancel" });
+    expect(applyCoverEvent(at("accepted"), { type: "LEFT_PROJECT" }, { ...base, actorId: null, teammateReads: [], handoverEnds: false }).outcome).toMatchObject({ ok: false, reason: "the handover will not cancel" });
+    for (const gone of [{ teammateReads: [] }, { askerReads: false }]) {
+      expect(applyCoverEvent(at("accepted", { handover: "waiting" }), { type: "LEAVE_APPROVED" }, { ...base, actorId: null, ...gone }).outcome).toMatchObject({ ok: false, reason: "that is no longer on a project you share" });
+    }
   });
 
   it("LV8: one item declined leaves the rest asked; the last one is declined with the request", () => {
@@ -113,7 +136,7 @@ describe("what each arrow does", () => {
   it("an end says why: dismissed, the leave started, the leave off, left the project", () => {
     expect(applyCoverEvent(offer, { type: "DISMISS" }, base).record.endedWhy).toBe("dismissed");
     expect(applyCoverEvent(offer, { type: "LAPSE" }, { ...base, actorId: null, leaveStarted: true }).record.endedWhy).toBe("leave_started");
-    expect(applyCoverEvent(at("asked"), { type: "LEAVE_OFF" }, { ...base, actorId: null, leaveLive: false }).record.endedWhy).toBe("leave_off");
+    expect(applyCoverEvent(at("asked"), { type: "LEAVE_OFF" }, { ...base, ...OFF }).record.endedWhy).toBe("leave_off");
     expect(applyCoverEvent(at("asked"), { type: "LEFT_PROJECT" }, { ...base, actorId: null, askerReads: false }).record.endedWhy).toBe("left_project");
   });
 });
@@ -128,6 +151,7 @@ describe("guards", () => {
     refused("suggested", PICK, { leaveStarted: true }, "your leave has started");
     refused("suggested", { type: "PICK", toId: "jodian", items: [] }, {}, "pick at least one thing to cover");
     refused("suggested", { type: "PICK", toId: "jodian", items: [W152, W208] }, {}, "ask for one project at a time");
+    refused("suggested", { type: "PICK", toId: "jodian", items: [W152, { ...W152 }] }, {}, "name each thing once");
     refused("suggested", PICK, { due: ["work_item:wi-152"] }, "that is not yours, or not due while you're away");
     refused("suggested", { type: "PICK", toId: "kemar", items: [W152] }, {}, "pick someone else");
     // P10: Andre is not on Forager
@@ -139,20 +163,25 @@ describe("guards", () => {
     refused("suggested", PICK, { taken: ["work_item:wi-152"] }, "someone is already asked, or covers it");
   });
 
-  it("ACCEPT and DECLINE: only the teammate asked (rule 10), and ACCEPT only while both still read every item and the leave is on (rule 4)", () => {
+  it("ACCEPT and DECLINE: only the teammate asked (rule 10), and only while both still read every item (rule 4, P10); ACCEPT while the leave is on", () => {
     refused("asked", { type: "ACCEPT" }, { actorId: "kemar" }, "only the teammate asked");
     refused("asked", { type: "ACCEPT" }, { actorId: null }, "only the teammate asked");
     refused("asked", { type: "DECLINE" }, { actorId: "alicia" }, "only the teammate asked");
     refused("asked", { type: "ACCEPT" }, { actorId: "jodian", teammateReads: ["work_item:wi-152"] }, "that is no longer on a project you share");
     refused("asked", { type: "ACCEPT" }, { actorId: "jodian", askerReads: false }, "that is no longer on a project you share");
     refused("asked", { type: "ACCEPT" }, { actorId: "jodian", leaveLive: false }, "the leave is off");
+    // A decline names the items to the person, so neither may have left the project since the ask
+    for (const gone of [{ teammateReads: [] }, { askerReads: false }]) {
+      refused("asked", { type: "DECLINE" }, { actorId: "jodian", ...gone }, "that is no longer on a project you share");
+      refused("asked", { type: "DECLINE_ITEM", item: W152 }, { actorId: "jodian", ...gone }, "that is no longer on a project you share");
+    }
   });
 
   it("the timers and rules: nobody's tap, and only when it holds", () => {
     refused("asked", { type: "NO_ANSWER" }, { actorId: null, now: new Date(later.getTime() - 1) }, "not asked that long ago");
     refused("asked", { type: "NO_ANSWER" }, { actorId: "kemar", now: later }, "only a timer or a rule");
     refused("suggested", { type: "LAPSE" }, { actorId: null }, "the leave has not started");
-    refused("suggested", { type: "LEAVE_OFF" }, { actorId: null }, "the leave is still on");
+    refused("suggested", { type: "LEAVE_OFF" }, { actorId: null }, "the leave is not cancelled");
     refused("asked", { type: "LEFT_PROJECT" }, { actorId: null }, "both still read every item");
     refused("accepted", { type: "LEAVE_APPROVED" }, { actorId: null }, "no handover waits on the approval");
     refused("accepted", { type: "LEAVE_APPROVED" }, { actorId: null, leaveApproved: false }, "no handover waits on the approval", { handover: "waiting" });

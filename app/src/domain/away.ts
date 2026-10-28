@@ -34,7 +34,8 @@ export function leaveMoves(drafts: readonly ExtractedItemDraft[], ctx: Pick<Chec
   const out: ExtractedItemDraft[] = [];
   for (const leave of drafts) {
     const range = leaveRangeOf(leave);
-    if (!range) continue;
+    // LV6: back early moves no promise; the days left are working days again
+    if (!range || leave.leave?.back) continue;
     const back = firstDayBack(range);
     for (const c of ctx.commitments ?? []) {
       if (moved.has(c.id) || !whileAway(c.dueOn, range)) continue;

@@ -405,7 +405,7 @@ function AwayBlock({ capture }: { capture: ChatCapture }) {
               teammates={a.teammates[p.id] ?? []}
             />
           ))}
-          <NoCoverNeeded leaveId={a.leaveId!} />
+          <NoCoverNeeded leaveId={a.leaveId!} offerId={a.offerId} />
         </div>
       )}
       {a.dismissed && free.length > 0 && <span className="type-caption text-fg-3">You said no cover is needed.</span>}

@@ -204,9 +204,9 @@ export async function askCoverAction(leaveId: string, toId: string, keys: string
   return r.ok ? { ok: true, message } : r;
 }
 
-/** No cover needed: Atlas's offer ends, and nothing is asked. */
-export async function dismissCoverAction(leaveId: string): Promise<ActionResult> {
-  return run((ctx) => dismissCover(ctx, leaveId), "No cover asked.");
+/** No cover needed: the offer the button was shown with ends, and nothing is asked; the command id makes a repeat change nothing. */
+export async function dismissCoverAction(leaveId: string, offerId: string | null, commandId: string): Promise<ActionResult> {
+  return run((ctx) => dismissCover(ctx, leaveId, offerId, commandId), "No cover asked.");
 }
 
 /** The teammate asked accepts, declines, or says they can't do one item of several; checked when it runs. */

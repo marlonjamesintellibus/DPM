@@ -80,6 +80,8 @@ export type AwayView = {
   teammates: Record<string, Teammate[]>;
   /** Cover may be asked now: saved, the leave live, and not started (the model's suggestedWayOut). */
   open: boolean;
+  /** Atlas's offer open now, which "No cover needed" ends by its id (rule 6); null when none is. */
+  offerId: string | null;
   /** They said no cover is needed, and nothing is offered since. */
   dismissed: boolean;
 };
@@ -130,7 +132,8 @@ async function teammatesFor(conn: Conn, viewerId: string, projectIds: readonly s
  */
 export async function awayViewOf(conn: Conn, capture: Pick<typeof t.captures.$inferSelect, "authorId" | "state">, items: readonly ExtractedItem[], now: Date): Promise<AwayView | null> {
   const leaveItem = items.find((i) => i.draft.target?.type === "leave" && i.draft.leave);
-  if (!leaveItem) return null;
+  // LV6: back early is not time away to cover; "Catch me up" reads the days they were away
+  if (!leaveItem || leaveItem.draft.leave!.back) return null;
   const personId = capture.authorId;
   let range: AwayRange | null = null;
   let leaveId: string | null = null;
@@ -142,8 +145,9 @@ export async function awayViewOf(conn: Conn, capture: Pick<typeof t.captures.$in
     leaveId = leaveItem.draft.leave!.leaveId ?? `lv-${leaveItem.id}`;
     const [row] = await conn.select().from(t.leave).where(eq(t.leave.id, leaveId));
     if (!row || row.personId !== personId || !LIVE_LEAVE.includes(row.state)) return null;
+    // LV3, D6: the approved dates stand while a change waits on the admin, so what is due is read from them
     const l = leaveRecordOf(row);
-    range = l.change ?? { start: l.start, end: l.end };
+    range = { start: l.start, end: l.end };
   } else if (capture.state === "proposed" || capture.state === "reviewing") {
     if (leaveItem.state === "rejected" || leaveItem.state === "withdrawn") return null;
     const [start, end] = (leaveItem.value ?? "").split("/");
@@ -171,6 +175,7 @@ async function awayView(conn: Conn, personId: string, leaveId: string | null, ra
     teammates: open ? await teammatesFor(conn, personId, projects, range, now) : {},
     open,
     dismissed: latest?.state === "withdrawn" && latest.endedWhy === "dismissed",
+    offerId: requests.find((r) => r.state === "suggested")?.id ?? null,
   };
 }
 
@@ -193,8 +198,9 @@ export async function describeCoverAsk(conn: Conn, viewerId: string, requestId: 
   const [leave] = await conn.select().from(t.leave).where(eq(t.leave.id, row.leaveId));
   const [asker] = await conn.select({ id: t.people.id, name: t.people.name }).from(t.people).where(eq(t.people.id, row.askerId));
   if (!v.found || !leave || !asker) return null;
+  // D6: the approved dates, as the ask was made for them
   const l = leaveRecordOf(leave);
-  const range = l.change ?? { start: l.start, end: l.end };
+  const range = { start: l.start, end: l.end };
   const all = thingsIn(v, row.askerId, { start: "1970-01-01", end: "2999-12-31" });
   const items = r.items.flatMap((i) => {
     const x = all.find((a) => a.key === itemKey(i));

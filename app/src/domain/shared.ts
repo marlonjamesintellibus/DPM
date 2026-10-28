@@ -69,8 +69,11 @@ export type ExtractedItemDraft = {
     outcome?: ResolveOutcome;
     supersedes?: string;
   };
-  /** Leave items (D6): it matches live leave, changes it, or is a new request. */
-  leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean };
+  /**
+   * Leave items (D6): it matches live leave, changes it, or is a new request. back (phase P, LV6): they said they are
+   * back early, so the value is the leave they are on with its new, earlier end.
+   */
+  leave?: { fit: "matches" | "change" | "new"; leaveId: string | null; requested: boolean; back?: true };
   /**
    * Phase L, CD14: the word that decided the project, when it was a name (reference) or a person tied to it
    * (tied_person) and check 14 confirmed it. Moving items routed by the same word twice proposes a correction.

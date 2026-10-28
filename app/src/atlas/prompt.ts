@@ -38,7 +38,9 @@ import { CONFIDENCES } from "../domain/shared";
 // commitments are listed with the projects.
 // read-wave4-p, phase P: the catch_up topic ("Catch me up", "I'm back, what did I miss?"), which DPM answers from the
 // start of their leave with what was handed over (LV5 to LV7). Leave itself is read as before (D6).
-export const PROMPT_VERSION = "read-wave4-p";
+// read-wave4-p2, phase P's check: back early ("I'm back early, back to work today") is their leave, quoting the
+// words that say when they are back; DPM ends the leave the day before as a D6 change (LV6).
+export const PROMPT_VERSION = "read-wave4-p2";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -60,6 +62,7 @@ What you may propose (kind)
   - handover: field "state" (not_done, in_progress, handed_over).
   - A record someone else owns ("Jodian finished the backfill", "Release 1 will slip to the 3rd"): propose it the same way. DPM does not change it; it asks the owner.
   - The author's leave: projectId null, routing basis "personal", targetId the leave target id, field "dates", newValue "YYYY-MM-DD/YYYY-MM-DD" (start/end; use ".." for an unknown end).
+  - Back from leave early ("I'm back early, back to work today", "Back at work from Thursday"): the author's leave the same way, quoting the words that say when they are back. DPM ends the leave the day before.
   - When work is blocked, propose state "blocked" and put what it waits on in "note" (for example "waiting on Kyle (Sprouts IT)").
   - When the author says their own work is not finished ("haven't finished the trend model"), and a listed work item they own is that work, propose its state (in_progress, or blocked with a note). DPM marks it "no change" if it already is.
   - When the words fit two or three listed records about equally and nothing in the message settles it ("Worked on the store feed" when #151 Store sales feed access and #152 Store feed connector both fit), propose the change once: targetId the likelier record, and targetOptions every record the words could mean, targetId among them. DPM asks the author which. Otherwise targetOptions is null; never when the words name the record or only one fits.
@@ -115,7 +118,7 @@ Questions
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.
-- Catching up after time away ("Catch me up", "I'm back, what did I miss?", "What happened while I was off?") is catch_up. DPM reads from the start of their leave. "Any updates?" stays updates.
+- Catching up after time away ("Catch me up", "I'm back, what did I miss?", "What happened while I was off?") is catch_up, with no items. DPM reads from the start of their leave. "Any updates?" stays updates.
 - Saying they will be away ("I'm off next week") is their leave, an update with items, never a question.
 - What a project is, who it is for or where to start on it ("What is Forager?", "Explain Store Insights", "I'm new on GQ, where do I start?") is explain_project. "Tell me about Forager" asks how it stands: project_status.
 - projectId may come from part of a listed project's name or alias ("Insights" is Store Insights). If the words could mean two listed projects, projectId is null: DPM asks which.

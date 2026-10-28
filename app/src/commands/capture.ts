@@ -671,10 +671,11 @@ export function decideExtraction(ctx: CommandCtx, extractionId: string, decision
 
 const SETTABLE_WORK_STATES: readonly string[] = ["to_do", "in_progress", "blocked", "done"];
 
-function parseLeave(value: string | null, personId: string): ExtractedLeave | null {
+/** The item's dates; back (LV6) when the author said they are back early, so the dates shorten the leave they are on. */
+function parseLeave(value: string | null, personId: string, item: Pick<ExtractedItem, "draft">): ExtractedLeave | null {
   const [start, end] = (value ?? "").split("/");
   if (!start) return null;
-  return { personId, start, end: !end || end === ".." ? null : end };
+  return { personId, start, end: !end || end === ".." ? null : end, ...(item.draft.leave?.back ? { back: true } : {}) };
 }
 
 function leaveRecords(rows: (typeof t.leave.$inferSelect)[]): LeaveRecord[] {
@@ -749,7 +750,7 @@ async function editRule(tx: Tx, item: ExtractedItem, authorId: string, now: Date
     case "leave": {
       const leaves = leaveRecords(await tx.select().from(t.leave).where(eq(t.leave.personId, authorId)));
       return (value) => {
-        const extracted = parseLeave(value, authorId);
+        const extracted = parseLeave(value, authorId, item);
         if (!extracted) return "leave reads start/end, for example 2026-10-26/2026-10-30";
         const r = acceptExtractedLeave(extracted, leaves);
         return r.kind === "refused" ? r.reason : null;
@@ -1073,7 +1074,7 @@ async function readCurrent(tx: Tx, item: ExtractedItem, authorId: string): Promi
     case "leave": {
       // Leave already "has" the value when live leave, requested or approved, covers it (M8, D6)
       // A change compares against the leave's dates as they are now, so a leave that moved meanwhile is a conflict
-      const extracted = parseLeave(item.value, authorId);
+      const extracted = parseLeave(item.value, authorId, item);
       if (!extracted) return null;
       const leaves = leaveRecords(await tx.select().from(t.leave).where(eq(t.leave.personId, authorId)));
       const fit = fitLeave(extracted, leaves);
@@ -1204,7 +1205,7 @@ export async function applyWrite(s: SaveScope, w: PlannedWrite): Promise<string 
       return handover.projectId;
     }
     case "leave": {
-      const extracted = parseLeave(w.value, s.authorId);
+      const extracted = parseLeave(w.value, s.authorId, item);
       if (!extracted) throw new CommandRefused("leave needs real dates");
       const rows = await tx.select().from(t.leave).where(eq(t.leave.personId, s.authorId));
       const r = acceptExtractedLeave(extracted, leaveRecords(rows));

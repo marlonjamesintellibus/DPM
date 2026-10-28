@@ -20,7 +20,7 @@
 // correct (phase L, M31): the correction it proposes, after checkCorrection; the topic is correction.
 // unsure (phase D, M21): what DPM asks the author which of, after the checks: "records:<id>,<id>" for an
 //   update whose words fit 2 or 3 records. A case without it must leave no record unsure.
-import type { EarlierTurn, OpenAnswer } from "../../domain/atlas-checks/types";
+import type { EarlierTurn, ExistingLeave, OpenAnswer } from "../../domain/atlas-checks/types";
 import type { BraidKind } from "../../domain/rights";
 import type { QuestionTopic } from "../../domain/question";
 import type { Correction } from "../../domain/topics/correction";
@@ -65,6 +65,8 @@ export type EvalCase = {
   unsure?: string;
   /** Phase J: the text is a standup's typed answers, each after its "Atlas:" question; quotes only from the answers (M28). */
   standup?: true;
+  /** Phase P: the author's live leave for this case only, in place of the seed's (LV6: back early from leave they are on). */
+  leave?: ExistingLeave[];
 };
 
 // Phase B: answers open in a conversation, as the chat showed them, for replies that act on them
@@ -650,6 +652,14 @@ export const EVAL_CASES: EvalCase[] = [
     expect: [],
     forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
     ask: { topic: "catch_up", projectId: "forager" },
+  },
+  {
+    id: "p-back-early",
+    about: "phase P, LV6: back early from leave he is on (Mon 19 to Fri 23 Oct) ends it the day before, a D6 change; never a question",
+    text: "I'm back early, back to work today.",
+    leave: [{ id: "lv-eval-back", start: "2026-10-19", end: "2026-10-23", state: "approved" }],
+    expect: ["upd:leave-kemar.dates=2026-10-19/2026-10-19"],
+    forbid: ["new:*", "same:*", "promise:*"],
   },
   {
     id: "p-off-next-week",

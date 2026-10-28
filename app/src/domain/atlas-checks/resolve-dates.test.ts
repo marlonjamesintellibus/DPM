@@ -112,6 +112,17 @@ describe("leave ranges", () => {
     // A day said wins over the week around it
     expect(readLeaveRange("I'm off next week from Tuesday the 27th", AT)).toMatchObject({ start: "2026-10-27", end: null });
   });
+
+  it("phase P, LV6: back early is the day they are back, today when no day is said", () => {
+    expect(readLeaveRange("I'm back early, back to work today", AT)).toMatchObject({ start: "2026-10-20", end: null, back: true, relative: true });
+    expect(readLeaveRange("I'm back early", AT)).toMatchObject({ start: "2026-10-20", end: null, back: true, relative: true, span: { start: 0, end: 8 } });
+    expect(readLeaveRange("Back at work Thursday", AT)).toMatchObject({ start: "2026-10-22", back: true });
+    expect(readLeaveRange("Mi back a work from tomorrow", AT)).toMatchObject({ start: "2026-10-21", back: true });
+    // Leave said with the day back is still the leave: two days are not a day back
+    expect(readLeaveRange("I'm off Thursday to Friday, back Monday", AT)).toMatchObject({ start: "2026-10-22", end: "2026-10-23" });
+    expect(readLeaveRange("I'm off from Thursday, back Monday", AT)?.back).toBeUndefined();
+    expect(readLeaveRange("I'm off next week", AT)?.back).toBeUndefined();
+  });
 });
 
 // Section 20, U8 (question 3): a counted time is in working days; a named day keeps its date
