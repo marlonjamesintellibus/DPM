@@ -1,20 +1,48 @@
 // What is at risk this week (conversational plan, phase N), on the project asked about or on all of the
 // asker's, read through getProject (P10): milestones not done that are forecast past their target;
 // milestones due this week (today to Sunday, as the due topic counts it) with blocked work in them; the
-// blockers live on the BRAID log; and, once phase K lands, its open signals.
+// blockers live on the BRAID log; and phase K's open signals raised to the asker.
+import { and, desc, eq } from "drizzle-orm";
 import { addDays, weekday, WEEKDAYS } from "../../domain/dates";
 import type { Conn } from "../../db/conn";
+import * as t from "../../db/schema";
 import { shortDate, todayIn, type ProjectView } from "../project";
+import { signalsFor } from "../signals";
 import { capped, counted, forecastText, listed, milestonesOf, projectsAsked, workOf, type AnswerBuilder, type DraftCard } from "./shared";
 
 /**
- * Phase K's hook: the open signals (M29) on these projects that the asker may see, as answer lines,
- * worst first. Phase K is built alongside this phase; until it lands there are none. When it does, it
- * reads its own per-viewer query here (queries/signals.ts, signalsFor) and nothing else in this answer
- * changes; answer-leads.test.ts fails until it does.
+ * Phase K's open signals (M29) on these projects, as answer lines: only those raised to the asker now that
+ * still hold, read through K's own per-viewer query (signalsFor: rule 4, SG9, P10), newest first. Each links
+ * the asker's inbox item it sits in, where they accept or dismiss it.
  */
-export async function openSignals(_conn: Conn, _viewerId: string, _views: readonly ProjectView[], _now: Date): Promise<DraftCard[]> {
-  return [];
+export async function openSignals(conn: Conn, viewerId: string, views: readonly ProjectView[], now: Date): Promise<DraftCard[]> {
+  const cards: DraftCard[] = [];
+  for (const v of views) {
+    // SG10: one inbox item per project per day, so the signals are read a day at a time, as the inbox reads them
+    const days = await conn
+      .selectDistinct({ day: t.signals.stageOn })
+      .from(t.signals)
+      .where(and(eq(t.signals.projectId, v.project.id), eq(t.signals.state, "raised")));
+    for (const { day } of days.sort((a, b) => b.day.localeCompare(a.day))) {
+      const shown = await signalsFor(conn, viewerId, v.project.id, day, now);
+      if (!shown.length) continue;
+      const [item] = await conn
+        .select({ id: t.inboxItems.id })
+        .from(t.inboxItems)
+        .where(and(eq(t.inboxItems.ownerId, viewerId), eq(t.inboxItems.causeKey, `signals:${v.project.id}@${day}`)))
+        .orderBy(desc(t.inboxItems.episode))
+        .limit(1);
+      for (const s of shown) {
+        cards.push({
+          title: s.text,
+          detail: `${v.project.name}: Atlas noticed it on ${shortDate(day)}`,
+          tag: "Atlas noticed",
+          href: item ? `/?view=inbox&item=${encodeURIComponent(item.id)}` : "/?view=inbox",
+        });
+      }
+    }
+  }
+  return cards;
 }
 
 export const atRiskWeek: AnswerBuilder = async (conn, viewerId, { projectId }, now) => {
@@ -51,14 +79,14 @@ export const atRiskWeek: AnswerBuilder = async (conn, viewerId, { projectId }, n
       });
     }
   }
-  // Phase K: open signals, once built
+  // Phase K: what Atlas noticed and raised to the asker
   const signals = await openSignals(conn, viewerId, views, now);
 
   const scope = views.length === 1 && projectId ? views[0].project.name : "your projects";
   const found = listed([
     [milestones.length, "milestone", "milestones"],
     [blockers.length, "live blocker", "live blockers"],
-    [signals.length, "signal", "signals"],
+    [signals.length, "thing Atlas noticed", "things Atlas noticed"],
   ]);
   if (!found) return { text: `Nothing on ${scope} is at risk this week: no milestone is forecast past its target or held up by blocked work, and no blocker is live.`, cards: [], more: null };
   return { text: `At risk this week on ${scope}: ${found}.`, ...capped([...milestones, ...blockers, ...signals], { label: "on your projects", href: "/projects" }) };

@@ -164,6 +164,8 @@ export async function seedSnapshot(db: Db, options: SeedOptions = {}): Promise<S
     if (auditRows.length) await tx.insert(t.auditEntries).values(auditRows);
 
     await tx.insert(t.appMeta).values({ key: "seed", value: `snapshot ${SNAPSHOT.today}` });
+    // Phase K: the snapshot is 9:10am, so the night's signal run (commands/signals.ts) is behind it and raised nothing
+    await tx.insert(t.appMeta).values({ key: "signals_nightly", value: SNAPSHOT.today });
   });
 
   return { projects: PROJECTS.length, extractions: kemarNote ? items.length : 0, inboxItems: aliciaSetsStatus ? 1 : 0, foragerCalculated: foragerPlan.project };

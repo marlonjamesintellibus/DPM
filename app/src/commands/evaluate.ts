@@ -13,6 +13,9 @@ import { liveEntryOf } from "../domain/machines/kind-switch";
 import { evaluateCause, LIVE, type InboxItemRef } from "../domain/machines/inbox-item";
 import { applySetStatus, setStatusCause, type SetStatusRecord } from "../domain/machines/set-status";
 import { vocabularyCauses } from "../domain/machines/vocabulary-change";
+import { signalCause, signalRecipients } from "../domain/machines/signal";
+import { signalOf } from "../queries/signals";
+import { runSignalRules } from "./signal-rules";
 import { calculatePlan } from "../domain/status/rules";
 import type { Status } from "../domain/status/status";
 import { audit, CommandRefused, expectOne, nextVersion, todayOf } from "./core";
@@ -66,13 +69,21 @@ function ownersOf(
   }
 }
 
+export type EvaluateOpts = {
+  actorId?: string;
+  /** Phase K: the signal rules also DETECT new trouble (a saved update, and the nightly run); otherwise they only clear and refresh. */
+  detectSignals?: boolean;
+};
+
 /**
  * Runs the rules for one project. `actorId` is the person whose command caused this run: an item of
  * theirs whose cause their own action removed closes as acted (M10), anyone else's as auto closed.
  */
-export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts: { actorId?: string } = {}): Promise<Evaluation> {
+export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts: EvaluateOpts = {}): Promise<Evaluation> {
   const project = await loadProject(tx, projectId);
   if (!project) throw new CommandRefused(`no project ${projectId}`, "not_found");
+  // Phase K, M29: the signal rules first, so the inbox below shows what they leave raised
+  await runSignalRules(tx, projectId, now, { detect: opts.detectSignals ?? false });
   const [planRows, members, { log }, work] = await Promise.all([
     loadPlanRows(tx, projectId),
     membersOf(tx, projectId),
@@ -169,10 +180,18 @@ export async function evaluateProject(tx: Tx, projectId: string, now: Date, opts
   const changes = await tx.select({ id: t.vocabularyChanges.id, state: t.vocabularyChanges.state }).from(t.vocabularyChanges).where(eq(t.vocabularyChanges.projectId, projectId));
   for (const key of changes.flatMap(vocabularyCauses)) desired.set(key, ownersOf(key, project, undefined, members));
 
-  // Every item ever made for this project's causes (the project itself, its BRAID entries, its work, its asks, its corrections)
+  // Phase K, M29 and SG10: a raised signal is in front of the people it is raised to now (SG9), one item per
+  // project per day it reached them
+  const raised = (await tx.select().from(t.signals).where(and(eq(t.signals.projectId, projectId), eq(t.signals.state, "raised")))).map(signalOf);
+  for (const s of raised) {
+    const key = signalCause(s)!;
+    desired.set(key, [...new Set([...(desired.get(key) ?? []), ...signalRecipients(s, members, log, policy)])].sort());
+  }
+
+  // Every item ever made for this project's causes (the project itself, its BRAID entries, its work, its asks, its corrections, its signals)
   const allRequests = await tx.select({ id: t.braidKindRequests.id }).from(t.braidKindRequests).where(eq(t.braidKindRequests.projectId, projectId));
   const subjects = new Set([projectId, ...Object.keys(log), ...work.map((w) => w.id), ...allRequests.map((r) => r.id), ...asks.map((a) => a.id), ...changes.map((c) => c.id)]);
-  const items = (await tx.select().from(t.inboxItems)).filter((i) => subjects.has(i.causeKey.slice(i.causeKey.indexOf(":") + 1)));
+  const items = (await tx.select().from(t.inboxItems)).filter((i) => subjects.has(i.causeKey.slice(i.causeKey.indexOf(":") + 1)) || i.causeKey.startsWith(`signals:${projectId}@`));
   const { opened, closed } = await syncInbox(tx, now, items, desired, opts);
 
   return { calculated: plan.project, threads: plan.threads, setStatus: record, opened, closed };
@@ -226,7 +245,7 @@ export async function syncInbox(
 }
 
 /** Runs evaluate for several projects, each once, in a stable order. */
-export async function evaluateProjects(tx: Tx, projectIds: Iterable<string>, now: Date, opts: { actorId?: string } = {}): Promise<Map<string, Evaluation>> {
+export async function evaluateProjects(tx: Tx, projectIds: Iterable<string>, now: Date, opts: EvaluateOpts = {}): Promise<Map<string, Evaluation>> {
   const out = new Map<string, Evaluation>();
   for (const id of [...new Set(projectIds)].sort()) out.set(id, await evaluateProject(tx, id, now, opts));
   return out;

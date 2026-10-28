@@ -68,6 +68,21 @@ export const config = {
   undoMinutes: 15,
   // Phase L, M31: a vocabulary change nobody approves or declines is reminded (S18), then expires after this many days
   vocabExpiryDays: 14,
+
+  // Phase K, M29 (conversational plan, section 23): when a rule sees trouble nobody reported. Work In progress
+  // with no change and no mention for this many working days is stale; a milestone whose forecast moved later
+  // this many times is slipping; a proposal waiting this many working days (after the S18 reminders) needs its
+  // deciders; a project with no update from any member for this many working days is quiet
+  staleWorkDays: 5,
+  slipCount: 3,
+  decisionWaitDays: 5,
+  quietProjectDays: 3,
+  // A dismissed signal is not raised again for this many days, and then only if worse or a new episode
+  signalSnoozeDays: 7,
+  // A signal nobody answers expires after this many days with PM and Leads (from when it reached them)
+  signalExpiryDays: 14,
+  // The model check's fix: stale work goes to its owner first, and to PM and Leads after this many working days
+  ownerAnswerDays: 2,
 } as const;
 
 export type Config = typeof config;

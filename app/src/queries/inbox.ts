@@ -15,6 +15,7 @@ import type { BraidKind } from "../domain/rights";
 import { calculatePlan } from "../domain/status/rules";
 import { getLeaveImpact } from "./leave";
 import { describeOwnerAsk } from "./owner-ask";
+import { signalsFor } from "./signals";
 import { OUTCOME_SAID } from "./review";
 import { clockTime, daysAgo, firstName, KIND_LABEL, peopleById, projectReader, shortDate, STATUS_LABEL, statusLabel, todayIn } from "./project";
 
@@ -47,7 +48,9 @@ export type InboxCause =
   /** Section 20, U5 and U7 (M37): someone's update changes the viewer's record, or proposes new work to a PM or Lead. */
   | "owner_ask"
   /** Phase L, M31: a correction to the project's vocabulary waits for a PM or Lead. */
-  | "vocab_change";
+  | "vocab_change"
+  /** Phase K, M29: trouble Atlas noticed that nobody reported, one item per project per day (SG10). */
+  | "signals";
 
 export type InboxGroup = "do_now" | "today" | "this_week";
 export const GROUP_LABEL: Record<InboxGroup, string> = { do_now: "Do now", today: "Today", this_week: "This week" };
@@ -61,7 +64,9 @@ export type InboxSubject =
   | { type: "work_item"; id: string; projectId: string }
   | { type: "kind_request"; id: string; entryId: string; projectId: string }
   | { type: "owner_ask"; id: string; projectId: string }
-  | { type: "vocabulary_change"; id: string; projectId: string };
+  | { type: "vocabulary_change"; id: string; projectId: string }
+  /** id is "<project>@<day>": the signals that reached the viewer on that project that day. */
+  | { type: "signals"; id: string; projectId: string; day: string };
 
 export type InboxEntry = {
   id: string;
@@ -95,7 +100,7 @@ export type Inbox = {
 
 const STATUS_CAUSES: readonly string[] = ["status_set_with_no_reason", "keep_set_status"];
 const WORK_CAUSES: readonly string[] = ["done_no_change", "blocked_without_blocker"];
-const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change"];
+const NOT_BRAID: readonly string[] = [...STATUS_CAUSES, ...WORK_CAUSES, "review_waiting", "leave_impact", "kind_change", "owner_ask", "vocab_change", "signals"];
 
 // Rule-made items say how long they have waited; items from someone's words say when they came
 function ageOf(createdAt: Date, now: Date, fromWords: boolean): string {
@@ -265,7 +270,37 @@ export async function getInbox(conn: Conn, viewerId: string, now: Date): Promise
     });
   }
 
-  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask")) {
+  // Phase K, M29: what Atlas noticed on one project that day (SG10). Only signals raised to the viewer now
+  // that still hold when read (SG1, SG9) are shown; none left, and the item is not shown either
+  for (const p of parsed.filter((x) => x.cause === "signals")) {
+    const [projectId, day] = p.subjectId.split("@");
+    const shown = await signalsFor(conn, viewerId, projectId, day, now);
+    if (!shown.length) continue;
+    const [project] = await conn.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).where(eq(t.projects.id, projectId));
+    const owner = shown.every((s) => s.stage === "owner");
+    const age = ageOf(p.row.createdAt, now, false);
+    items.push({
+      id: p.row.id,
+      causeKey: p.row.causeKey,
+      cause: p.cause,
+      state: p.row.state,
+      title: shown.length === 1 ? shown[0].text : `Atlas noticed ${shown.length} things on ${project.name}`,
+      why: owner
+        ? "it is yours, and nothing in the data has moved it lately; say it is still going, or update it"
+        : "nobody reported this; Atlas noticed it in the data. Accept it as a risk, or dismiss it and say why",
+      source: "Atlas",
+      age,
+      sourceLine: `Atlas · ${age}`,
+      action: owner ? "Answer" : "Review",
+      group: "today",
+      groupLabel: GROUP_LABEL.today,
+      subject: { type: "signals", id: p.subjectId, projectId, day },
+      project,
+      createdAt: p.row.createdAt,
+    });
+  }
+
+  for (const p of parsed.filter((x) => x.cause !== "review_waiting" && x.cause !== "leave_impact" && x.cause !== "owner_ask" && x.cause !== "signals")) {
     const projectId = projectOf(p);
     const project = projectId ? projects.get(projectId) : undefined;
     if (!project) continue; // not readable any more, or the subject is gone

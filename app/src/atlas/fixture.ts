@@ -5,7 +5,7 @@
 // and a one-sentence reply that decides lines of the open answer (phase B: "Approve the refresh decision"),
 // and "Start my standup" (phase J): a standup of taps never reaches a model, and typed answers need one.
 // Phase D adds one recording: a vague update whose words fit two of Kemar's records, so the browser story
-// can answer Atlas's question (M21).
+// can answer Atlas's question (M21). Phase K adds one: the store feed blocker said again (S14).
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { KEMAR_NOTE, KEMAR_PROPOSALS } from "../domain/atlas-checks/kemar-note.fixture";
 import { ruleCommands } from "../domain/acting";
@@ -29,9 +29,28 @@ const VAGUE_FEED_PROPOSALS: readonly RawProposal[] = [
   },
 ];
 
+/**
+ * Phase K's story steps: Kemar says the store feed is still blocked, a report on the blocker already on the
+ * log (M16 same as). Said after Alicia resolved it, it reopens it (S14): a repeated blocker Atlas notices on save.
+ */
+export const FEED_STILL_BLOCKED = "The Sprouts store feed is still blocked for me too.";
+const FEED_STILL_BLOCKED_PROPOSALS: readonly RawProposal[] = [
+  {
+    kind: "braid_same",
+    projectId: "forager",
+    routingReason: { basis: "target", evidence: "Store sales feed access", label: "Same subject as #151" },
+    braidKind: "blocker",
+    matchEntryId: "br-feed-blocker",
+    quote: "The Sprouts store feed is still blocked for me too",
+    confidence: "high",
+    rationale: "The same store feed blocker: add them as a source",
+  },
+];
+
 const RECORDINGS = new Map<string, readonly RawProposal[]>([
   [KEMAR_NOTE, KEMAR_PROPOSALS],
   [VAGUE_FEED, VAGUE_FEED_PROPOSALS],
+  [FEED_STILL_BLOCKED, FEED_STILL_BLOCKED_PROPOSALS],
 ]);
 
 export function createFixtureExtractor(recordings: ReadonlyMap<string, readonly RawProposal[]> = RECORDINGS): Extractor {

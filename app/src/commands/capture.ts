@@ -1473,8 +1473,9 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
     // Phase L: a set status the rules move after this save is part of it, and goes back with an undo
     const statusBefore = new Map<string, typeof t.projects.$inferSelect>();
     for (const id of touched) statusBefore.set(id, (await tx.select().from(t.projects).where(eq(t.projects.id, id)))[0]);
-    // Rules run after the change, as the author, so items their own save resolved close as acted
-    const evaluations = await evaluateProjects(tx, touched, ctx.now, { actorId: authorId });
+    // Rules run after the change, as the author, so items their own save resolved close as acted. Phase K: a
+    // saved update is when the signal rules also look for new trouble ("nightly and on save")
+    const evaluations = await evaluateProjects(tx, touched, ctx.now, { actorId: authorId, detectSignals: true });
     for (const [id, was] of statusBefore) {
       const [moved_] = await tx.select({ version: t.projects.version }).from(t.projects).where(eq(t.projects.id, id));
       if (moved_.version === was.version) continue;

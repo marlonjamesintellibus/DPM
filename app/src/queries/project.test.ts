@@ -106,7 +106,7 @@ describe("getProject: Forager 2.0 at 9:10am, before Kemar saves", () => {
     const blocker = p.braid.entries[0];
     expect(blocker).toMatchObject({ onLog: true, owner: { id: "kemar", name: "Kemar Brown" }, reportedBy: { id: "alicia", name: "Alicia Campbell" } });
     expect(blocker.sources).toEqual([
-      { id: "src-feed-alicia", person: { id: "alicia", name: "Alicia Campbell" }, at: new Date("2026-10-14T15:00:00Z"), ago: "6 days ago", fromCapture: false, quote: null },
+      { id: "src-feed-alicia", person: { id: "alicia", name: "Alicia Campbell" }, at: new Date("2026-10-14T15:00:00Z"), ago: "6 days ago", fromCapture: false, quote: null, signal: null },
     ]);
     expect(blocker.links).toEqual([{ relation: "related", entryId: "br-feed-dependency", title: "Store sales feed access from Sprouts IT", kind: "dependency", stateLabel: "Open" }]);
     expect(p.braid.entries[3]).toMatchObject({ onLog: false, resolvedBy: { id: "kemar", name: "Kemar Brown" }, resolvedOn: "2026-10-17" });

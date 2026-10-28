@@ -1,6 +1,6 @@
 // Conversational plan, phase N: what is at risk this week on the asker's projects: milestones forecast
-// past their target, milestones due this week with blocked work, live blockers, and open signals once
-// phase K lands. Anyone asks; the scope is their own projects, or the one they name.
+// past their target, milestones due this week with blocked work, live blockers, and phase K's open signals
+// raised to the asker. Anyone asks; the scope is their own projects, or the one they name.
 import type { Topic } from "./topic";
 
 export const atRiskWeek = {

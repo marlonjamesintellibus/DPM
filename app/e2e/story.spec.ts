@@ -409,3 +409,72 @@ test("Phase J. One standup a day: asking again says it is done (SU10)", async ()
   await expect(page.getByText("You've done your standup today. You can still send me an update any time.")).toBeVisible();
   await expect(page.getByRole("group", { name: "Your answer" })).toHaveCount(0);
 });
+
+test("Phase K, CD13. Alicia marks GQ & Academy paused, so Atlas will not flag it as quiet, then resumes it", async () => {
+  await viewAs("kemar", "/projects/gq");
+  await expect(page.getByRole("button", { name: "Mark paused" })).toHaveCount(0); // only the PM marks it
+  await viewAs("alicia", "/projects/gq");
+  await page.getByRole("button", { name: "Mark paused" }).click();
+  await expect(page.getByText("Paused: Atlas will not flag it as quiet")).toBeVisible();
+  await page.getByRole("button", { name: "Resume" }).click();
+  await expect(page.getByRole("button", { name: "Mark paused" })).toBeVisible();
+  await expect(page.getByText("Paused: Atlas will not flag it as quiet")).toHaveCount(0);
+});
+
+/** Phase K: Kemar says the store feed is still blocked, a report on the blocker on the log (M16 same as), saved from its review. */
+async function kemarSaysFeedStillBlocked() {
+  await viewAs("kemar", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("The Sprouts store feed is still blocked for me too.");
+  await box.press("Enter");
+  await page.getByRole("button", { name: /^Review/ }).last().click();
+  await expect(page).toHaveURL(/\/review\//);
+  await card("Store sales feed access").getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(/Saved/).first()).toBeVisible();
+}
+const noticed = () => page.getByRole("link", { name: /The blocker "Store sales feed access" was reported again on 20 Oct after it was resolved/ });
+
+test("Phase K. Alicia resolves the feed blocker; Kemar reports it again, so Atlas notices it came back, and Alicia accepts it as a risk", async () => {
+  await viewAs("alicia", "/?view=chat&c=new&ask=1");
+  const box = page.getByRole("textbox", { name: "Message to Atlas" });
+  await box.fill("What's blocked on Forager?");
+  await box.press("Enter");
+  const line = page.getByRole("listitem").filter({ hasText: "Store sales feed access" }).filter({ hasText: "Blocker" });
+  await line.getByRole("button", { name: "Resolve" }).click();
+  await expect(line.getByText("Resolved.")).toBeVisible();
+
+  // His report reopens the same entry (S14); the save raises the signal, to the PM and Leads, not to him (M29)
+  await kemarSaysFeedStillBlocked();
+  await page.goto("/?view=inbox");
+  await expect(noticed()).toHaveCount(0);
+  await viewAs("alicia", "/?view=inbox");
+  await noticed().first().click();
+  await expect(page.getByText("Nobody reported this: Atlas noticed it in the plan and the log.")).toBeVisible();
+  await page.getByRole("button", { name: "Accept as a risk" }).click();
+  // Answered, the item closes as acted
+  await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
+  await page.goto("/projects/forager?view=table");
+  await expect(page.locator("details").filter({ hasText: "Store sales feed access may keep blocking work" }).locator("summary")).toContainText("Open");
+});
+
+test("Phase K, SG5. Kemar reports it once more: Atlas offers the risk Alicia filed, and she adds it there", async () => {
+  await kemarSaysFeedStillBlocked();
+  await viewAs("alicia", "/?view=inbox");
+  await noticed().first().click();
+  await expect(page.getByRole("button", { name: "New risk" })).toBeVisible();
+  await page.getByRole("button", { name: "Add to “Store sales feed access may keep blocking work”" }).click();
+  await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
+  // Still one risk: the signal is a second source on it, never a second entry
+  await page.goto("/projects/forager?view=table");
+  await expect(page.locator("details").filter({ hasText: "Store sales feed access may keep blocking work" })).toHaveCount(1);
+});
+
+test("Phase K. Kemar reports it again: Alicia dismisses it and says why, and it leaves her inbox", async () => {
+  await kemarSaysFeedStillBlocked();
+  await viewAs("alicia", "/?view=inbox");
+  await noticed().first().click();
+  await expect(page.getByRole("button", { name: "Dismiss" })).toBeDisabled(); // a dismissal says why
+  await page.getByLabel("Why dismiss it").fill("Kyle is chasing Sprouts IT this week");
+  await page.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByText("Nothing needs you right now.")).toBeVisible();
+});

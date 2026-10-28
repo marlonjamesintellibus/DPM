@@ -30,6 +30,8 @@ import type { ConversationState } from "../domain/machines/conversation";
 import type { EvalCandidateDetail, EvalCandidateState, EvalCause } from "../domain/machines/eval-candidate";
 import type { KindRequestState } from "../domain/machines/kind-request";
 import type { OwnerAskKind, OwnerAskState } from "../domain/machines/owner-ask";
+import type { EarlierDismissal, SignalMemory, SignalStage, SignalState } from "../domain/machines/signal";
+import type { SignalFacts, SignalRule, SignalSubjectType } from "../domain/signals";
 import type { Answer, AskedQuestion } from "../domain/question";
 import type { LeaveState } from "../domain/machines/leave";
 import type { MembershipState } from "../domain/machines/membership";
@@ -122,6 +124,8 @@ export const projects = pgTable("projects", {
   setAt: instant("set_at"),
   /** D16, S11: approvals a decision needs on this project (1 or 2), set by its PM. */
   decisionApprovers: integer("decision_approvers").notNull().default(1),
+  /** Phase K, CD13: marked paused (or between phases) by its PM, so no quiet-project signal is raised. */
+  paused: boolean("paused").notNull().default(false),
   version: version(),
   createdAt: created(),
   updatedAt: updated(),
@@ -305,6 +309,8 @@ export const braidSources = pgTable(
     at: instant("at").notNull(),
     /** D11: the person took this report back. Kept for the history, never shown on the entry. */
     withdrawnAt: instant("withdrawn_at"),
+    /** Phase K, M29: a PM or Lead accepted this signal into the entry; the signal's facts are what the source says. */
+    signalId: text("signal_id"),
   },
   (t) => [index("braid_sources_entry").on(t.entryId)],
 );
@@ -697,6 +703,61 @@ export const vocabularyChanges = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("vocabulary_changes_project").on(t.projectId, t.state)],
+);
+
+// ---- Signals (phase K, M29) ----
+
+/**
+ * M29. Trouble a rule noticed that nobody reported, raised to the people who can act. One live signal
+ * (raised or dismissed) per (project, rule, subject); a later one is a new row, as a new inbox episode is.
+ */
+export const signals = pgTable(
+  "signals",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull().references(() => projects.id),
+    rule: text("rule").$type<SignalRule>().notNull(),
+    subjectType: text("subject_type").$type<SignalSubjectType>().notNull(),
+    subjectId: text("subject_id").notNull(),
+    state: text("state").$type<SignalState>().notNull(),
+    stage: text("stage").$type<SignalStage>().notNull(),
+    level: integer("level").notNull(),
+    episode: text("episode").notNull(),
+    facts: jsonb("facts").$type<SignalFacts>().notNull(),
+    raisedOn: day("raised_on").notNull(),
+    stageOn: day("stage_on").notNull(),
+    decidedBy: text("decided_by").references(() => people.id),
+    decidedOn: day("decided_on"),
+    dismissReason: text("dismiss_reason"),
+    riskEntryId: text("risk_entry_id").references(() => braidEntries.id),
+    earlier: jsonb("earlier").$type<EarlierDismissal>(),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [
+    index("signals_project").on(t.projectId, t.state),
+    uniqueIndex("signals_live").on(t.projectId, t.rule, t.subjectId).where(sql`${t.state} in ('raised', 'dismissed')`),
+  ],
+);
+
+/** M29, the model's fix: what the last answer (accept, dismiss or expiry) left, one per (project, rule, subject). */
+export const signalMemory = pgTable(
+  "signal_memory",
+  {
+    projectId: text("project_id").notNull().references(() => projects.id),
+    rule: text("rule").$type<SignalRule>().notNull(),
+    subjectId: text("subject_id").notNull(),
+    episode: text("episode").notNull(),
+    level: integer("level").notNull(),
+    answer: text("answer").$type<SignalMemory["answer"]>().notNull(),
+    by: text("by").references(() => people.id),
+    on: day("on").notNull(),
+    reason: text("reason"),
+    seenGone: boolean("seen_gone").notNull().default(false),
+    updatedAt: updated(),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.rule, t.subjectId] })],
 );
 
 // ---- Notices (D15) ----

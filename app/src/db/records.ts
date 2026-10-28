@@ -294,7 +294,7 @@ export async function persistBraidLog(
   after: BraidLog,
   versions: Versions,
   now: Date,
-  extras: { extractionIdBySource?: ReadonlyMap<string, string> } = {},
+  extras: { extractionIdBySource?: ReadonlyMap<string, string>; signalIdBySource?: ReadonlyMap<string, string> } = {},
 ): Promise<string[]> {
   const changed: string[] = [];
   for (const entry of Object.values(after)) {
@@ -327,6 +327,7 @@ export async function persistBraidLog(
           personId: s.personId,
           captureId: s.captureId,
           extractionId: extras.extractionIdBySource?.get(s.id) ?? null,
+          signalId: extras.signalIdBySource?.get(s.id) ?? null,
           spanStart: s.span?.start ?? null,
           spanEnd: s.span?.end ?? null,
           at: new Date(s.at),

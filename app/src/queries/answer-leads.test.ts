@@ -5,8 +5,6 @@
 // outside contact; Kemar's 8:58 note says things about Forager and Store Insights and waits for his
 // review (not saved), and he is on leave 26 to 30 Oct. It is 9:40am on Tuesday 20 Oct unless a test says
 // otherwise.
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import type { Drafter } from "../atlas/extractor";
@@ -14,6 +12,7 @@ import { createFixtureExtractor } from "../atlas/fixture";
 import { readCapture } from "../commands/atlas";
 import { askKindChange, decideBraidEntry, reportBraidEntry } from "../commands/braid";
 import { createCapture, decideExtraction, openReview, proposeItems, saveCapture } from "../commands/capture";
+import { runSignalTimers } from "../commands/signals";
 import { saveReason } from "../commands/status";
 import type { Db } from "../db/client";
 import * as t from "../db/schema";
@@ -300,12 +299,21 @@ describe("at_risk_week: what is at risk this week on their projects", () => {
     expect((await ask("kyle", "Which projects are off track?")).answer.text).toBe("You are not in any projects yet.");
   });
 
-  it("phase K: once its per-viewer query is built, openSignals reads it", () => {
-    // The hook returns none until phase K lands. At integration, wire signalsFor in, and add a test where
-    // an open signal raised to the asker is listed and one they cannot see is not
-    const built = existsSync(fileURLToPath(new URL("./signals.ts", import.meta.url)));
-    const hook = readFileSync(fileURLToPath(new URL("./answers/at-risk-week.ts", import.meta.url)), "utf8");
-    expect(!built || /signalsFor\(/.test(hook)).toBe(true);
+  it("phase K: an open signal raised to the asker is listed; one raised to someone else is not (P10, SG9)", async () => {
+    // The night of the 21st raises Forager's quiet project to its PM and Leads, Insights' to Andre, and
+    // #145's stale work to Kemar, its owner
+    await runSignalTimers({ db, now: new Date("2026-10-21T05:00:00Z") });
+    const alicia = await ask("alicia", "What's at risk this week?", DAY + 30);
+    expect(alicia.answer.text).toBe("At risk this week on your projects: 1 live blocker and 1 thing Atlas noticed.");
+    expect(alicia.answer.cards.filter((c) => c.tag === "Atlas noticed")).toMatchObject([
+      { title: "No update on Forager 2.0 from anyone for 4 working days, since 15 Oct", detail: "Forager 2.0: Atlas noticed it on 21 Oct", href: expect.stringMatching(/^\/\?view=inbox&item=/) },
+    ]);
+    // Kemar is on Store Insights too, but its quiet project went to Andre; his own is #145
+    const kemar = await ask("kemar", "What's at risk this week?", DAY + 30);
+    expect(kemar.answer.cards.filter((c) => c.tag === "Atlas noticed").map((c) => c.title)).toEqual(["Is #145 Google Trends connector still going? No change or mention for 5 working days"]);
+    // Jodian is on Forager, but none of its signals was raised to him
+    const jodian = await ask("jodian", "What's at risk this week?", DAY + 30);
+    expect(everything(jodian.answer)).not.toMatch(/Atlas noticed|No update on|still going/);
   });
 
   it("a named project with nothing at risk says so", async () => {
