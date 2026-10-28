@@ -1,8 +1,8 @@
 // Provenance (A11): who changed what, when, and where it came from, for one subject. A project's
-// trail (its own rows and its plan and BRAID records) is for its members; a capture's trail (the
-// capture, its items, and what Save wrote from it) is for its author only (M1). Inbox rows are
-// a person's own and never part of a project's trail.
-import { eq, inArray, or } from "drizzle-orm";
+// trail (its own rows, its plan and BRAID records, and its contacts' client view, CD49) is for its
+// members; a capture's trail (the capture, its items, and what Save wrote from it) is for its author
+// only (M1). Inbox rows are a person's own and never part of a project's trail.
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import * as t from "../db/schema";
 import { NOT_YOURS, peopleById, projectReader, readableEntryProject, type NotYours } from "./project";
@@ -49,7 +49,9 @@ export async function getAuditTrail(conn: Conn, viewerId: string, subject: Audit
       const reader = await projectReader(conn, viewerId);
       if (!reader.mayRead(subject.id)) return NOT_YOURS;
       const ids = await projectRecordIds(conn, subject.id);
-      rows = (await conn.select().from(t.auditEntries).where(inArray(t.auditEntries.subjectId, ids))).filter((r) => !PRIVATE_SUBJECTS.includes(r.subjectType));
+      // CD49: a contact's client view, its subject the contact on this project, also for one taken off since
+      const contact = and(eq(t.auditEntries.subjectType, "project_contact"), sql`${t.auditEntries.detail}->>'projectId' = ${subject.id}`);
+      rows = (await conn.select().from(t.auditEntries).where(or(inArray(t.auditEntries.subjectId, ids), contact))).filter((r) => !PRIVATE_SUBJECTS.includes(r.subjectType));
       break;
     }
     case "braid_entry": {

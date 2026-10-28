@@ -485,6 +485,27 @@ test("Phase K, CD13. Alicia marks GQ & Academy paused, so Atlas will not flag it
   await expect(page.getByText("Paused: Atlas will not flag it as quiet")).toHaveCount(0);
 });
 
+test("CD49. Alicia turns Kyle's client view on Forager off and on again; a stale tab is refused; Kemar sees it but has no switch", async () => {
+  await viewAs("kemar", "/projects/forager");
+  await expect(page.getByText("Kyle can see the client view")).toBeVisible();
+  await expect(page.getByText(/hears only its name, customer and dates, and for each release its target date or that it is done\. Never its status, people, work or decisions\./)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Turn off Kyle's client view" })).toHaveCount(0); // only the PM switches it
+  await viewAs("alicia", "/projects/forager");
+  // She turns it off in a second tab; this one still shows Turn off
+  const other = await page.context().newPage();
+  await other.goto("/projects/forager");
+  await other.getByRole("button", { name: "Turn off Kyle's client view" }).click();
+  await expect(other.getByText("Kyle cannot see the client view")).toBeVisible();
+  await other.close();
+  // Rule 6: the stale button changes nothing and says why; the card reloads with the switch as it is
+  await page.getByRole("button", { name: "Turn off Kyle's client view" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Kyle's client view is already off." })).toBeVisible();
+  await expect(page.getByText("Kyle cannot see the client view")).toBeVisible();
+  await page.getByRole("button", { name: "Turn on Kyle's client view" }).click();
+  await expect(page.getByText("Kyle can see the client view")).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "client view" })).toHaveCount(0);
+});
+
 /** Phase K: Kemar says the store feed is still blocked, a report on the blocker on the log (M16 same as), saved from its review. */
 async function kemarSaysFeedStillBlocked() {
   await viewAs("kemar", "/?view=chat&c=new&ask=1");

@@ -9,6 +9,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import * as t from "../db/schema";
 import type { IsoDate } from "../domain/dates";
+import { projectReader } from "./project";
 
 export type ClientRelease = { name: string; date: IsoDate; done: boolean };
 
@@ -45,4 +46,32 @@ export async function clientViews(conn: Conn, viewerId: string): Promise<ClientV
     project: { id: p.id, name: p.name, aliases: p.aliases, customer: p.customer, startDate: p.startDate, endDate: p.endDate },
     releases: releases.filter((m) => m.projectId === p.id).map((m) => ({ name: m.name, date: m.targetDate, done: m.state === "done" })),
   }));
+}
+
+/** One contact on a project, as its members see it on the project's contacts (CD49). */
+export type ProjectContact = {
+  person: { id: string; name: string; title: string | null };
+  /** What ties them to the project ("contact on #151 (Sprouts IT)"). */
+  tie: string;
+  /** No role in the org, so the client view is theirs to have. Someone in the org has none. */
+  outside: boolean;
+  /** Whether they can see the client view now; never for someone in the org. */
+  clientView: boolean;
+};
+
+/**
+ * Decision CD49: the project's contacts, each with whether they can see its client view, for someone who
+ * reads the project now (P10, as getProject); anyone else gets none. Its members already see who its
+ * contacts are (CD9). The switch is the PM's, through commands/client-view.ts.
+ */
+export async function contactsOf(conn: Conn, viewerId: string, projectId: string): Promise<ProjectContact[]> {
+  const { mayRead } = await projectReader(conn, viewerId);
+  if (!mayRead(projectId)) return [];
+  const rows = await conn
+    .select({ id: t.people.id, name: t.people.name, title: t.people.title, orgRole: t.people.orgRole, tie: t.projectContacts.tie, clientView: t.projectContacts.clientView })
+    .from(t.projectContacts)
+    .innerJoin(t.people, eq(t.people.id, t.projectContacts.personId))
+    .where(eq(t.projectContacts.projectId, projectId))
+    .orderBy(t.people.name);
+  return rows.map((r) => ({ person: { id: r.id, name: r.name, title: r.title }, tie: r.tie, outside: r.orgRole === null, clientView: r.clientView && r.orgRole === null }));
 }

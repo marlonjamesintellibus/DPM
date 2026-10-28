@@ -29,6 +29,7 @@ import { ROWS as OutboundAskRows, PLANTS as OutboundAskPlants } from './rows/out
 import { ROWS as MeetingRows, PLANTS as MeetingPlants } from './rows/meeting.mjs';
 import { ROWS as CoverRequestRows, PLANTS as CoverRequestPlants } from './rows/coverRequest.mjs';
 import { ROWS as EvalCandidateRows, PLANTS as EvalCandidatePlants } from './rows/evalCandidate.mjs';
+import { ROWS as ClientViewRows, PLANTS as ClientViewPlants } from './rows/clientView.mjs';
 import OwnerAsk from './models/ownerAsk.mjs';
 import WorkForecast from './models/workForecast.mjs';
 
@@ -110,6 +111,8 @@ export const ROWS = [
   ...CoverRequestRows,
   // Phase S: M36 Eval candidate
   ...EvalCandidateRows,
+  // CD49 (W3-D11, wave 4): a contact's client view, switched by the project's PM
+  ...ClientViewRows,
   // OwnerAsk is M37, section 20, U5 and U7: a change to someone else's record, or new work, asks the person with the right
   { spec: 'OwnerAsk', setting: 'a change to a record', model: OwnerAsk({ Kind: 'change' }), expectFail: [] },
   { spec: 'OwnerAsk', setting: 'new work, for the PM', model: OwnerAsk({ Kind: 'new_work' }), expectFail: [] },
@@ -216,6 +219,8 @@ export const PLANTS = [
   ...CoverRequestPlants,
   // Phase S: M36 Eval candidate
   ...EvalCandidatePlants,
+  // CD49 (W3-D11, wave 4): a contact's client view
+  ...ClientViewPlants,
   { spec: 'OwnerAsk', setting: 'bug: the author accepts their own ask', model: OwnerAsk({ Bug: 'authorAccepts' }), expectFail: ['AppliedOnlyByTheAsked'] },
   { spec: 'OwnerAsk', setting: 'bug: accept ignores what the author saw', model: OwnerAsk({ Bug: 'blindAccept' }), expectFail: ['NeverOverwriteUnseen'] },
   { spec: 'OwnerAsk', setting: 'bug: an ask never expires', model: OwnerAsk({ Bug: 'noExpiry' }), expectFail: ['AskEnds'] },

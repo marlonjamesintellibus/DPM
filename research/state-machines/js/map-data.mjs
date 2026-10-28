@@ -170,6 +170,7 @@ export const MACHINES = [
   { area: 'customers', name: 'Customer contact', shape: 'presence', states: 'Here → Quiet after 14 days with no two-way contact', refs: 'A10.2, C12', checked: null },
   { area: 'customers', name: 'Invoice', shape: 'stage', states: 'Sent → Overdue (due date passes) → Paid', refs: 'A5.4', checked: null },
   { area: 'customers', name: 'Customer health, set', shape: 'switch', states: 'Healthy / Watch / At risk, confirmed weekly by the owner', refs: 'C12', checked: null },
+  { area: 'customers', name: 'Client view', shape: 'switch', states: "Off ↔ On, per outside contact on a project; only the project's PM flips it; a tie added back starts Off", refs: 'A7.3, CD49', checked: 'ClientView' },
   // Operations
   { area: 'operations', name: 'Incident or alert', shape: 'stage', states: 'Open → Resolved (proposed; not in Part C)', refs: 'A5.5', checked: null },
   { area: 'operations', name: 'Integration feed', shape: 'presence', states: 'Here → Quiet ("as of 9:10am") → Gone', refs: 'A10.3, P11', checked: null },
