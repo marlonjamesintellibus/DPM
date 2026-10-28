@@ -69,3 +69,13 @@ export function workingDaysBetween(from: IsoDate, to: IsoDate): number {
 export function dateInZone(instant: Date, timeZone: string): IsoDate {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(instant);
 }
+
+/** The first instant of a calendar day in a time zone (whole-hour offsets, as the org's): phase P's "since your leave began". */
+export function startOfDayIn(date: IsoDate, timeZone: string): Date {
+  const midnight = toUtcMs(date);
+  for (let h = -14; h <= 14; h++) {
+    const at = new Date(midnight + h * 3_600_000);
+    if (dateInZone(at, timeZone) === date) return at;
+  }
+  return new Date(midnight);
+}

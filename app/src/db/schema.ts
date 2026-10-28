@@ -24,6 +24,7 @@ import type { CaptureState } from "../domain/machines/capture";
 import type { ChatCommandState, CommandAbout, CommandAct, CommandInput, CommandProposal, RefusedWhy, WordAct } from "../domain/machines/chat-command";
 import type { ClarificationState, ClarifyAbout, ClarifyOption, EndedBy } from "../domain/machines/clarification";
 import type { CommitmentEnd, CommitmentLink, CommitmentState } from "../domain/machines/commitment";
+import type { CoverEnd, CoverHandover, CoverItem, CoverState } from "../domain/machines/cover-request";
 import type { ItemState, WithdrawReason } from "../domain/machines/extracted-item";
 import type { HandoverState } from "../domain/machines/handover";
 import type { InboxItemState } from "../domain/machines/inbox-item";
@@ -796,6 +797,38 @@ export const commitments = pgTable(
     updatedAt: updated(),
   },
   (t) => [index("commitments_owner_state").on(t.ownerId, t.state), index("commitments_link").on(t.linkId)],
+);
+
+// ---- Cover requests (phase P, M35) ----
+
+/**
+ * M35. Atlas's offer of cover for what someone has due while away, then their ask to one teammate for one
+ * project's items (LV8). The PICK and the answer keep their command ids, so a repeated tap changes nothing (rule 6).
+ * An accepted cover's handover is a field; once the leave is approved it is an M7 handover (handoverId).
+ */
+export const coverRequests = pgTable(
+  "cover_requests",
+  {
+    id: text("id").primaryKey(),
+    leaveId: text("leave_id").notNull().references(() => leave.id),
+    askerId: text("asker_id").notNull().references(() => people.id),
+    captureId: text("capture_id").references(() => captures.id),
+    projectId: text("project_id").references(() => projects.id),
+    toId: text("to_id").references(() => people.id),
+    items: jsonb("items").$type<CoverItem[]>().notNull().default([]),
+    declined: jsonb("declined").$type<CoverItem[]>().notNull().default([]),
+    state: text("state").$type<CoverState>().notNull(),
+    handover: text("handover").$type<CoverHandover>().notNull().default("none"),
+    handoverId: text("handover_id").references(() => handovers.id),
+    endedWhy: text("ended_why").$type<CoverEnd>(),
+    askedAt: instant("asked_at"),
+    askCommandId: text("ask_command_id"),
+    answerCommandId: text("answer_command_id"),
+    version: version(),
+    createdAt: created(),
+    updatedAt: updated(),
+  },
+  (t) => [index("cover_requests_leave_state").on(t.leaveId, t.state), index("cover_requests_to_state").on(t.toId, t.state), uniqueIndex("cover_requests_ask_command").on(t.askCommandId)],
 );
 
 // ---- Notices (D15) ----

@@ -626,6 +626,38 @@ export const EVAL_CASES: EvalCase[] = [
     forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
     ask: { topic: "updates", projectId: null },
   },
+  // Phase P: leave and catching up after it (section 18, LV5 to LV7)
+  {
+    id: "p-catch-up",
+    about: "phase P: catch me up is catch_up, read from the start of his leave",
+    text: "Catch me up",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "catch_up", projectId: null },
+  },
+  {
+    id: "p-back-what-missed",
+    about: "phase P: back from leave and asking what he missed, no leave change",
+    text: "I'm back, what did I miss?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "catch_up", projectId: null },
+  },
+  {
+    id: "p-catch-up-project",
+    about: "phase P: catching up on one project names it",
+    text: "What happened on Forager while I was off?",
+    expect: [],
+    forbid: ["upd:*", "new:*", "same:*", "resolve:*"],
+    ask: { topic: "catch_up", projectId: "forager" },
+  },
+  {
+    id: "p-off-next-week",
+    about: "phase P: leave next week is his leave (D6), read by DPM as Mon 26 to Fri 30 Oct; never a question",
+    text: "I'm off next week.",
+    expect: ["upd:leave-kemar.dates=2026-10-26/2026-10-30"],
+    forbid: ["new:*", "same:*", "promise:*"],
+  },
   {
     id: "q-mentions",
     about: "mentions: who named him",

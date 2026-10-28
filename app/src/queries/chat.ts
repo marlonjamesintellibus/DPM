@@ -1,7 +1,7 @@
 // The viewer's Today chat after an update (L18e, L18f): their latest capture and what Atlas made
 // of it, counted per project. Only the viewer's own captures are read; the counts come from the
 // same rule as the review footer, so chat and review never disagree.
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
 import * as t from "../db/schema";
@@ -15,6 +15,7 @@ import { clockTime, daysAgo, NOT_YOURS, projectReader, shortDate, todayIn, type 
 import { countItems, countsLine, readSetAside, withSetAside } from "./review";
 import { undoReply } from "./answers/undo";
 import { composedRead, standupViewOf, type StandupView } from "./standup";
+import { awayViewOf, describeCoverAsk, type AwayView } from "./cover";
 import { undoViewOf, type UndoView } from "./undo";
 
 export type ChatSummaryRow = {
@@ -66,6 +67,8 @@ export type ChatCapture = {
   standup: StandupView | null;
   /** Phase J: this message is a standup's answers, put together by DPM; the chat shows it as Atlas's, not as theirs. */
   fromStandup: boolean;
+  /** Phase P: the message said leave; what is due while away, who was asked or covers each thing, and who could be. */
+  away: AwayView | null;
 };
 
 /**
@@ -114,6 +117,8 @@ export type ChatNotice = {
   promise?: { id: string; mode: "check" | "stands"; dropFirst: boolean; today: string };
   /** Phase E: under a check-in or CM11's question once answered, what came of it ("Marked done."). */
   promiseOutcome?: string;
+  /** Phase P, M35: on the newest notice asking the viewer to cover, while it still waits on them: its items, to answer here. */
+  cover?: { id: string; items: { key: string; label: string }[] };
 };
 
 export type ChatSummary = {
@@ -149,6 +154,14 @@ async function noticesFor(conn: Conn, viewerId: string, now: Date = new Date()):
       const ended = row.state === "done" ? "Marked done." : row.state === "dropped" ? "Dropped." : null;
       if (newest.id.startsWith(`ntc-${row.id}-check_in`)) newest.promiseOutcome = ended ?? (row.state === "open" || row.state === "due" ? `Now due ${due}.` : undefined);
       else if (newest.id.startsWith(`ntc-${row.id}-stands`)) newest.promiseOutcome = ended ?? (LIVE_COMMITMENT.includes(row.state) && row.stands === "kept" ? `Kept. Due ${due}.` : undefined);
+    }
+  }
+  // Phase P, M35: the answer buttons go on the newest ask to cover that still waits on the viewer, as in their inbox
+  for (const id of [...new Set(out.filter((n) => n.subject.type === "cover_request").map((n) => n.subject.id))]) {
+    const ask = await describeCoverAsk(conn, viewerId, id, now);
+    const newest = out.find((n) => n.subject.type === "cover_request" && n.subject.id === id && n.id.startsWith(`ntc-${id}-ask-`));
+    if (ask?.state === "asked" && newest && (await conn.select({ toId: t.coverRequests.toId }).from(t.coverRequests).where(eq(t.coverRequests.id, id)))[0]?.toId === viewerId) {
+      newest.cover = { id, items: ask.items.map((i) => ({ key: i.key, label: i.label })) };
     }
   }
   return out;
@@ -260,6 +273,19 @@ export async function getThread(conn: Conn, viewerId: string, conversationId: st
  * notice about their promise belongs where they made it.
  */
 async function noticeHome(conn: Conn, viewerId: string, n: ChatNotice): Promise<string | null> {
+  // Phase P: what the person going on leave is told about their asks belongs where they last said that leave
+  if (n.subject.type === "cover_request") {
+    const [request] = await conn.select({ leaveId: t.coverRequests.leaveId }).from(t.coverRequests).where(and(eq(t.coverRequests.id, n.subject.id), eq(t.coverRequests.askerId, viewerId)));
+    if (!request) return null;
+    const [said] = await conn
+      .select({ conversationId: t.captures.conversationId })
+      .from(t.extractions)
+      .innerJoin(t.captures, eq(t.captures.id, t.extractions.captureId))
+      .where(and(eq(t.captures.authorId, viewerId), or(sql`${t.extractions.draft}->'leave'->>'leaveId' = ${request.leaveId}`, sql`'lv-' || ${t.extractions.id} = ${request.leaveId}`)))
+      .orderBy(desc(t.captures.messageAt))
+      .limit(1);
+    return said?.conversationId ?? null;
+  }
   if (n.subject.type === "commitment") {
     const [row] = await conn
       .select({ conversationId: t.captures.conversationId })
@@ -386,6 +412,7 @@ async function chatCaptureOf(conn: Conn, capture: typeof t.captures.$inferSelect
     ...(await clarificationsOf(conn, capture, commands.commands.length > 0)),
     standup: await standupViewOf(conn, capture),
     fromStandup: standupText !== null,
+    away: await awayViewOf(conn, capture, items, now),
   };
 }
 

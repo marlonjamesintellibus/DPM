@@ -102,6 +102,16 @@ describe("leave ranges", () => {
     expect(readLeaveRange("I'm out Monday", AT)).toMatchObject({ start: "2026-10-26", end: "2026-10-26", relative: true });
     expect(readLeaveRange("no dates", AT)).toBeNull();
   });
+
+  it("phase P: a whole week said with no day is its working days; this week is what is left of it", () => {
+    expect(readLeaveRange("I'm off next week", AT)).toMatchObject({ start: "2026-10-26", end: "2026-10-30", relative: true, span: { start: 8, end: 17 } });
+    expect(readLeaveRange("Mi off nex week", AT)).toMatchObject({ start: "2026-10-26", end: "2026-10-30" });
+    expect(readLeaveRange("I'm out the rest of this week", AT)).toMatchObject({ start: "2026-10-20", end: "2026-10-23" });
+    // On a weekend, this week is already over: the next one
+    expect(readLeaveRange("I'm off this week", new Date("2026-10-24T15:00:00Z"))).toMatchObject({ start: "2026-10-26", end: "2026-10-30" });
+    // A day said wins over the week around it
+    expect(readLeaveRange("I'm off next week from Tuesday the 27th", AT)).toMatchObject({ start: "2026-10-27", end: null });
+  });
 });
 
 // Section 20, U8 (question 3): a counted time is in working days; a named day keeps its date

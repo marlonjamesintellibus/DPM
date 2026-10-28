@@ -10,8 +10,10 @@
 // stale work goes on to PM and Leads, unanswered signals expire, new trouble is raised), and a standup
 // question left config.standupIdleMinutes composes what was answered, read at once, or abandons it (phase J,
 // M28), and a promise is due at the end of its day, checked in on from config.commitmentCheckInTime on a
-// working day its owner is in, and lapses unanswered (phase E, M22). Each timer is one command and safe to run
-// again; a reminder never decides anything.
+// working day its owner is in, and lapses unanswered (phase E, M22), and a request to cover someone's work while
+// they are away ends unanswered after config.coverAskHours, an offer of cover lapses when the leave starts, and an
+// ask whose person or teammate left the project is withdrawn (phase P, M35). Each timer is one command and safe to
+// run again; a reminder never decides anything.
 // DPM_TIMERS=off turns them off.
 import { atlasFromEnv } from "./atlas";
 import type { Extractor } from "./atlas/extractor";
@@ -22,6 +24,7 @@ import { runCaptureTimers } from "./commands/capture";
 import { runChatCommandTimers } from "./commands/chat-command";
 import { runClarificationTimers } from "./commands/clarification";
 import { runCommitmentTimers } from "./commands/commitment";
+import { runCoverTimers } from "./commands/cover";
 import { runEvalCandidateTimers } from "./commands/learning";
 import { runMilestoneTimers } from "./commands/milestones";
 import { runOwnerAskTimers } from "./commands/owner-ask";
@@ -42,7 +45,7 @@ export async function runTimers(opts: { db?: Db; now?: () => Date; extractor?: E
   const db = opts.db ?? (await getDb());
   const now = opts.now ?? appNow;
   const run: TimerRun = { failed: [], read: [] };
-  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runClarificationTimers, runVocabularyTimers, runSignalTimers, runCommitmentTimers]) {
+  for (const timer of [runCaptureTimers, runMilestoneTimers, runBraidReminders, runKindRequestReminders, runDependencyDue, runOwnerAskTimers, runEvalCandidateTimers, runChatCommandTimers, runClarificationTimers, runVocabularyTimers, runSignalTimers, runCommitmentTimers, runCoverTimers]) {
     // One failing timer does not stop the others; it runs again next minute
     try {
       await timer({ db, now: now() });

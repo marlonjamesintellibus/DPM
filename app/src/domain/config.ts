@@ -66,6 +66,10 @@ export const config = {
   commitmentDropAfterMoves: 3,
   commitmentCheckInTime: "09:00",
 
+  // Phase P, M35 (conversational plan, section 23): a request to cover someone's work while they are away that the
+  // teammate leaves unanswered this long ends as unanswered, and the person is told so they can ask someone else
+  coverAskHours: 24,
+
   // Phase S, M36 (conversational plan, section 23): a candidate for the eval set nobody accepts or
   // dismisses is deleted after this many days, with the person's words in it
   evalCandidateDays: 30,

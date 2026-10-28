@@ -36,7 +36,9 @@ import { CONFIDENCES } from "../domain/shared";
 // the same promise (CM5), and an update that says one was done says so (CM6); a promise to finish their own
 // record by a day stays its forecast (CM3), and someone else's promise is never theirs (CD5). The author's live
 // commitments are listed with the projects.
-export const PROMPT_VERSION = "read-wave4-e";
+// read-wave4-p, phase P: the catch_up topic ("Catch me up", "I'm back, what did I miss?"), which DPM answers from the
+// start of their leave with what was handed over (LV5 to LV7). Leave itself is read as before (D6).
+export const PROMPT_VERSION = "read-wave4-p";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
 // other (QA5); unclear has its own line under Questions (CV9).
@@ -113,6 +115,8 @@ Questions
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.
+- Catching up after time away ("Catch me up", "I'm back, what did I miss?", "What happened while I was off?") is catch_up. DPM reads from the start of their leave. "Any updates?" stays updates.
+- Saying they will be away ("I'm off next week") is their leave, an update with items, never a question.
 - What a project is, who it is for or where to start on it ("What is Forager?", "Explain Store Insights", "I'm new on GQ, where do I start?") is explain_project. "Tell me about Forager" asks how it stands: project_status.
 - projectId may come from part of a listed project's name or alias ("Insights" is Store Insights). If the words could mean two listed projects, projectId is null: DPM asks which.
 - Do not answer the question yourself. DPM answers it from the asker's own data.

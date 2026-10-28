@@ -118,11 +118,11 @@ function followed(text: string, asked: string, topic: QuestionTopic, earlier: re
 
 // Phase R: "wah bout GQ?" and "how bout Forager?" follow up too
 const FOLLOW_UP = /^(and|what about|how about|wah bout|wha bout|wat bout|what bout|how bout)\b/i;
-// Section 18: "Tell me about Forager" asks too, and phase Q's "Explain Store Insights". Phase R, JA5, JA6: so do the team's question words ("Weh
-// mi fi do today?", "Wah due dis week?", "A who a hold up di feed?", "Anyting block?"), so "Mi done wid
-// #208" and "Di access nuh come yet" stay updates.
+// Section 18: "Tell me about Forager" asks too, and phase Q's "Explain Store Insights", and phase P's "Catch me
+// up". Phase R, JA5, JA6: so do the team's question words ("Weh mi fi do today?", "Wah due dis week?", "A who a
+// hold up di feed?", "Anyting block?"), so "Mi done wid #208" and "Di access nuh come yet" stay updates.
 const ASKING =
-  /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me|explain|wah|wha|a weh|weh mi fi|a wah|a wha|a who|a wen|anyting|tell mi)\b/i;
+  /^(what|what's|whats|which|who|whom|whose|when|where|why|how|is|are|am|was|were|do|does|did|has|have|any|anything|should|shall|will|would|could|can|tell me|explain|catch me up|wah|wha|a weh|weh mi fi|a wah|a wha|a who|a wen|anyting|tell mi)\b/i;
 // Phase R: "wen", "weh", "wey", "anybody" and "unu" are not in the list. They start statements as often as
 // questions ("Wen Kyle sen di access mi wi start #151", "Weh mi lef off yesterday, mi pick it back up today",
 // "Anybody can take #152", "Unu fi check #151"), so they ask only with a "?" like any other message. A Patois

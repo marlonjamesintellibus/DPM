@@ -2,6 +2,7 @@
 // and the chat's suggestions all read these lists; queries/answers has an answer for each.
 import { atRiskWeek } from "./at-risk-week";
 import { blocked } from "./blocked";
+import { catchUp } from "./catch-up";
 import { commitments } from "./commitments";
 import { correction } from "./correction";
 import { due } from "./due";
@@ -26,7 +27,7 @@ import { whyFiled } from "./why-filed";
 import { whoFree } from "./who-free";
 
 /** In the order Atlas is shown them: the tool's topic enum and the prompt's topic list. */
-export const TOPICS = [needsMe, myWork, due, commitments, blocked, projectStatus, explainProject, updates, mentions, people, whoFree, notUpdated, myDecisions, atRiskWeek, portfolio, why, whyFiled, correction, undo, standup, smallTalk, other, unclear] as const;
+export const TOPICS = [needsMe, myWork, due, commitments, blocked, projectStatus, explainProject, updates, catchUp, mentions, people, whoFree, notUpdated, myDecisions, atRiskWeek, portfolio, why, whyFiled, correction, undo, standup, smallTalk, other, unclear] as const;
 
 /**
  * In the order the rule tries their words; the first that matches wins ("anything blocked today?" is
@@ -44,8 +45,10 @@ export const TOPICS = [needsMe, myWork, due, commitments, blocked, projectStatus
  * goes last, so "What is Forager?" is tried after every other topic's words and "I'm new here, what needs me
  * today?" stays needs me; needs me's "mi fi" leaves it "Weh mi fi start?". Phase E: commitments goes after why
  * and before people and due, so "What did I promise Kyle?" is the asker's own promises, not a person or a date.
+ * Phase P: catch_up goes after commitments and before mentions, people and updates, so "What did I miss?" and
+ * "Catch me up" read from their leave, and "What did I promise while I was away?" stays their promises.
  */
-export const BY_RULE = [smallTalk, whyFiled, why, commitments, mentions, notUpdated, myDecisions, whoFree, people, portfolio, atRiskWeek, blocked, due, updates, myWork, projectStatus, needsMe, explainProject] as const;
+export const BY_RULE = [smallTalk, whyFiled, why, commitments, catchUp, mentions, notUpdated, myDecisions, whoFree, people, portfolio, atRiskWeek, blocked, due, updates, myWork, projectStatus, needsMe, explainProject] as const;
 
 export type QuestionTopic = (typeof TOPICS)[number]["id"];
 export const QUESTION_TOPICS = TOPICS.map((t) => t.id) as readonly QuestionTopic[];

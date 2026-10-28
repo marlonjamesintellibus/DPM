@@ -61,6 +61,7 @@ import { ownsBlockedWork } from "./braid";
 import { commandsFromWords } from "./chat-command";
 import { answeredByCards, answerInWords, askIfUnsure, closeWithCapture, closeWithItem, handToReview } from "./clarification";
 import { logCandidate } from "./learning";
+import { coverOnLeave, offerIn } from "./cover";
 import { syncLeaveImpact } from "./leave";
 import { noticeReporters } from "./notices";
 import { createOwnerAsks } from "./owner-ask";
@@ -1529,6 +1530,13 @@ function saveOnce(ctx: CommandCtx, captureId: string, attempt: number): Promise<
       // Phase E, M22: the author's own promises open, move or end their commitments; no project is touched (CD3)
       await applyCommitmentsAtSave(tx, ctx.now, { id: captureId, authorId }, plan.commitments, world);
     });
+    // Phase P, M35: a saved leave, new, changed or already on record, gets Atlas's offer of cover for what is due
+    // while away (LV1: nothing due, nothing offered), and the requests it has settle on its dates now (LV3)
+    for (const item of settled.filter((i) => i.draft.target?.type === "leave" && i.draft.leave && (i.state === "applied" || i.state === "no_change"))) {
+      const leaveId = item.draft.leave!.leaveId ?? `lv-${item.id}`;
+      await offerIn(tx, ctx.now, leaveId, captureId);
+      await coverOnLeave(tx, ctx.now, leaveId);
+    }
     await syncReminder(tx, ctx.now, authorId, captureId, false, true);
     // Phase L: a set status the rules move after this save is part of it, and goes back with an undo
     const statusBefore = new Map<string, typeof t.projects.$inferSelect>();

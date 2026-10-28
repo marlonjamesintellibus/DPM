@@ -9,6 +9,7 @@ import * as t from "../db/schema";
 import { applyLeaveEvent, leaveAdmins, leaveImpactOwners, leaveWaiting } from "../domain/machines/leave";
 import { impactIn } from "../queries/leave";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, type CommandCtx } from "./core";
+import { coverOnLeave } from "./cover";
 import { syncInbox } from "./evaluate";
 
 /** One inbox cause per leave and project: "leave_impact:<leave id>@<project id>". */
@@ -77,6 +78,9 @@ async function decide(ctx: CommandCtx, leaveId: string, type: "APPROVE" | "DECLI
       detail: { start: r.record.start, end: r.record.end, ...(before.change ? { change: before.change } : {}) },
     });
     await syncLeaveImpact(tx, ctx.now, leaveId, { actorId: ctx.actorId });
+    // Phase P, M35: a declined or withdrawn leave ends its cover requests and cancels their handovers (LV4, the model's
+    // declineCancels); an approved one starts the handovers that waited (LV9); new dates leave what is no longer due (LV3)
+    await coverOnLeave(tx, ctx.now, leaveId);
     return r.record;
   });
 }

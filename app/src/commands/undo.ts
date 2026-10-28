@@ -20,6 +20,7 @@ import { applyWorkItem } from "../domain/machines/work-item";
 import { lastSave, liveAsksOfSave, readReceipt, RECEIPT_ACTION, type StoredReceipt } from "../queries/undo";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, StaleVersion, todayOf, type CommandCtx } from "./core";
 import { evaluateProjects, type Evaluation } from "./evaluate";
+import { coverOnLeave } from "./cover";
 import { syncLeaveImpact } from "./leave";
 import { notice } from "./notices";
 import { withdrawAsksOfSave } from "./owner-ask";
@@ -311,6 +312,8 @@ async function runArrows(tx: Tx, now: Date, actorId: string, receipt: StoredRece
         expectOne(rows, `leave ${r.id}`);
         await undoAudit(r, "leave", "leave", m.from, m.to);
         await syncLeaveImpact(tx, now, r.id, { actorId });
+        // Phase P: a request withdrawn by the undo ends its cover requests; dates put back leave what is no longer due
+        await coverOnLeave(tx, now, r.id);
         break;
       }
       case "braid_entry":

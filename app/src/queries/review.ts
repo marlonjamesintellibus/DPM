@@ -349,7 +349,9 @@ function promiseChange(item: ExtractedItem, c: CommitmentDraft, reader: { mayRea
   if (c.act === "done") return item.state === "no_change" ? "Already done" : "Mark your promise done";
   const day = item.value ?? c.dueOn ?? "";
   if (item.state === "no_change") return c.commitmentId && c.seenDue === day ? `Already due ${dayDate(day)}` : `Already done${about}`;
-  if (c.commitmentId && c.seenDue) return `Moves your promise from ${dayDate(c.seenDue)} to ${dayDate(day)}${about}`;
+  // Phase P, LV10: DPM moved it, so the card says why that day
+  const back = c.dueFrom === "leave" && day === c.dueOn ? ", your first working day back" : "";
+  if (c.commitmentId && c.seenDue) return `Moves your promise from ${dayDate(c.seenDue)} to ${dayDate(day)}${back}${about}`;
   const how =
     item.state === "edited" || day !== c.dueOn
       ? ""

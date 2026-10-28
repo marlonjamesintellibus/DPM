@@ -5,6 +5,7 @@
 import { config } from "../config";
 import { OUTCOME_FROM, OUTCOMES, type BraidEntryState, type ResolveOutcome } from "../machines/braid-entry";
 import { fitLeave, type LeaveFit } from "../machines/leave";
+import { leaveMoves } from "../away";
 import { namesPerson } from "../names";
 import { BRAID_KINDS, BRAID_RIGHTS, PROJECT_ROLES, mayReport as rightsMayReport, type BraidKind, type ProjectRole } from "../rights";
 import { CONFIDENCES, lowerTo, NEW_WORK_STATES, type CommitmentDraft, type Confidence, type ExtractedItemDraft, type ItemKind, type Mark, type MatchState, type NewWorkState, type RoutingState, type SourceSpan } from "../shared";
@@ -1064,5 +1065,7 @@ export function runChecks(proposals: readonly RawProposal[], ctx: CheckContext, 
   // S8, E7: past the cap, Atlas says "I found more; review these first"
   const limit = config.maxProposalsPerCapture;
   for (const w of kept.slice(limit)) for (const proposal of w.all) dropped.push({ proposal, check: "cap", reason: "I found more; review these first" });
-  return { items: kept.slice(0, limit).map((w, i) => toDraft(w, i + 1, s)), dropped };
+  const items = kept.slice(0, limit).map((w, i) => toDraft(w, i + 1, s));
+  // Phase P, LV10: a promise due while the author is away is proposed to move to their first working day back
+  return { items: [...items, ...leaveMoves(items, ctx)], dropped };
 }

@@ -96,6 +96,7 @@ export type ExtractedItemDraft = {
  * Phase E. A promise is private to its author (CD3), so its item is personal ("You"), whatever it names.
  * dueOn: the day it is due by, read by the server; the item's value, which the author corrects on the card (CM2).
  * dueFrom: said (the words name a day), vague ("next week", read as a day, CM2) or none (CD4: the next working day).
+ * Phase P, LV10: leave, a live promise due while the author is away, moved by DPM to their first working day back.
  * link: the record or BRAID entry the words name, one the author can open (CM9); label as the card shows it.
  * commitmentId: CM5, the live commitment the same promise matches (its date moves); CM6, the one said to be done.
  */
@@ -103,7 +104,7 @@ export type CommitmentDraft = {
   act: "promise" | "done";
   what: string;
   dueOn: IsoDate | null;
-  dueFrom: "said" | "vague" | "none" | null;
+  dueFrom: "said" | "vague" | "none" | "leave" | null;
   dueWords: string | null;
   link: { type: "work_item" | "milestone" | "braid_entry"; id: string; projectId: string; label: string } | null;
   commitmentId: string | null;

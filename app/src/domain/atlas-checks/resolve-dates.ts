@@ -262,10 +262,26 @@ export type LeaveRange = {
   span: { start: number; end: number };
 };
 
-/** Leave dates: "from X" (start only), "X to Y", or a single day "X". */
+// Phase P: a whole week said with no day ("I'm off next week") is its working days, Monday to Friday; this week is
+// what is left of it. Relative, so the author checks the dates on the card (E13). Phase R: "nex week", "dis week"
+const WEEKS: { re: RegExp; range: (today: IsoDate) => { start: IsoDate; end: IsoDate } }[] = [
+  { re: /\b(?:all\s+(?:of\s+)?)?(?:next|nex)\s+week\b/i, range: (d) => ({ start: addDays(fridayOf(d, 1), -4), end: fridayOf(d, 1) }) },
+  {
+    re: /\b(?:the\s+)?(?:rest\s+of\s+(?:the\s+|this\s+)?week|(?:this|dis)\s+week)\b/i,
+    range: (d) => (isWorkingDay(d) ? { start: d, end: fridayOf(d) } : { start: addDays(fridayOf(d, 1), -4), end: fridayOf(d, 1) }),
+  },
+];
+
+/** Leave dates: "from X" (start only), "X to Y", or a single day "X"; with no day said, a whole week ("next week"). */
 export function readLeaveRange(text: string, messageAt: Date, timeZone: string = config.timeZone): LeaveRange | null {
   const dates = saidDates(text, messageAt, timeZone);
-  if (!dates.length) return null;
+  if (!dates.length) {
+    for (const { re, range } of WEEKS) {
+      const m = re.exec(text);
+      if (m) return { ...range(messageDay(messageAt, timeZone)), relative: true, weekdayMismatch: false, span: { start: m.index, end: m.index + m[0].length } };
+    }
+    return null;
+  }
   const [first, second] = dates;
   const flags = (ds: ResolvedDate[]) => ({
     relative: ds.some((d) => d.relative),

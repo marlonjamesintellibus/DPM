@@ -20,7 +20,7 @@
 //
 // Fixes are the smallest changes to the plan as written that the check showed were needed (none by
 // default, which is the plan as written):
-//   suggestedWayOut       suggested --TIMER (the leave starts), or the leave is cancelled--> withdrawn
+//   suggestedWayOut       suggested --TIMER (the leave starts), the leave is cancelled, or DISMISS (Kemar)--> withdrawn
 //   declineCancels        the admin declining the leave acts as the leave cancelled
 //   leaveProjectWithdraws Kemar or the teammate leaving the project withdraws an open request (as CH10, E77)
 //   oneCoverPerItem       PICK is refused for an item already in an open or accepted request
@@ -201,6 +201,18 @@ export default function CoverRequest({ Fixes = [], Bug = null } = {}) {
         step(s, r) {
           if (!fix('suggestedWayOut') || Bug === 'noOfferLapse' || s.req[r].st !== 'suggested') return [];
           const t = t0(s, 'timer');
+          t.req[r].st = 'withdrawn';
+          return [t];
+        },
+      },
+      {
+        // suggestedWayOut, as built (phase P): Kemar says no cover is needed, and the offer ends with nothing asked.
+        // Atlas offers again only once something is free again (a decline, no answer, new dates).
+        name: 'Dismiss',
+        params: REQS.map((r) => [r]),
+        step(s, r) {
+          if (!fix('suggestedWayOut') || s.req[r].st !== 'suggested') return [];
+          const t = t0(s, 'kemar');
           t.req[r].st = 'withdrawn';
           return [t];
         },
