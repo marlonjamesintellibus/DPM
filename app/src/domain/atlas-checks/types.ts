@@ -3,6 +3,7 @@
 // what the caller reads from the database for the author: only projects they can file into.
 import type { IsoDate } from "../dates";
 import type { CommandAct, CommandSubject } from "../machines/chat-command";
+import type { QuestionFits } from "../machines/clarification";
 import type { LeaveState } from "../machines/leave";
 import type { BraidKind, ProjectRole } from "../rights";
 import type { Confidence, ExtractedItemDraft, ItemKind, SourceSpan, TargetType } from "../shared";
@@ -153,10 +154,11 @@ export type EarlierTurn = {
   text: string;
   asked: { topic: string; projectId: string | null } | null;
   /**
-   * CD50: the name of the project or person chosen by a button when Atlas asked which one the question meant
-   * (M21), while it still fits what the author reads; a follow-up reads it in place of the words.
+   * CD50: the project or person chosen when Atlas asked which one this question meant (M21), by a button or
+   * typed ("the second one"): by id, so neither the words nor a label two people share decides it again (CV8).
+   * The answer that reads it checks it still fits what the author reads (P10); nothing here names it.
    */
-  chosen?: string;
+  chosen?: { fits: QuestionFits; id: string };
   /** Items of an update not saved yet: what a later message may replace (CV10). */
   openItems: readonly { id: string; summary: string }[];
 };

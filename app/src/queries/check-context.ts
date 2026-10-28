@@ -10,7 +10,6 @@ import { LIVE_LEAVE } from "../domain/machines/leave";
 import { candidateProjects } from "../domain/machines/membership";
 import type { AnswerCard } from "../domain/question";
 import type { Confidence } from "../domain/shared";
-import { optionsShown } from "./clarification";
 import { projectReader } from "./project";
 import { composedRead } from "./standup";
 
@@ -135,7 +134,6 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
     .filter((r) => r.messageAt < c.messageAt || (r.messageAt.getTime() === c.messageAt.getTime() && r.receivedAt < c.receivedAt))
     .sort((a, b) => a.messageAt.getTime() - b.messageAt.getTime() || a.receivedAt.getTime() - b.receivedAt.getTime())
     .slice(-EARLIER_SHOWN);
-  const chosen = await chosenNames(conn, c.authorId, rows.map((r) => r.id));
   const turns: EarlierTurn[] = [];
   for (const r of rows) {
     const unsaved = r.state === "proposed" || r.state === "reviewing";
@@ -146,7 +144,9 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
       // Phase J, P10: a standup's answers without the questions about a project the author has since left
       text: (await composedRead(conn, r.id))?.shown.text ?? r.text,
       asked: r.question ? { topic: r.question.topic, projectId: r.question.projectId } : null,
-      ...(chosen.has(r.id) ? { chosen: chosen.get(r.id) } : {}),
+      // CD50, CV8: the one chosen when Atlas asked which, kept with the message that holds its answer: the
+      // question's own for a button, the reply's for typed words ("the second one", CL2)
+      ...(r.question?.chosen ? { chosen: r.question.chosen } : {}),
       openItems: items.map((i) => ({
         id: i.id,
         summary: i.draft.target
@@ -156,26 +156,6 @@ export async function loadEarlierTurns(conn: Conn, captureId: string): Promise<E
     });
   }
   return turns;
-}
-
-/**
- * CD50: for each of these questions answered by a button when Atlas asked which one they meant (M21), the
- * name chosen, while it is still one the author may ask about (P10). A typed answer is its own turn, whose
- * words already say the name.
- */
-async function chosenNames(conn: Conn, authorId: string, captureIds: readonly string[]): Promise<Map<string, string>> {
-  const rows = captureIds.length
-    ? await conn
-        .select()
-        .from(t.clarifications)
-        .where(and(eq(t.clarifications.authorId, authorId), eq(t.clarifications.about, "question"), eq(t.clarifications.state, "resolved"), inArray(t.clarifications.captureId, [...captureIds])))
-    : [];
-  const names = new Map<string, string>();
-  for (const r of rows.filter((x) => !x.answeredBy)) {
-    const label = (await optionsShown(conn, authorId, { ...r, question: r.question ?? null })).find((o) => o.id === r.chosen)?.label;
-    if (label) names.set(r.captureId, label);
-  }
-  return names;
 }
 
 /**

@@ -38,7 +38,7 @@ import { chosenQuestion, type AskedQuestion, type Which } from "../domain/questi
 import { mayReport } from "../domain/rights";
 import { topicById } from "../domain/topics";
 import { answerFor, fitsReadBy } from "../queries/answer";
-import { optionsShown } from "../queries/clarification";
+import { chosenLabel, optionsShown } from "../queries/clarification";
 import { projectReader } from "../queries/project";
 import { retargetItemIn, routeItemIn } from "./capture";
 import { proposeLine, type WhichLines } from "./chat-command";
@@ -98,7 +98,11 @@ function auditMove(tx: Tx, now: Date, r: ClarificationRecord, outcome: Moved<Cla
   });
 }
 
-const messageOf = (r: ClarificationRecord) => clarifyOutcomeText(r, r.options.find((o) => o.id === r.chosen)?.label ?? null) ?? "";
+/**
+ * How it ended, naming the one chosen only while its author may still see it (CL5, P10), as the chat shows
+ * it: a second tap after they left its project, or stopped sharing one with that person, says "Got it." alone.
+ */
+const messageOf = async (tx: Tx, r: ClarificationRecord) => clarifyOutcomeText(r, await chosenLabel(tx, r.authorId, r)) ?? "";
 
 /** The words an item came from, as the author said them. */
 const quoteOf = (text: string, item: ExtractedItem) => item.draft.spans.map((s) => text.slice(s.start, s.end)).join(" … ");
@@ -251,11 +255,11 @@ async function answerChosen(tx: Tx, now: Date, r: ClarificationRecord, captureId
 /** ANSWER: a button, or typed words that fit one option. A second answer changes nothing and says how it ended. */
 async function answerIn(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, row: Row, option: string, answeredBy: string | null, words: Wording = {}): Promise<ClarifyRun> {
   const seen = recordOf(row);
-  if (seen.state !== "asked") return { record: seen, message: messageOf(seen), answeredIn: null };
+  if (seen.state !== "asked") return { record: seen, message: await messageOf(tx, seen), answeredIn: null };
   // A question past its time ends when touched, as the timer would a minute later
   if (clarificationExpired(seen, ctx.now)) {
     const r = await expire(tx, ctx.now, row);
-    return { record: r, message: messageOf(r), answeredIn: null };
+    return { record: r, message: await messageOf(tx, r), answeredIn: null };
   }
   if (!seen.options.some((o) => o.id === option)) throw new CommandRefused("that is not one of the options");
   let allowed = true;
@@ -270,7 +274,7 @@ async function answerIn(tx: Tx, ctx: Pick<CommandCtx, "now" | "actorId">, row: R
   await persist(tx, ctx.now, row, r.record);
   await auditMove(tx, ctx.now, r.record, r.outcome, { actorType: "person", actorId: ctx.actorId });
   const answeredIn = r.record.about === "question" ? await answerChosen(tx, ctx.now, r.record, answeredBy ?? r.record.captureId, words) : null;
-  return { record: r.record, message: messageOf(r.record), answeredIn };
+  return { record: r.record, message: await messageOf(tx, r.record), answeredIn };
 }
 
 /** The author's own question; anyone else's reads as not found (P10). */

@@ -10,7 +10,7 @@
 import { eq, inArray } from "drizzle-orm";
 import type { Conn } from "../../db/conn";
 import * as t from "../../db/schema";
-import { followUpRest, type AskedQuestion } from "../../domain/question";
+import { chosenAt, followUpRest, type AskedQuestion } from "../../domain/question";
 import { asThing, ownedMatches, ownedPhrase, peopleAsked, whoIsMeant, type Meant, type Nameable } from "../../domain/topics/people";
 import { leaveShownTo, ownedOn, personSeenBy, sharedPeople, type PersonSeen, type SharedPerson } from "../people";
 import { readableProjects, todayIn, type PersonRef } from "../project";
@@ -51,9 +51,13 @@ export async function placesOf(conn: Conn, viewerId: string): Promise<string[]> 
  * CV8: who the words ask about, newest first. Words that name someone decide ("and Jodian?"); words that
  * only follow up and say where ("and on GQ?", "and GQ?") keep the one asked about before; any other words
  * mean whoever they name, so "and Andre?" and "and Zed?" mean nobody, never the person before (PP1).
+ * CD50: a question Atlas asked who about means the one chosen there, by id, while the asker still shares a
+ * project with them (P10); someone they no longer do is nobody, never the words read again.
  */
-function whoIsAsked(words: readonly string[], shared: readonly Nameable[], places: readonly string[]): Meant {
-  for (const w of words) {
+function whoIsAsked(question: AskedQuestion, shared: readonly Nameable[], places: readonly string[]): Meant {
+  for (const [at, w] of wordsOf(question).entries()) {
+    const chosen = chosenAt(question, "person", at);
+    if (chosen) return shared.some((p) => p.id === chosen) ? { kind: "one", id: chosen, also: [] } : { kind: "nobody" };
     const meant = whoIsMeant(w, shared);
     if (meant.kind !== "nobody") return meant;
     const rest = followUpRest(w, places);
@@ -63,15 +67,19 @@ function whoIsAsked(words: readonly string[], shared: readonly Nameable[], place
 }
 
 /**
- * CD50: a button per person, by their name; two with the same full name also say the projects the asker
- * shares with each, so the buttons differ, and only those projects (P10).
+ * CD50: the buttons of a question that asked who, as the asker may see them now: only the people they still
+ * share a project with, by name; two shown with the same full name also say the projects the asker shares
+ * with each now. Built each time they are shown, never kept, so a project the asker has left since is never
+ * named (P10, PP2).
  */
-async function whoLabels(conn: Conn, fits: readonly SharedPerson[]): Promise<{ id: string; label: string }[]> {
-  const twice = fits.filter((p) => fits.filter((q) => q.name === p.name).length > 1);
-  const ids = [...new Set(twice.flatMap((p) => p.projectIds))];
+export async function whoShown<O extends { id: string; label: string }>(conn: Conn, viewerId: string, options: readonly O[]): Promise<O[]> {
+  const shared = await sharedPeople(conn, viewerId);
+  const fits = options.flatMap((o) => shared.filter((p) => p.id === o.id).map((p) => ({ o, p })));
+  const twice = (p: SharedPerson) => fits.filter((x) => x.p.name === p.name).length > 1;
+  const ids = [...new Set(fits.filter((x) => twice(x.p)).flatMap((x) => x.p.projectIds))];
   const names = ids.length ? await conn.select({ id: t.projects.id, name: t.projects.name }).from(t.projects).where(inArray(t.projects.id, ids)) : [];
   const on = (p: SharedPerson) => p.projectIds.map((id) => names.find((n) => n.id === id)?.name ?? id).join(" and ");
-  return fits.map((p) => ({ id: p.id, label: twice.includes(p) ? `${p.name} (${on(p)})` : p.name }));
+  return fits.map(({ o, p }) => ({ ...o, label: twice(p) ? `${p.name} (${on(p)})` : p.name }));
 }
 
 /**
@@ -80,17 +88,17 @@ async function whoLabels(conn: Conn, fits: readonly SharedPerson[]): Promise<{ i
  */
 export async function aboutSomeone(conn: Conn, viewerId: string, question: AskedQuestion, now: Date, lead = ""): Promise<Body | null> {
   const shared = await sharedPeople(conn, viewerId);
-  // CD50: the person chosen when M21 asked who, while the asker still shares a project with them (P10)
-  const chosen = question.chosen?.fits === "person" ? question.chosen.id : null;
-  const meant: Meant = chosen ? (shared.some((p) => p.id === chosen) ? { kind: "one", id: chosen, also: [] } : { kind: "nobody" }) : whoIsAsked(wordsOf(question), shared, await placesOf(conn, viewerId));
+  // CD50: the person chosen when M21 asked who, here or in a question this one follows (whoIsAsked)
+  const meant = whoIsAsked(question, shared, await placesOf(conn, viewerId));
   if (meant.kind === "nobody") return null;
   const nameOf = (id: string) => shared.find((p) => p.id === id)!.name;
   if (meant.kind === "which") {
     // PP2: only people the asker shares a project with are listed. M21 asks who in their own chat, with a
-    // button each (CD50); elsewhere a reply by full name as a follow-up ("and Kemar Smith?") is read as one
+    // button each (CD50), kept by name only: whoShown tells two of one name apart when shown; elsewhere a
+    // reply by full name as a follow-up ("and Kemar Smith?") is read as one
     const names = meant.ids.map(nameOf);
     const body = none(`${lead}Did you mean ${either(names, "or")}? Ask again with their full name, for example "and ${names.at(-1)}?"`);
-    return { ...body, which: { fits: "person", options: await whoLabels(conn, meant.ids.flatMap((id) => shared.find((p) => p.id === id) ?? [])) } };
+    return { ...body, which: { fits: "person", options: meant.ids.map((id) => ({ id, label: nameOf(id) })) } };
   }
   // PP6: one person at a time, the first named other than the asker; the answer says who was left out
   const named = [meant.id, ...meant.also];

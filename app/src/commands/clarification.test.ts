@@ -14,6 +14,7 @@ import * as t from "../db/schema";
 import type { RawCommand } from "../domain/acting";
 import type { RawProposal } from "../domain/atlas-checks/types";
 import { optionGoneText } from "../domain/machines/clarification";
+import { NOBODY } from "../queries/answers/people";
 import { NOT_WHY } from "../queries/answers/why";
 import { getThread } from "../queries/chat";
 import { loadCheckContext } from "../queries/check-context";
@@ -533,12 +534,41 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
     expect((await turn("alicia", conversationId, captureId)).clarification?.question).toBe("Who do you mean: Kemar Brown or Kemar Lee?");
     // Andre shares no project with Kemar Lee: his question is answered at once
     expect((await say("andre", "What is Kemar working on?", 1)).read).toMatchObject({ answer: { text: expect.stringMatching(/^Kemar Brown has /) } });
+    // The other story steps that list GQ's people: Phase N's "Who hasn't updated today?" names him on GQ only;
+    // its Forager sentence, which the story checks, is as before
+    const leads = (await say("alicia", "Who hasn't updated today?", 2)).read;
+    expect(leads).toMatchObject({ answer: { text: expect.stringContaining("no update saved today on Forager 2.0: Jodian Taylor and Kemar Brown.") } });
+    expect(leads).toMatchObject({ answer: { text: expect.stringContaining("no update saved today on GQ & Academy: Kemar Brown and Kemar Lee.") } });
   });
 
   it("PP2: two with the same full name are told apart by the projects she shares with each, and only those", async () => {
     await addPerson("kemar-b2", "Kemar Brown", "gq");
-    const { captureId } = await say("alicia", "What is Kemar Brown working on?");
-    expect((await question(captureId)).options.map((o) => o.label)).toEqual(["Kemar Brown (Forager 2.0 and GQ & Academy)", "Kemar Brown (GQ & Academy)"]);
+    const { captureId, conversationId } = await say("alicia", "What is Kemar Brown working on?");
+    // Kept by name only; the projects are said when shown (P10)
+    expect((await question(captureId)).options.map((o) => o.label)).toEqual(["Kemar Brown", "Kemar Brown"]);
+    expect((await turn("alicia", conversationId, captureId)).clarification).toMatchObject({
+      question: "Who do you mean: Kemar Brown (Forager 2.0 and GQ & Academy) or Kemar Brown (GQ & Academy)?",
+      options: [
+        { id: "kemar", label: "Kemar Brown (Forager 2.0 and GQ & Academy)" },
+        { id: "kemar-b2", label: "Kemar Brown (GQ & Academy)" },
+      ],
+    });
+    // Typed, the project tells them apart too
+    await say("alicia", "the Forager one", 1, conversationId, noModel);
+    expect(await question(captureId)).toMatchObject({ state: "resolved", chosen: "kemar" });
+  });
+
+  it("P10: a project she has left since she was asked is never named, in the question, the tap or a follow-up", async () => {
+    await addPerson("kemar-b2", "Kemar Brown", "gq");
+    const { captureId, conversationId } = await say("alicia", "What is Kemar Brown working on?");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "gq"), eq(t.projectMemberships.personId, "alicia")));
+    const shown = (await turn("alicia", conversationId, captureId, 1)).clarification!;
+    expect([shown.question, shown.options]).toEqual(["Who do you mean: Kemar Brown?", [{ id: "kemar", label: "Kemar Brown" }]]);
+    expect((await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar")).message).toBe("Got it: Kemar Brown.");
+    expect((await turn("alicia", conversationId, captureId, 1)).clarification?.outcome).toBe("Got it: Kemar Brown.");
+    const next = await say("alicia", "and on Forager?", 2, conversationId);
+    expect((await capture(next.captureId)).answer!.text).toMatch(/^Kemar Brown has /);
+    for (const c of [captureId, next.captureId]) expect(JSON.stringify(await capture(c))).not.toContain("GQ");
   });
 
   it("CV8: a follow-up after the tap keeps the one chosen ('and on GQ?' is about Kemar Brown)", async () => {
@@ -547,6 +577,48 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
     const next = await say("alicia", "and on GQ?", 2, conversationId);
     expect((await capture(next.captureId)).answer!.text).toMatch(/^Kemar Brown has nothing open on GQ & Academy\./);
     expect(await question(next.captureId)).toBeUndefined();
+  });
+
+  it("CV8, CL2: a follow-up after a typed answer that does not say the name keeps the one chosen ('the second one')", async () => {
+    const first = await twoKemars();
+    await say("alicia", "the second one", 1, first.conversationId, noModel);
+    expect(await question(first.captureId)).toMatchObject({ state: "resolved", chosen: "kemar-s" });
+    const next = await say("alicia", "and on GQ?", 2, first.conversationId);
+    expect((await capture(next.captureId)).answer!.text).toBe("Kemar Smith is not on GQ & Academy.");
+    // Newer words that name someone still decide: "and Kemar Brown?" is about him
+    const other = await say("alicia", "and Kemar Brown?", 3, first.conversationId);
+    expect((await capture(other.captureId)).answer!.text).toMatch(/^Kemar Brown has /);
+  });
+
+  it("CV8, PP2: a follow-up after choosing one of two with the same full name is about that one, never asked again", async () => {
+    await addPerson("kemar-b2", "Kemar Brown", "gq");
+    const { captureId, conversationId } = await say("alicia", "What is Kemar Brown working on?");
+    await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar-b2");
+    const next = await say("alicia", "and on GQ?", 2, conversationId);
+    expect(await question(next.captureId)).toBeUndefined();
+    expect((await capture(next.captureId)).answer!.text).toBe("Kemar Brown has nothing open on GQ & Academy.");
+    // Kemar Brown on Forager has work there; the one chosen has none
+    const forager = await say("alicia", "and on Forager?", 3, conversationId);
+    expect((await capture(forager.captureId)).answer!.text).toBe("Kemar Brown is not on Forager 2.0.");
+  });
+
+  it("CV8, P10: a follow-up about someone chosen whom she no longer shares a project with gets the words for nobody", async () => {
+    const { captureId, conversationId } = await twoKemars();
+    await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar-s");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "kemar-s")));
+    const next = await say("alicia", "and on GQ?", 2, conversationId);
+    expect((await capture(next.captureId)).answer!.text).toBe(NOBODY);
+    expect(await question(next.captureId)).toBeUndefined();
+  });
+
+  it("EX5, CV8: a follow-up after choosing a project is about that project", async () => {
+    await insightsTwice();
+    const { captureId, conversationId } = await say("kemar", "Explain Insights");
+    await say("kemar", "Sprouts", 1, conversationId, noModel);
+    expect(await question(captureId)).toMatchObject({ state: "resolved", chosen: "insights" });
+    const next = await say("kemar", "and where do I start?", 2, conversationId);
+    expect(await question(next.captureId)).toBeUndefined();
+    expect((await capture(next.captureId)).answer!.text).toMatch(/^Store Insights is for Sprouts/);
   });
 
   it("EX5: 'Explain Insights' with two of his projects fitting asks which project; choosing Store Insights explains it", async () => {
@@ -617,6 +689,61 @@ describe("a question whose words fit 2 or 3 of the asker's projects or people (C
     await expect(answerClarification(as("kemar", 1), `clr-${captureId}`, "insights")).rejects.toMatchObject({ reason: optionGoneText("question") });
     await answerClarification(as("kemar", 2), `clr-${captureId}`, "forager");
     expect((await capture(captureId)).answer!.text).toMatch(/^Forager 2\.0 is for Sprouts/);
+  });
+
+  it("CL5, P10: a second tap after she stops sharing a project with the one chosen says how it ended without naming him, as the chat does", async () => {
+    const { captureId, conversationId } = await twoKemars();
+    expect((await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar-s")).message).toBe("Got it: Kemar Smith.");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "kemar-s")));
+    expect((await answerClarification(as("alicia", 2), `clr-${captureId}`, "kemar-s")).message).toBe("Got it.");
+    expect((await turn("alicia", conversationId, captureId, 2)).clarification?.outcome).toBe("Got it.");
+  });
+
+  it("EX5: a typed answer by another name of the project ('Sprouts', Store Insights' alias) chooses it", async () => {
+    await insightsTwice();
+    const first = await say("kemar", "Explain Insights");
+    const reply = await say("kemar", "Sprouts", 1, first.conversationId, noModel);
+    expect(await question(first.captureId)).toMatchObject({ state: "resolved", chosen: "insights", answeredBy: reply.captureId });
+    expect((await capture(reply.captureId)).answer!.text).toMatch(/^Store Insights is for Sprouts/);
+  });
+
+  it("ProjectCap: words that fit 4 or more people are not asked through M21; the answer's own words ask for the name", async () => {
+    for (const [id, name] of [["kemar-s", "Kemar Smith"], ["kemar-l", "Kemar Lee"], ["kemar-w", "Kemar White"]]) await addPerson(id, name, "forager");
+    const { captureId, conversationId } = await say("alicia", "What is Kemar working on?");
+    expect(await question(captureId)).toBeUndefined();
+    expect((await capture(captureId)).answer!.text).toBe('Did you mean Kemar Brown, Kemar Lee, Kemar Smith or Kemar White? Ask again with their full name, for example "and Kemar White?"');
+    expect((await turn("alicia", conversationId, captureId)).clarification).toBeNull();
+  });
+
+  it("CL6: a message with an update and a question that asks which closes its question when the update is discarded, or expires", async () => {
+    await insightsTwice();
+    const both = (quote: string): Extractor => ({
+      name: "fake",
+      extract: async () => ({ proposals: [sure("wi-152", "done", quote)], question: { asked: "Explain Insights", topic: "explain_project", projectId: null }, commands: [], malformed: [], model: "fake", usage: null }),
+    });
+    const a = await say("kemar", "#152 is done. Explain Insights", 0, null, both("#152 is done"));
+    expect(await capture(a.captureId)).toMatchObject({ state: "proposed", answer: null });
+    expect(await question(a.captureId)).toMatchObject({ about: "question", state: "asked" });
+    await discardCapture(as("kemar", 1), a.captureId);
+    expect(await question(a.captureId)).toMatchObject({ state: "closed", endedBy: "capture" });
+    await expect(answerClarification(as("kemar", 2), `clr-${a.captureId}`, "insights")).resolves.toMatchObject({ answeredIn: null });
+    expect((await capture(a.captureId)).answer).toBeNull();
+
+    const b = await say("kemar", "#152 is done now. Explain Insights", 2, null, both("#152 is done now"));
+    expect(await question(b.captureId)).toMatchObject({ about: "question", state: "asked" });
+    // The review timers remind, then expire it after 7 days; the question's own timer has not run
+    await runCaptureTimers({ db, now: at(60 * 24 * 3) });
+    await runCaptureTimers({ db, now: at(60 * 24 * 8) });
+    expect((await capture(b.captureId)).state).toBe("expired");
+    expect(await question(b.captureId)).toMatchObject({ state: "closed", endedBy: "capture" });
+  });
+
+  it("CL7: a voice question that fits two people is asked about in text, after its transcript", async () => {
+    await addPerson("kemar-s", "Kemar Smith", "forager");
+    const { captureId, conversationId } = await say("alicia", "What is Kemar working on?", 0, null, createFixtureExtractor(), "voice");
+    expect((await turn("alicia", conversationId, captureId)).clarification).toMatchObject({ about: "question", question: "Who do you mean: Kemar Brown or Kemar Smith?" });
+    await answerClarification(as("alicia", 1), `clr-${captureId}`, "kemar");
+    expect((await capture(captureId)).answer!.text).toMatch(/^Kemar Brown has /);
   });
 
   it("CD23: one question per message: an unsure item in the same message is asked about, and the question's answer says the names", async () => {

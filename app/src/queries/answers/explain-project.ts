@@ -10,7 +10,7 @@
 import { inArray } from "drizzle-orm";
 import * as t from "../../db/schema";
 import type { IsoDate } from "../../domain/dates";
-import type { AnswerCard, AskedQuestion, Which } from "../../domain/question";
+import { chosenAt, type AnswerCard, type AskedQuestion, type Which } from "../../domain/question";
 import { namesSomething, projectFits } from "../../domain/topics/explain-project";
 import { clientViews, type ClientView } from "../client-view";
 import { firstName, getProject, readableProjects, type ProjectBraidEntry, type ProjectMilestone, type ProjectView, type ProjectWorkItem } from "../project";
@@ -42,19 +42,27 @@ function runs(p: { startDate: IsoDate | null; endDate: IsoDate | null }): string
 const forWhom = (p: { customer: string | null }) => (p.customer ? `for ${p.customer}` : "an internal project");
 
 /**
- * EX5: the project the words mean, among the asker's own. A project Atlas named and the asker reads wins;
- * otherwise the words, then those of the questions a follow-up follows ("and where do I start?").
+ * EX5: the project the words mean, among the asker's own. The one chosen when M21 asked which wins, then a
+ * project Atlas named and the asker reads; otherwise the words, then those of the questions a follow-up
+ * follows ("and where do I start?"), where a question Atlas asked which about means the one chosen (CD50).
  */
 type Picked<P> = { project: P } | { which: P[] } | { notFound: true } | { choose: P[] };
 
-function pickProject<P extends { id: string; name: string; aliases: readonly string[] }>(asked: string, follows: readonly string[], projectId: string | null, projects: readonly P[]): Picked<P> {
-  const named = projects.find((p) => p.id === projectId);
+function pickProject<P extends { id: string; name: string; aliases: readonly string[] }>(question: AskedQuestion, projects: readonly P[]): Picked<P> {
+  const { asked, follows = [], projectId } = question;
+  const named = projects.find((p) => p.id === (chosenAt(question, "project", 0) ?? projectId));
   if (named) return { project: named };
   // EX1: a name that is none of theirs is not found, never confirmed or denied. Each question's words are read
   // in full before the one before it, so "and Store Insights?" after "What is Forager?" is never Forager, and
   // "and where do I start?" after "What is Atlas Bank?" is not found either (phase Q fix).
   if (!projects.length) return { notFound: true };
-  for (const words of [asked, ...follows]) {
+  for (const [at, words] of [asked, ...follows].entries()) {
+    // CD50, P10: the one chosen while it is still theirs; one they have left since is not found, as any is
+    const chosen = at > 0 ? chosenAt(question, "project", at) : null;
+    if (chosen) {
+      const p = projects.find((x) => x.id === chosen);
+      return p ? { project: p } : { notFound: true };
+    }
     const fits = projectFits(words, projects);
     if (fits.length > 1) return { which: fits };
     if (fits.length === 1) return { project: fits[0] };
@@ -66,19 +74,15 @@ function pickProject<P extends { id: string; name: string; aliases: readonly str
 /** CD50: the projects that fit, for M21 to ask which; it asks only when there are 2 or 3. */
 const whichOf = (fits: readonly { id: string; name: string }[]): Which => ({ fits: "project", options: fits.map((p) => ({ id: p.id, label: p.name })) });
 
-/** CD50: the project chosen when M21 asked which; the words are read only without one. */
-const chosenIn = (q: AskedQuestion) => (q.chosen?.fits === "project" ? q.chosen.id : null);
-
 export const explainProject: AnswerBuilder = async (conn, viewerId, question, now) => {
-  const { asked, projectId, follows } = question;
   const readable = await readableProjects(conn, viewerId);
   // EX4: someone who reads no project as a member may be an outside contact, who reads the client view only
-  if (!readable.length) return forClient(asked, follows ?? [], await clientViews(conn, viewerId), chosenIn(question));
+  if (!readable.length) return forClient(question, await clientViews(conn, viewerId));
 
   const projects = (await conn.select({ id: t.projects.id, name: t.projects.name, aliases: t.projects.aliases }).from(t.projects).where(inArray(t.projects.id, readable))).sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  const pick = pickProject(asked, follows ?? [], chosenIn(question) ?? projectId, projects);
+  const pick = pickProject(question, projects);
   const card = (p: { id: string; name: string }): AnswerCard => ({ title: p.name, detail: null, tag: "Project", href: `/projects/${p.id}` });
   if ("notFound" in pick) return none(`${NOT_FOUND} You can ask about ${either(projects.map((p) => p.name))}.`);
   // EX5: 2 or 3 of theirs fit, or none is named and they are on 2 or 3: M21 asks which in their own chat
@@ -184,11 +188,12 @@ function decisionLine(v: ProjectView, e: ProjectBraidEntry): string {
  * EX4: an outside contact reads the client view of the projects they are tied to: who it is for, when it
  * runs, and its releases with their planned dates. No status, people, threads, work or decisions, and no
  * cards, since they open no project page. Anything else is not found, as for a member (EX1). CD50: a
- * choice among their client views is asked as a member's is, and `chosen` is one of those views or nothing.
+ * choice among their client views is asked as a member's is, and the one chosen is one of those views or
+ * nothing. A project Atlas named is not read here, as before: only the words and the one chosen.
  */
-function forClient(asked: string, follows: readonly string[], views: readonly ClientView[], chosen: string | null): Body {
+function forClient(question: AskedQuestion, views: readonly ClientView[]): Body {
   const projects = views.map((v) => v.project);
-  const pick = pickProject(asked, follows, chosen, projects);
+  const pick = pickProject({ ...question, projectId: null }, projects);
   if ("notFound" in pick) return none(projects.length ? `${NOT_FOUND} You can ask about ${either(projects.map((p) => p.name))}.` : NOT_FOUND);
   if ("which" in pick) return { ...none(`Did you mean ${either(pick.which.map((p) => `"${p.name}"`))}? Say it again with its name.`), which: whichOf(pick.which) };
   if ("choose" in pick) return { ...none(`Which project? You can ask about ${either(pick.choose.map((p) => p.name))}.`), which: whichOf(pick.choose) };
