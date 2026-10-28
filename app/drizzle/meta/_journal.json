@@ -120,6 +120,13 @@
       "when": 1793152117169,
       "tag": "0016_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793152285253,
+      "tag": "0017_client_view",
+      "breakpoints": true
     }
   ]
 }

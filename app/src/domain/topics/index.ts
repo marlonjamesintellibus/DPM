@@ -4,6 +4,7 @@ import { atRiskWeek } from "./at-risk-week";
 import { blocked } from "./blocked";
 import { correction } from "./correction";
 import { due } from "./due";
+import { explainProject } from "./explain-project";
 import { mentions } from "./mentions";
 import { myDecisions } from "./my-decisions";
 import { myWork } from "./my-work";
@@ -24,7 +25,7 @@ import { whyFiled } from "./why-filed";
 import { whoFree } from "./who-free";
 
 /** In the order Atlas is shown them: the tool's topic enum and the prompt's topic list. */
-export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, updates, mentions, people, whoFree, notUpdated, myDecisions, atRiskWeek, portfolio, why, whyFiled, correction, undo, standup, smallTalk, other, unclear] as const;
+export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, explainProject, updates, mentions, people, whoFree, notUpdated, myDecisions, atRiskWeek, portfolio, why, whyFiled, correction, undo, standup, smallTalk, other, unclear] as const;
 
 /**
  * In the order the rule tries their words; the first that matches wins ("anything blocked today?" is
@@ -38,9 +39,11 @@ export const TOPICS = [needsMe, myWork, due, blocked, projectStatus, updates, me
  * after mentions, so "Who has mentioned me?" stays the asker's own. Phase N: its topics go after mentions too;
  * not_updated and my_decisions before updates and needs me, whose "updates" and "need" would take them;
  * who_free before people; portfolio before at_risk_week, so "Which projects are at risk?" lists the projects,
- * and both before project_status, whose "at risk" and "off track" would take them.
+ * and both before project_status, whose "at risk" and "off track" would take them. Phase Q: explain_project
+ * goes last, so "What is Forager?" is tried after every other topic's words and "I'm new here, what needs me
+ * today?" stays needs me; needs me's "mi fi" leaves it "Weh mi fi start?".
  */
-export const BY_RULE = [smallTalk, whyFiled, why, mentions, notUpdated, myDecisions, whoFree, people, portfolio, atRiskWeek, blocked, due, updates, myWork, projectStatus, needsMe] as const;
+export const BY_RULE = [smallTalk, whyFiled, why, mentions, notUpdated, myDecisions, whoFree, people, portfolio, atRiskWeek, blocked, due, updates, myWork, projectStatus, needsMe, explainProject] as const;
 
 export type QuestionTopic = (typeof TOPICS)[number]["id"];
 export const QUESTION_TOPICS = TOPICS.map((t) => t.id) as readonly QuestionTopic[];

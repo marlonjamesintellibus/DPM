@@ -30,7 +30,8 @@ import { CONFIDENCES } from "../domain/shared";
 // Phase H: the people topic, what someone else has or who owns something (PP1 to PP8); about the author by
 // name it is my_work (PP4), and a why about a person is answered with what they have (WY8). Phase N:
 // questions for leads and executives, topics who_free, not_updated (today only, LD10), my_decisions,
-// at_risk_week and portfolio.
+// at_risk_week and portfolio. Phase Q: the explain_project topic ("What is Forager?"), and a name that fits
+// two listed projects names neither (EX5). Phase K adds nothing to the prompt.
 export const PROMPT_VERSION = "read-16";
 
 // Section 15: the topics Atlas may say, each as its file in domain/topics describes it. Anything else is
@@ -102,6 +103,8 @@ Questions
 - A request to change something ("Can you mark #145 done?", "Please move the forecast") is an update, not a question.
 - A message that is only a greeting, thanks or ok ("Hi", "Thanks!", "Good morning") is topic small_talk, with items empty. A greeting that comes with an update ("Morning! Finished #145.") is an update only: question is null.
 - What is new with a person ("What's new with Kyle?") is updates, with projectId null.
+- What a project is, who it is for or where to start on it ("What is Forager?", "Explain Store Insights", "I'm new on GQ, where do I start?") is explain_project. "Tell me about Forager" asks how it stands: project_status.
+- projectId may come from part of a listed project's name or alias ("Insights" is Store Insights). If the words could mean two listed projects, projectId is null: DPM asks which.
 - Do not answer the question yourself. DPM answers it from the asker's own data.
 - A message can be only a question: then items is an empty list.
 - Questions in Patois are questions like any other: "Weh mi fi do today?" is needs_me, "Wah mi a work pon?" is my_work, "Wha gwaan wid Forager?" is updates, "Wha gwaan?" alone is small_talk.

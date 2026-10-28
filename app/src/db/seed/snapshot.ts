@@ -63,7 +63,8 @@ export const MEMBERSHIPS = [
   { projectId: "gq", personId: "kemar", role: "member" as const },
 ];
 
-export const CONTACTS = [{ projectId: "forager", personId: "kyle", tie: "contact on #151 (Sprouts IT)" }];
+// KB A7.3: Kyle is Sprouts IT, the customer, and Forager's client view is on for him (phase Q, EX4)
+export const CONTACTS = [{ projectId: "forager", personId: "kyle", tie: "contact on #151 (Sprouts IT)", clientView: true }];
 
 // Forager 2.0 (KB B5): three threads, five milestones, a handful of the #142 to #163 issues
 export const THREADS = [

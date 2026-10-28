@@ -77,8 +77,8 @@ export async function ChatToday({ viewerId, firstName, conversationId, ask = fal
             <AtlasLine>
               <span>
                 Morning, {firstName}. Tell me what you did, what is blocked and what is next, and I will put each part in the right project for you to check. You can also ask me what
-                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, or how a project stands. Or I can ask you, in a short
-                standup.
+                needs you, what you&rsquo;re working on, what&rsquo;s due, any updates, who mentioned you, what is blocked, how a project stands, or what a project is and where to start
+                on it. Or I can ask you, in a short standup.
               </span>
               {/* Phase J: the standup's button sends what typing it would */}
               <Suggestions asks={["Start my standup"]} />
