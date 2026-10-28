@@ -1,9 +1,9 @@
 // Phase O against PGlite (conversational plan, section 17): "Prep me for the Sprouts call", a brief drafted as a
 // phase G draft (M25), client-safe by default. Sprouts is the customer of Forager 2.0 and of Store Insights; Kyle
-// (Sprouts IT) is Forager's contact. Kemar is on both projects, so DPM asks which (MT9, through M21); Alicia and
+// (Sprouts IT) is Forager's contact. Kemar is on both projects, so DPM asks which (MT9, as a question through M21, CD50); Alicia and
 // Jodian are on Forager only, Andre on Store Insights only. Any member may ask (MT10), and the brief holds only
 // what the client may see (rule 8), checked against the client view again when it is copied (DR4).
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Drafter } from "../atlas/extractor";
 import { createFixtureExtractor } from "../atlas/fixture";
@@ -64,18 +64,32 @@ describe("which project a call is about (MT9)", () => {
     expect(await prepProjects(db, "andre", "Kyle")).toEqual([]);
   });
 
-  it("Kemar's call could be about two of his projects: DPM asks which (M21), and drafts the brief once he taps one", async () => {
+  it("Kemar's call could be about two of his projects: DPM asks which as a question (M21, CD50), and drafts the brief once he taps one", async () => {
     const { captureId, conversationId, answer, question } = await say("kemar", "Prep me for the Sprouts call");
-    expect(question).toMatchObject({ topic: "draft", draft: "prep", projectId: null, made: [`clr-${captureId}`] });
-    expect(answer?.text).toBe("I'll write the brief once you say which project the call is about.");
+    expect(question).toMatchObject({ topic: "draft", draft: "prep", projectId: null, made: [] });
+    // CD50: the question asks, so there is no answer until he chooses
+    expect(answer).toBeNull();
     expect(await draftRow(captureId)).toBeUndefined();
+    const [asked] = await db.select().from(t.clarifications).where(eq(t.clarifications.captureId, captureId));
+    expect(asked).toMatchObject({ about: "question", question: { fits: "project" }, state: "asked" });
     const thread = await getThread(db, "kemar", conversationId, at(1));
     if (!thread.found) throw new Error("no thread");
     expect(thread.turns[0].clarification).toMatchObject({ question: "Which project is the call about: Forager 2.0 or Store Insights?", options: [{ id: "forager" }, { id: "insights" }] });
     const r = await answerClarification(as("kemar", 2), `clr-${captureId}`, "forager");
     expect(r.message).toBe("Got it: Forager 2.0. Your brief follows.");
+    // The answer, kept with his message, is what the brief made says (CD50: as if he had named Forager)
+    const [chose] = await db.select().from(t.captures).where(eq(t.captures.id, captureId));
+    expect(chose.question).toMatchObject({ topic: "draft", draft: "prep", projectId: "forager", made: [`draft-${captureId}`] });
+    expect(chose.answer?.text).toContain("Here's a brief for your call about Forager 2.0.");
     await writeDraft(db, () => at(2), (await draftOfCapture(db, captureId))!, null);
     expect(await draftRow(captureId)).toMatchObject({ kind: "prep", projectId: "forager", state: "ready", by: "plain" });
+  });
+
+  it("CD50, P10: a project he left since he was asked is refused and never drafted", async () => {
+    const { captureId } = await say("kemar", "Prep me for the Sprouts call");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    expect(await refusal(answerClarification(as("kemar", 1), `clr-${captureId}`, "insights"))).toBe("You can't choose that one any more. Pick another, or ask me again.");
+    expect(await draftRow(captureId)).toBeUndefined();
   });
 
   it("a typed answer works too (CL2), and the brief is written in the same read", async () => {

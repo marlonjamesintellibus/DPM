@@ -1,6 +1,6 @@
 {
-  "id": "f14e2392-ce09-4cbf-89a9-cc39eb113383",
-  "prevId": "6604f704-17ae-4b94-b215-ac24acfd1ad5",
+  "id": "2965e3a5-2c0e-450e-82b1-5e4315df9c5b",
+  "prevId": "44ce6ce6-e714-4331-88a7-60310f9520b2",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -135,240 +135,6 @@
       },
       "indexes": {},
       "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.attributed_items": {
-      "name": "attributed_items",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "meeting_id": {
-          "name": "meeting_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "capture_id": {
-          "name": "capture_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "recorder_id": {
-          "name": "recorder_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "person_id": {
-          "name": "person_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "draft": {
-          "name": "draft",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "quote": {
-          "name": "quote",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "wording": {
-          "name": "wording",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "due_on": {
-          "name": "due_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "asked_on": {
-          "name": "asked_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "decided_on": {
-          "name": "decided_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reason": {
-          "name": "reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "also_from": {
-          "name": "also_from",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "attributed_items_person": {
-          "name": "attributed_items_person",
-          "columns": [
-            {
-              "expression": "person_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "attributed_items_meeting": {
-          "name": "attributed_items_meeting",
-          "columns": [
-            {
-              "expression": "meeting_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "attributed_items_meeting_id_meetings_id_fk": {
-          "name": "attributed_items_meeting_id_meetings_id_fk",
-          "tableFrom": "attributed_items",
-          "tableTo": "meetings",
-          "columnsFrom": [
-            "meeting_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "attributed_items_capture_id_captures_id_fk": {
-          "name": "attributed_items_capture_id_captures_id_fk",
-          "tableFrom": "attributed_items",
-          "tableTo": "captures",
-          "columnsFrom": [
-            "capture_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "attributed_items_recorder_id_people_id_fk": {
-          "name": "attributed_items_recorder_id_people_id_fk",
-          "tableFrom": "attributed_items",
-          "tableTo": "people",
-          "columnsFrom": [
-            "recorder_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "attributed_items_person_id_people_id_fk": {
-          "name": "attributed_items_person_id_people_id_fk",
-          "tableFrom": "attributed_items",
-          "tableTo": "people",
-          "columnsFrom": [
-            "person_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "attributed_items_project_id_projects_id_fk": {
-          "name": "attributed_items_project_id_projects_id_fk",
-          "tableFrom": "attributed_items",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
@@ -2357,6 +2123,270 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.cover_requests": {
+      "name": "cover_requests",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "leave_id": {
+          "name": "leave_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asker_id": {
+          "name": "asker_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "capture_id": {
+          "name": "capture_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "to_id": {
+          "name": "to_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "items": {
+          "name": "items",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "declined": {
+          "name": "declined",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "handover": {
+          "name": "handover",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'none'"
+        },
+        "handover_id": {
+          "name": "handover_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ended_why": {
+          "name": "ended_why",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "asked_at": {
+          "name": "asked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ask_command_id": {
+          "name": "ask_command_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "answer_command_id": {
+          "name": "answer_command_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "cover_requests_leave_state": {
+          "name": "cover_requests_leave_state",
+          "columns": [
+            {
+              "expression": "leave_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cover_requests_to_state": {
+          "name": "cover_requests_to_state",
+          "columns": [
+            {
+              "expression": "to_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "cover_requests_ask_command": {
+          "name": "cover_requests_ask_command",
+          "columns": [
+            {
+              "expression": "ask_command_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "cover_requests_leave_id_leave_id_fk": {
+          "name": "cover_requests_leave_id_leave_id_fk",
+          "tableFrom": "cover_requests",
+          "tableTo": "leave",
+          "columnsFrom": [
+            "leave_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cover_requests_asker_id_people_id_fk": {
+          "name": "cover_requests_asker_id_people_id_fk",
+          "tableFrom": "cover_requests",
+          "tableTo": "people",
+          "columnsFrom": [
+            "asker_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cover_requests_capture_id_captures_id_fk": {
+          "name": "cover_requests_capture_id_captures_id_fk",
+          "tableFrom": "cover_requests",
+          "tableTo": "captures",
+          "columnsFrom": [
+            "capture_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cover_requests_project_id_projects_id_fk": {
+          "name": "cover_requests_project_id_projects_id_fk",
+          "tableFrom": "cover_requests",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cover_requests_to_id_people_id_fk": {
+          "name": "cover_requests_to_id_people_id_fk",
+          "tableFrom": "cover_requests",
+          "tableTo": "people",
+          "columnsFrom": [
+            "to_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "cover_requests_handover_id_handovers_id_fk": {
+          "name": "cover_requests_handover_id_handovers_id_fk",
+          "tableFrom": "cover_requests",
+          "tableTo": "handovers",
+          "columnsFrom": [
+            "handover_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.drafts": {
       "name": "drafts",
       "schema": "",
@@ -3518,165 +3548,6 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.meetings": {
-      "name": "meetings",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "text",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "capture_id": {
-          "name": "capture_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "recorder_id": {
-          "name": "recorder_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "attendees": {
-          "name": "attendees",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'::text[]"
-        },
-        "mode": {
-          "name": "mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "merged_with": {
-          "name": "merged_with",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "received_on": {
-          "name": "received_on",
-          "type": "date",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "version": {
-          "name": "version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "meetings_project": {
-          "name": "meetings_project",
-          "columns": [
-            {
-              "expression": "project_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "state",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "meetings_capture_id_captures_id_fk": {
-          "name": "meetings_capture_id_captures_id_fk",
-          "tableFrom": "meetings",
-          "tableTo": "captures",
-          "columnsFrom": [
-            "capture_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "meetings_recorder_id_people_id_fk": {
-          "name": "meetings_recorder_id_people_id_fk",
-          "tableFrom": "meetings",
-          "tableTo": "people",
-          "columnsFrom": [
-            "recorder_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "meetings_project_id_projects_id_fk": {
-          "name": "meetings_project_id_projects_id_fk",
-          "tableFrom": "meetings",
-          "tableTo": "projects",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "meetings_capture_id_unique": {
-          "name": "meetings_capture_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "capture_id"
-          ]
-        }
-      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

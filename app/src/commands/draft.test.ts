@@ -83,8 +83,41 @@ describe("my standup", () => {
     expect(row.text).toContain("Since yesterday: No changes since yesterday.");
     expect(row.text).toContain("In progress:\n- #145 Google Trends connector (Forager 2.0), due Wed 21 Oct");
     expect(asked.answer?.text).toBe("Here's a draft of your standup, from what you saved since yesterday and your open work. Edit it, then copy it.");
-    // Phase E's hook: no commitments yet, so the template has no Due part
-    expect(row.text).not.toContain("Due:");
+    // Phase E: his promise from Friday, due Monday and still open, is in the Due part
+    expect(row.text).toContain("Due:\n- Send Andre the buyers' column list, due Mon 19 Oct");
+  });
+
+  it("phase E: his own promises due by today, with the record each names while he reads its project; none of anyone else's, none due later", async () => {
+    const promise = (id: string, ownerId: string, what: string, dueOn: string, link: { type: "work_item"; id: string; projectId: string } | null = null) => ({
+      id,
+      ownerId,
+      what,
+      dueOn,
+      state: "open" as const,
+      savedOn: "2026-10-16",
+      linkType: link?.type ?? null,
+      linkId: link?.id ?? null,
+      linkProjectId: link?.projectId ?? null,
+    });
+    await db.insert(t.commitments).values([
+      promise("cm-today", "kemar", "Send the export to Andre", "2026-10-20", { type: "work_item", id: "wi-208", projectId: "insights" }),
+      promise("cm-later", "kemar", "Share the scoring notes", "2026-10-23"),
+      promise("cm-alicia", "alicia", "Call Kyle about the feed", "2026-10-19"),
+    ]);
+    const row = await draftRow((await say("kemar", "Draft my standup")).captureId);
+    expect(row.text).toContain("Due:\n- Send Andre the buyers' column list, due Mon 19 Oct\n- Send the export to Andre (#208 Weekly sales export), due today");
+    expect(row.text).not.toContain("scoring notes");
+    expect(row.text).not.toContain("Call Kyle");
+    expect(row.facts.projectIds).toContain("insights");
+    // A standup about Forager keeps only the promises about its records (as "What did I promise?" does)
+    const forager = await draftRow((await say("kemar", "Draft my standup for Forager", 1)).captureId);
+    expect(forager.text ?? "").not.toContain("Due:");
+    // P10, CM9: off Store Insights, the promise stays his, without the record it named
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    const after = await draftRow((await say("kemar", "Draft my standup", 2)).captureId);
+    expect(after.text).toContain("- Send the export to Andre, due today");
+    expect(after.text).not.toContain("#208");
+    expect(after.facts.projectIds).toEqual(["forager"]);
   });
 
   it("DR2: Atlas's draft that keeps to the facts is used as written", async () => {

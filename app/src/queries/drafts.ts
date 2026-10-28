@@ -1,17 +1,19 @@
 // Phase G, M25: the facts a draft is written from, read for its asker through the same per-viewer reads as
 // the screens (getProject per project they can read, P10), and the draft as the chat shows it. A standup is
-// what they saved since their last standup, what is in progress and what is blocked (their due commitments
-// come with phase E); a client status is only what the client view shows (client-visible milestones by their
+// what they saved since their last standup, what is in progress, what is blocked and their due commitments
+// (phase E); a client status is only what the client view shows (client-visible milestones by their
 // target date, CD49, and the displayed status with its reason when the PM marked it shareable; never BRAID
 // internals, DR4); a weekly summary is the project's week. Never a quote from anyone's update (CD8, DR7):
 // each fact is a record, a date, a state or a name from DPM's tables.
 import { and, eq, inArray } from "drizzle-orm";
 import type { Conn } from "../db/conn";
-import { itemOf } from "../db/records";
+import { commitmentOf, itemOf } from "../db/records";
+import { linkLabel } from "../commands/commitment";
 import * as t from "../db/schema";
 import { addDays, addWorkingDays, daysBetween, WEEKDAYS, weekday, type IsoDate } from "../domain/dates";
 import { DRAFT_LABEL, type DraftFact, type DraftFacts, type DraftKind, type DraftSection, type KnownNames } from "../domain/drafts";
 import { ON_LOG_STATES } from "../domain/machines/braid-entry";
+import { LIVE_COMMITMENT } from "../domain/machines/commitment";
 import { DRAFT_FINAL, draftEndText, type DraftBy, type DraftRecord, type DraftState } from "../domain/machines/draft";
 import { withArticle } from "../domain/shared";
 import { namesPerson, namesRecord } from "../domain/names";
@@ -78,12 +80,26 @@ export async function standupSince(conn: Conn, personId: string, now: Date): Pro
 }
 
 /**
- * Phase E's hook: the person's commitments due (M22), as facts for their standup ("Send Kyle the request,
- * due today"). Phase E is built in parallel; until it is wired here a standup has none, and its section is
- * left out of the template.
+ * Phase E's due commitments (M22), as facts for their standup ("Send Kyle the access request, due today"): their
+ * own live promises due today or before, never anyone else's (CD3). With a project named, only the promises about
+ * its records. A record a promise names is said only while they can still open its project (P10, CM9), and those
+ * projects join the draft's own, so it closes once they cannot.
  */
-export async function commitmentsDue(_conn: Conn, _personId: string, _now: Date): Promise<DraftFact[]> {
-  return [];
+export async function commitmentsDue(conn: Conn, personId: string, projectId: string | null, now: Date): Promise<{ facts: DraftFact[]; projectIds: string[] }> {
+  const today = todayIn(now);
+  const rows = await conn.select().from(t.commitments).where(and(eq(t.commitments.ownerId, personId), inArray(t.commitments.state, [...LIVE_COMMITMENT])));
+  const due = rows
+    .map(commitmentOf)
+    .filter((c) => c.dueOn <= today && (!projectId || c.link?.projectId === projectId))
+    .sort((a, b) => a.dueOn.localeCompare(b.dueOn) || a.id.localeCompare(b.id));
+  const facts: DraftFact[] = [];
+  const projectIds = new Set<string>();
+  for (const c of due) {
+    const label = await linkLabel(conn, personId, c.link);
+    if (label && c.link) projectIds.add(c.link.projectId);
+    facts.push({ key: `commitment:${c.id}`, name: c.what, text: `${c.what}${label ? ` (${label})` : ""}, due ${c.dueOn === today ? "today" : dayDate(c.dueOn)}` });
+  }
+  return { facts, projectIds: [...projectIds] };
 }
 
 const where = (multi: boolean, v: ProjectView) => (multi ? ` (${v.project.name})` : "");
@@ -154,9 +170,10 @@ export async function standupFacts(conn: Conn, personId: string, projectId: stri
       return { key: `work:${w.id}`, name: w.title, text: `${workTitle(w)}${where(multi, v)}${on.length ? `, waiting on ${on.join(" and ")}` : ""}` };
     });
 
-  // P10: the projects these facts come from, so the draft closes once its owner can no longer read one of them
-  // (phase E's commitments, once wired, add theirs)
-  const projectIds = [...new Set([...applied.map((r) => r.projectId!), ...mine.filter(({ w }) => w.state === "in_progress" || w.state === "blocked").map(({ v }) => v.project.id)])].sort();
+  // P10: the projects these facts come from, so the draft closes once its owner can no longer read one of them;
+  // a promise's linked record adds its project (phase E)
+  const promises = await commitmentsDue(conn, personId, projectId, now);
+  const projectIds = [...new Set([...applied.map((r) => r.projectId!), ...mine.filter(({ w }) => w.state === "in_progress" || w.state === "blocked").map(({ v }) => v.project.id), ...promises.projectIds])].sort();
   const [person] = await conn.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, personId));
   const sinceTitle = since.label[0].toUpperCase() + since.label.slice(1);
   const sections: DraftSection[] = [
@@ -164,7 +181,7 @@ export async function standupFacts(conn: Conn, personId: string, projectId: stri
     { title: sinceTitle, facts: saved, none: `No changes ${since.label}.` },
     { title: "In progress", facts: going, none: "Nothing in progress." },
     { title: "Blocked", facts: blocked, none: "Nothing blocked." },
-    { title: "Due", facts: await commitmentsDue(conn, personId, now), none: null },
+    { title: "Due", facts: promises.facts, none: null },
   ];
   return { kind: "standup", heading: `${firstName(person?.name ?? "")}'s standup, ${dayDate(todayIn(now))}`, sections, asOf: now.toISOString(), projectIds };
 }
