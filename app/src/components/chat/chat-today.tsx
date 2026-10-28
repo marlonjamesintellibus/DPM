@@ -336,7 +336,9 @@ function DraftBlock({ capture }: { capture: ChatCapture }) {
   return (
     <AtlasLine>
       {d.closed ? (
-        <span className="type-caption text-fg-3">You can no longer read this project, so its draft is closed.</span>
+        <span className="type-caption text-fg-3">
+          {d.kind === "standup" && !d.project ? "You can no longer read a project this standup is from, so it is closed." : "You can no longer read this project, so its draft is closed."}
+        </span>
       ) : (
         <div role="group" aria-label={title} className="flex flex-col gap-2 rounded-panel border border-line px-3 py-2.5">
           <span className="flex flex-wrap items-center gap-2 type-caption text-fg-3">

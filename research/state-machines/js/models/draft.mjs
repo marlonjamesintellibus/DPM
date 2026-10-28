@@ -14,11 +14,17 @@
 //   ModelTimer  a timer on requested that counts as DRAFT_FAILED (not drawn in the plan)
 //   ReaderCheck POST, and COPY of a client status, recheck every fact against every reader there, now (rule 8)
 //   Refresh     DR5's Refresh (ready -> requested, edits kept aside): 'undrawn' as the plan has it, 'drawn', or 'none'
+//   CopyRight   COPY checks the right again when it runs, as Refresh and POST do (rule 4, DR3)
+//   Rounds      a try's number only rises, across a Refresh too, so a reply to a try from before the
+//               Refresh is never taken for the new round's (rule 6); off, a Refresh starts again at try 1
 // Found by the check (27 Oct 2026), all three options off as the plan has them:
 //   a model that never answers leaves the draft in requested forever (rule 5); Kemar's standup, which
 //   holds Store Insights work, can be posted to the Forager group, where Alicia may not see it (rule 8);
 //   a client status copied after the milestone was hidden carries it to the client (rule 8, DR4);
 //   and DR5's Refresh needs an arrow the table does not draw (rule 2).
+// Found in the build's review (28 Oct 2026), CopyRight and Rounds off: Alicia, made a member of Forager
+// after asking, can still copy her client status for the client (rule 4); and a late reply to try 1,
+// sent before a Refresh, is taken as the refreshed draft's try 1 (rule 6).
 import { clone, product } from '../lib.mjs';
 
 const TRIES = 2;
@@ -52,7 +58,7 @@ const mayAsk = (s, person, kind) => kind === 'standup' || lead(s, person);
 // The right to post there: a member of the group for a standup, the PM or a Lead otherwise
 const mayPost = (s, person, kind) => (kind === 'standup' ? !!role(s, 'forager', person) : lead(s, person));
 
-export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh = 'undrawn', Bug = null } = {}) {
+export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh = 'undrawn', CopyRight = false, Rounds = false, Bug = null } = {}) {
   // by is set only on a step that changes a record or posts, so the properties can ask who did it
   const t0 = (s) => Object.assign(clone(s), { by: null, ev: null });
   const set = (s, patch) => [Object.assign(t0(s), { d: { ...s.d, ...patch } })];
@@ -111,15 +117,17 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
     },
     {
       // DRAFTED: the model answers for one attempt, with the facts it was given or with one it made up (DR2).
-      // Only the attempt the draft is on counts; a late reply changes nothing (rule 6)
+      // Only the attempt the draft is on counts; a late reply changes nothing (rule 6). 'earlier' is a reply
+      // to a try from before the last Refresh: without Rounds its number can be the new round's
       name: 'Drafted',
-      params: product([1, 2], ['good', 'adds']),
-      step(s, attempt, outcome) {
-        const current = s.d.st === 'requested' && attempt === s.d.attempt;
-        const late = ['requested', 'ready'].includes(s.d.st) && attempt <= s.d.attempt;
+      params: product([1, 2], ['good', 'adds'], ['this', 'earlier']),
+      step(s, attempt, outcome, round) {
+        if (round === 'earlier' && !s.d.refreshed) return [];
+        const current = s.d.st === 'requested' && attempt === s.d.attempt && (round === 'this' || !Rounds);
+        const late = ['requested', 'ready'].includes(s.d.st) && (attempt <= s.d.attempt || round === 'earlier');
         if (!current && !(Bug === 'noAttemptCheck' && late)) return [];
         const t = t0(s);
-        if (!current) t.ev = 'stale';
+        if (!current || round === 'earlier') t.ev = 'stale';
         const facts = outcome === 'good' ? [...s.d.given] : [...s.d.given, 'invented'].sort();
         if (!subset(facts, s.d.given) && Bug !== 'noFactsCheck') return [failed(t)];
         Object.assign(t.d, { st: 'ready', facts, plain: false, edited: false });
@@ -131,8 +139,14 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
     {
       // DRAFT_FAILED: a model error, or no model connected (DR6)
       name: 'DraftFailed',
-      params: [[1], [2]],
-      step: (s, attempt) => (s.d.st === 'requested' && attempt === s.d.attempt ? [failed(t0(s))] : []),
+      params: product([1, 2], ['this', 'earlier']),
+      step(s, attempt, round) {
+        if (round === 'earlier' && !s.d.refreshed) return [];
+        if (s.d.st !== 'requested' || attempt !== s.d.attempt || (round === 'earlier' && Rounds)) return [];
+        const t = failed(t0(s));
+        if (round === 'earlier') t.ev = 'stale';
+        return [t];
+      },
     },
     {
       // Not drawn in the plan: the model may never answer, so a timer counts as DRAFT_FAILED
@@ -154,6 +168,8 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
       params: [[]],
       step(s) {
         if (s.d.st !== 'ready' && !(Bug === 'copyAfterExpiry' && s.d.st === 'expired')) return [];
+        // CopyRight: the right is read when Copy runs (rule 4); refused otherwise, the draft unchanged
+        if (CopyRight && !mayAsk(s, s.d.owner, s.d.kind)) return [];
         if (s.d.kind === 'client' && !readersOk(s)) return [];
         return set(s, { st: 'copied' });
       },
@@ -208,7 +224,7 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
         if (s.d.st !== 'ready') return [];
         if (!mayAsk(s, s.d.owner, s.d.kind) && Bug !== 'noRoleCheck') return [];
         const t = t0(s);
-        Object.assign(t.d, { aside: s.d.edited, edited: false });
+        Object.assign(t.d, { aside: s.d.edited, edited: false, refreshed: true });
         return [start(t)];
       },
     },
@@ -231,7 +247,7 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
         roles: { forager: { alicia: 'pm', kemar: 'member' }, si: { kemar: 'member' } },
         world: { msVisible: true, reasonShared: true },
         rec: { w151: 'doing', ms: 'on_track' },
-        d: { owner: null, kind: null, st: 'none', attempt: 0, given: [], facts: [], plain: false, edited: false, aside: false, confirm: 'none', posts: 0 },
+        d: { owner: null, kind: null, st: 'none', attempt: 0, given: [], facts: [], plain: false, edited: false, aside: false, refreshed: false, confirm: 'none', posts: 0 },
         by: null,
         ev: null,
       },
@@ -254,6 +270,8 @@ export default function Draft({ ModelTimer = false, ReaderCheck = false, Refresh
       RequestOnlyWithRight: (s, t) => t.d.st !== 'requested' || s.d.st === 'requested' || mayAsk(t, t.d.owner, t.d.kind),
       // Rule 4: a right lost after the Post tap is refused
       PostedOnlyWithRight: (s, t) => t.d.posts === s.d.posts || mayPost(t, t.d.owner, t.d.kind),
+      // Rule 4, DR3: a client status or weekly summary is copied only by someone who holds the right then
+      CopiedOnlyWithRight: (s, t) => t.d.st !== 'copied' || s.d.st === 'copied' || mayAsk(t, t.d.owner, t.d.kind),
       // P10: every fact given to Atlas is one the asker may read when the job runs
       OwnerMaySeeEveryFact: (s, t) => same(t.d.given, s.d.given) || t.d.given.every((f) => reads(t, t.d.owner, f)),
       // DR4: a client status is built from the client view only, never BRAID internals

@@ -10,13 +10,14 @@ import type { Conn } from "../db/conn";
 import { itemOf } from "../db/records";
 import * as t from "../db/schema";
 import { addDays, addWorkingDays, daysBetween, WEEKDAYS, weekday, type IsoDate } from "../domain/dates";
-import { DRAFT_LABEL, type DraftFact, type DraftFacts, type DraftKind, type DraftSection } from "../domain/drafts";
+import { DRAFT_LABEL, type DraftFact, type DraftFacts, type DraftKind, type DraftSection, type KnownNames } from "../domain/drafts";
 import { ON_LOG_STATES } from "../domain/machines/braid-entry";
 import { DRAFT_FINAL, draftEndText, type DraftBy, type DraftRecord, type DraftState } from "../domain/machines/draft";
 import { withArticle } from "../domain/shared";
 import type { SettableStatus } from "../domain/status/status";
 import { dayDate, milestonesOf, projectsAsked, workOf, workTitle } from "./answers/shared";
 import { clockTime, ENTRY_STATE_LABEL, firstName, getProject, KIND_LABEL, peopleById, projectReader, STATUS_LABEL, todayIn, WORK_STATE_LABEL, type ProjectView } from "./project";
+import { sharedPeople } from "./people";
 import { loadTargetRecords, targetChange, type TargetRecords } from "./review";
 
 type Row = typeof t.drafts.$inferSelect;
@@ -150,6 +151,9 @@ export async function standupFacts(conn: Conn, personId: string, projectId: stri
       return { key: `work:${w.id}`, name: w.title, text: `${workTitle(w)}${where(multi, v)}${on.length ? `, waiting on ${on.join(" and ")}` : ""}` };
     });
 
+  // P10: the projects these facts come from, so the draft closes once its owner can no longer read one of them
+  // (phase E's commitments, once wired, add theirs)
+  const projectIds = [...new Set([...applied.map((r) => r.projectId!), ...mine.filter(({ w }) => w.state === "in_progress" || w.state === "blocked").map(({ v }) => v.project.id)])].sort();
   const [person] = await conn.select({ name: t.people.name }).from(t.people).where(eq(t.people.id, personId));
   const sinceTitle = since.label[0].toUpperCase() + since.label.slice(1);
   const sections: DraftSection[] = [
@@ -159,7 +163,7 @@ export async function standupFacts(conn: Conn, personId: string, projectId: stri
     { title: "Blocked", facts: blocked, none: "Nothing blocked." },
     { title: "Due", facts: await commitmentsDue(conn, personId, now), none: null },
   ];
-  return { kind: "standup", heading: `${firstName(person?.name ?? "")}'s standup, ${dayDate(todayIn(now))}`, sections, asOf: now.toISOString() };
+  return { kind: "standup", heading: `${firstName(person?.name ?? "")}'s standup, ${dayDate(todayIn(now))}`, sections, asOf: now.toISOString(), projectIds };
 }
 
 // ---- Client status ----
@@ -195,6 +199,7 @@ export async function clientStatusFacts(conn: Conn, viewerId: string, projectId:
         { title: "Status", facts: status, none: null },
       ],
       asOf: now.toISOString(),
+      projectIds: [projectId],
     },
     hidden,
   };
@@ -275,6 +280,7 @@ export async function weeklyFacts(conn: Conn, viewerId: string, projectId: strin
       { title: "Status", facts: status, none: `${v.displayed.label}, no change this week.` },
     ],
     asOf: now.toISOString(),
+    projectIds: [projectId],
   };
 }
 
@@ -289,28 +295,28 @@ export async function draftFacts(conn: Conn, viewerId: string, kind: DraftKind, 
 
 /**
  * DR2, DR4: every name DPM knows for the asker: on the projects they read now, the projects, milestones, work
- * and BRAID entries; and the people DPM knows, members and contacts alike ("Kyle sent the feed" names Kyle even
- * at the start of a sentence). A draft that names one it was not given is refused. These only refuse a draft:
- * none is ever shown, so naming someone here hints at nothing (P10).
+ * and BRAID entries; and the people they share one of those projects with, members and contacts alike ("Kyle
+ * sent the feed" names Kyle even at the start of a sentence), never someone from another org (P10). A draft that
+ * names one it was not given is refused, by the CD30 rule (domain/names.ts): "I will keep going" names nobody
+ * called Will, and "the data sources" is not the milestone Data sources.
  */
-export async function knownNames(conn: Conn, viewerId: string, now: Date): Promise<string[]> {
-  const views = await projectsAsked(conn, viewerId, null, now);
-  const people = (await conn.select({ name: t.people.name }).from(t.people)).flatMap((p) => [p.name, firstName(p.name)]);
-  const names = views.flatMap((v) => [
+export async function knownNames(conn: Conn, viewerId: string, now: Date): Promise<KnownNames> {
+  const [views, people] = await Promise.all([projectsAsked(conn, viewerId, null, now), sharedPeople(conn, viewerId)]);
+  const records = views.flatMap((v) => [
     v.project.name,
     ...milestonesOf(v).map((m) => m.name),
     ...workOf(v).flatMap((w) => [w.title, ...(w.number ? [w.number] : [])]),
     ...v.braid.entries.map((e) => e.title),
   ]);
-  return [...new Set([...names, ...people])].filter((n) => n.trim().length > 2);
+  return { records: [...new Set(records)].filter((n) => n.trim().length > 2), people: [...new Set(people.map((p) => p.name))].filter((n) => n.trim().length > 2) };
 }
 
 // ---- In the chat ----
 
 /**
  * A draft under the message that asked for it: its text while ready (the edits kept with it), what was kept
- * aside by a Refresh (DR5), "as of" the facts' time, and how it ended. A draft about a project its owner can no
- * longer read shows no text (P10).
+ * aside by a Refresh (DR5), "as of" the facts' time, and how it ended. A draft whose facts come from a project
+ * its owner can no longer read shows no text (P10, draftClosed).
  */
 export type DraftView = {
   id: string;
@@ -329,11 +335,21 @@ export type DraftView = {
   ended: string | null;
 };
 
+/**
+ * P10: whether its owner can no longer read a project the draft's facts come from: the project it is about, or
+ * for a standup asked for with no project, each project its work came from. Either way it is closed alike.
+ */
+export async function draftClosed(conn: Conn, row: Pick<Row, "ownerId" | "projectId" | "facts">): Promise<boolean> {
+  const ids = [...new Set([...(row.projectId ? [row.projectId] : []), ...(row.facts.projectIds ?? [])])];
+  if (!ids.length) return false;
+  const { mayRead } = await projectReader(conn, row.ownerId);
+  return ids.some((id) => !mayRead(id));
+}
+
 export async function draftViewOf(conn: Conn, capture: Pick<typeof t.captures.$inferSelect, "id" | "authorId">): Promise<DraftView | null> {
   const [row] = await conn.select().from(t.drafts).where(and(eq(t.drafts.captureId, capture.id), eq(t.drafts.ownerId, capture.authorId)));
   if (!row) return null;
-  const reader = row.projectId ? await projectReader(conn, row.ownerId) : null;
-  const closed = !!row.projectId && !reader!.mayRead(row.projectId);
+  const closed = await draftClosed(conn, row);
   const [project] = row.projectId && !closed ? await conn.select({ name: t.projects.name }).from(t.projects).where(eq(t.projects.id, row.projectId)) : [];
   return {
     id: row.id,

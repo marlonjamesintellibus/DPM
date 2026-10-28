@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { config } from "../config";
 import { draftTemplate, type DraftFacts } from "../drafts";
-import { applyDraftEvent, DRAFT_STATES, draftEndText, draftExpired, draftMachine, modelTimedOut, newDraft, type DraftEvent, type DraftRecord, type DraftState } from "./draft";
+import { applyDraftEvent, DRAFT_STATES, draftEndText, draftExpired, draftMachine, modelTimedOut, newDraft, tryOfRound, type DraftEvent, type DraftRecord, type DraftState } from "./draft";
 
 const MADE = new Date("2026-10-20T14:10:00Z");
 const later = (seconds: number) => new Date(MADE.getTime() + seconds * 1000);
@@ -116,8 +116,9 @@ describe("draft guards and effects", () => {
   });
 
   it("DR2, DR4: a name DPM knows for the asker that the draft was not given is refused", () => {
-    const named = `${GOOD} Data sources is next.`;
-    expect(applyDraftEvent(at("requested"), { type: "DRAFTED", attempt: 1, text: named }, { ...base, known: ["Data sources"] }).record.state).toBe("requested");
+    // Every word of it is in the facts ("Trend scoring model"), but the milestone Trend model was not given
+    const named = `${GOOD} The Trend model is next.`;
+    expect(applyDraftEvent(at("requested"), { type: "DRAFTED", attempt: 1, text: named }, { ...base, known: { records: ["Trend model"], people: [] } }).record.state).toBe("requested");
   });
 
   it("DR6: no model connected fails each try, and the draft is the plain template", () => {
@@ -158,6 +159,14 @@ describe("draft guards and effects", () => {
     expect(applyDraftEvent(at("ready"), { type: "COPY" }, { ...base, readersOk: undefined }).record.state).toBe("copied");
   });
 
+  it("rule 4, DR3: COPY checks the right again, as Refresh does: a PM made a member since cannot copy her client status", () => {
+    for (const kind of ["client", "weekly"] as const) {
+      const r = applyDraftEvent(at("ready", { kind, projectId: "forager" }), { type: "COPY" }, { ...base, actorId: "kemar", right: false });
+      expect(r.outcome.ok || r.outcome.reason, kind).toBe(`only a PM or Lead of the project can draft a ${kind === "client" ? "client status" : "weekly summary"}`);
+      expect(r.record.state).toBe("ready");
+    }
+  });
+
   it("POST waits for the confirm, the right now and every reader (rules 4, 8 and 9)", () => {
     for (const ctx of [{ confirmed: false }, { right: false }, { readersOk: false }]) expect(applyDraftEvent(at("ready"), { type: "POST" }, { ...base, ...ctx }).outcome.ok).toBe(false);
   });
@@ -166,12 +175,29 @@ describe("draft guards and effects", () => {
     const edited = applyDraftEvent(at("ready"), { type: "EDIT", text: "My words." }, base).record;
     const facts = { ...FACTS, asOf: later(60).toISOString() };
     const r = applyDraftEvent(edited, { type: "REFRESH", facts }, { ...base, now: later(60) }).record;
-    expect([r.state, r.attempt, r.text, r.aside, r.edited, r.facts.asOf]).toEqual(["requested", 1, null, "My words.", false, facts.asOf]);
+    // Rule 6: the try's number only rises, so the new round starts at try 3, its own first
+    expect([r.state, r.attempt, tryOfRound(r.attempt), r.text, r.aside, r.edited, r.facts.asOf]).toEqual(["requested", 3, 1, null, "My words.", false, facts.asOf]);
     // An unedited refresh keeps what was aside before
     const again = applyDraftEvent({ ...r, state: "ready", text: GOOD }, { type: "REFRESH", facts }, base).record;
     expect(again.aside).toBe("My words.");
     // A Lead who lost the role cannot refresh a weekly summary (rule 4)
     expect(applyDraftEvent(at("ready", { kind: "weekly", projectId: "forager" }), { type: "REFRESH", facts }, { ...base, right: false }).outcome.ok).toBe(false);
+  });
+
+  it("rule 6, DR5: a reply to a try from before the Refresh changes nothing; the new round has its own two tries", () => {
+    // Try 1 was still with the model when they refreshed: its reply, good or not, is a reply to an earlier try
+    const refreshed = applyDraftEvent(at("ready", { attempt: 1 }), { type: "REFRESH", facts: FACTS }, base).record;
+    for (const e of [{ type: "DRAFTED", attempt: 1, text: GOOD }, { type: "DRAFT_FAILED", attempt: 1, why: "model_error" }] as DraftEvent[]) {
+      const r = applyDraftEvent(refreshed, e, base);
+      expect(r.outcome.ok || r.outcome.reason).toBe("a reply to an earlier try");
+      expect(r.record).toEqual(refreshed);
+    }
+    // The round's two tries, then the plain template; a Refresh from try 4 starts the next round at 5
+    const second = applyDraftEvent(refreshed, { type: "DRAFTED", attempt: 3, text: INVENTED }, base).record;
+    expect([second.state, second.attempt]).toEqual(["requested", 4]);
+    const plain = applyDraftEvent(second, { type: "DRAFT_FAILED", attempt: 4, why: "model_error" }, base).record;
+    expect([plain.state, plain.by]).toEqual(["ready", "plain"]);
+    expect(applyDraftEvent(plain, { type: "REFRESH", facts: FACTS }, base).record.attempt).toBe(5);
   });
 
   it("the expiry timer counts from ready", () => {

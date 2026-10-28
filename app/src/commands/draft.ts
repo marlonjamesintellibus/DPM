@@ -19,8 +19,7 @@ import { clientCopyProblem, plainDraft, type DraftKind } from "../domain/drafts"
 import type { Moved } from "../domain/machine";
 import { isOwnChat } from "../domain/machines/clarification";
 import { applyDraftEvent, DRAFT_FINAL, draftEndText, newDraft, type DraftEvent, type DraftRecord, type DraftState } from "../domain/machines/draft";
-import { clientStatusFacts, draftFacts, draftOf, knownNames, mayDraft } from "../queries/drafts";
-import { projectReader } from "../queries/project";
+import { clientStatusFacts, draftClosed, draftFacts, draftOf, knownNames, mayDraft } from "../queries/drafts";
 import { audit, CommandRefused, expectOne, moved, nextVersion, runCommand, type CommandCtx } from "./core";
 
 type Row = typeof t.drafts.$inferSelect;
@@ -142,8 +141,9 @@ export async function writeDraft(db: Db, clock: () => Date, draftId: string, dra
 async function ownDraft(tx: Tx, actorId: string, id: string): Promise<Row> {
   const [row] = await tx.select().from(t.drafts).where(eq(t.drafts.id, id));
   if (!row || row.ownerId !== actorId) throw new CommandRefused("no such draft", "not_found");
-  // P10: a draft about a project they can no longer read is not theirs to use
-  if (row.projectId && !(await projectReader(tx, actorId)).mayRead(row.projectId)) throw new CommandRefused("you can no longer read this project", "not_found");
+  // P10: a draft whose facts come from a project they can no longer read is not theirs to use, a standup of
+  // several projects as much as a draft about one
+  if (await draftClosed(tx, row)) throw new CommandRefused(row.projectId ? "you can no longer read this project" : "you can no longer read a project this draft is from", "not_found");
   if (DRAFT_FINAL.includes(row.state)) throw new CommandRefused(draftEndText(row) ?? "this draft has ended");
   if (row.state === "requested") throw new CommandRefused("Atlas is still writing this draft");
   return row;
@@ -168,20 +168,22 @@ export function editDraft(ctx: CommandCtx, draftId: string, text: string): Promi
 export const CLIENT_VIEW_CHANGED = "This draft says something the client view doesn't show now. Refresh it to draft from what the client can see.";
 
 /**
- * COPY, with the words on screen: the text to put on the clipboard. A client status is checked against the
- * client view now (rule 8, DR4): a release hidden or moved since, a status no longer shared, or any name the
- * client view does not show refuses it, and Refresh is offered. Once only: a second copy finds it copied (DR8).
+ * COPY, with the words on screen: the text to put on the clipboard. The right is read again now (rule 4, DR3):
+ * a PM made a member since cannot copy her client status. A client status is checked against the client view
+ * now (rule 8, DR4): a release hidden or moved since, a status no longer shared, or any name the client view does
+ * not show refuses it, and Refresh is offered. Once only: a second copy finds it copied (DR8).
  */
 export function copyDraft(ctx: CommandCtx, draftId: string, text?: string): Promise<{ text: string }> {
   return runCommand(ctx, async (tx) => {
     const row = await edited(tx, ctx.now, await ownDraft(tx, ctx.actorId, draftId), ctx.actorId, text);
+    const right = await mayDraft(tx, ctx.actorId, row.kind, row.projectId);
     let readersOk = true;
     if (row.kind === "client") {
       const now_ = row.projectId ? await clientStatusFacts(tx, ctx.actorId, row.projectId, ctx.now) : null;
       readersOk = !!now_ && clientCopyProblem(row.facts, now_.facts, row.text ?? "", now_.hidden) === null;
     }
-    const r = applyDraftEvent(draftOf(row), { type: "COPY" }, { actorId: ctx.actorId, now: ctx.now, readersOk });
-    if (!r.outcome.ok) throw new CommandRefused(row.kind === "client" && !readersOk ? CLIENT_VIEW_CHANGED : r.outcome.reason);
+    const r = applyDraftEvent(draftOf(row), { type: "COPY" }, { actorId: ctx.actorId, now: ctx.now, right, readersOk });
+    if (!r.outcome.ok) throw new CommandRefused(right && row.kind === "client" && !readersOk ? CLIENT_VIEW_CHANGED : r.outcome.reason);
     await persist(tx, ctx.now, row, r.record);
     await auditMove(tx, ctx.now, r.record, r.outcome, { actorType: "person", actorId: ctx.actorId });
     return { text: r.record.text ?? "" };

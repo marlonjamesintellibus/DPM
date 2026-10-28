@@ -10,14 +10,17 @@
 //   requested --DRAFTED [this attempt; fails] or DRAFT_FAILED--> requested (the next try), then ready (plain)
 //   requested --DRAFT_FAILED [the model timer]--> as DRAFT_FAILED       the model check's fix
 //   ready --EDIT [the owner]--> ready
-//   ready --COPY [the owner; a client status: every fact still in the client view]--> copied      final
+//   ready --COPY [the owner; the right, checked now; a client status: every fact still in the client view]--> copied
+//                                                                         final
 //   ready --POST [the owner, confirmed; the right to post there; every reader may see every fact]--> posted
 //                                                                         final; waits on B8, B9: nothing sends it yet
 //   ready --DISCARD [the owner]--> discarded                              final
 //   ready --EXPIRE [config.draftExpiryHours]--> expired                   final
 //   ready --REFRESH [the owner; the right, checked now]--> requested      DR5: their edits kept aside
+// A try's number only rises, across a Refresh too, so a reply to a try from before the Refresh can never be
+// taken for the new one (rule 6).
 import { config } from "../config";
-import { DRAFT_LABEL, draftProblem, draftTemplate, type DraftFacts, type DraftKind } from "../drafts";
+import { DRAFT_LABEL, draftProblem, draftTemplate, type DraftFacts, type DraftKind, type KnownNames } from "../drafts";
 import { defineMachine, transition, type Outcome } from "../machine";
 
 export const DRAFT_STATES = ["none", "requested", "ready", "copied", "posted", "discarded", "expired"] as const;
@@ -39,7 +42,11 @@ export type DraftRecord = {
   /** The message that asked for it; once only, by draft id (rule 6, DR8). */
   captureId: string;
   state: DraftState;
-  /** The try the draft is on (1 or 2); only a reply to this try counts (rule 6). */
+  /**
+   * The try the draft is on; only a reply to this try counts (rule 6). It only rises: a request's tries are 1
+   * and 2, and each Refresh starts the next DRAFT_TRIES (3 and 4, then 5 and 6), so a late reply to try 1
+   * after a Refresh is still a reply to an earlier try.
+   */
   attempt: number;
   /** When this try started: the model timer counts from here. */
   attemptAt: Date | null;
@@ -74,14 +81,14 @@ type Ctx = {
   record: DraftRecord;
   actorId: string;
   now: Date;
-  /** REQUEST, REFRESH and POST: the right held now (rule 4): anyone for a standup, a PM or Lead of the project otherwise (DR3). */
+  /** REQUEST, REFRESH, COPY and POST: the right held now (rule 4): anyone for a standup, a PM or Lead of the project otherwise (DR3). */
   right?: boolean;
   /** COPY of a client status, and POST: every fact in it is one every reader there may see now (rule 8). */
   readersOk?: boolean;
   /** POST: the person confirmed it (rule 9: outward is confirmed, never automatic). */
   confirmed?: boolean;
   /** DRAFTED: the names DPM knows for the asker, so one the draft was not given is refused (DR2, DR4). */
-  known?: readonly string[];
+  known?: KnownNames;
 };
 
 /** Rule 5: a try the model has not answered counts as failed after config.draftModelSeconds. */
@@ -104,14 +111,18 @@ const rightGuard = (c: Ctx) => ownerGuard(c) ?? (c.right === true ? null : `only
 const thisTry = (c: Ctx, e: { attempt: number }) => (e.attempt === c.record.attempt ? null : "a reply to an earlier try");
 const passes = (c: Ctx, e: Extract<DraftEvent, { type: "DRAFTED" }>) => thisTry(c, e) ?? draftProblem(c.record.facts, e.text, c.known);
 const fails = (c: Ctx, e: Extract<DraftEvent, { type: "DRAFTED" }>) => thisTry(c, e) ?? (draftProblem(c.record.facts, e.text, c.known) ? null : "it passes the facts check");
-const triesLeft = (c: Ctx) => (c.record.attempt < DRAFT_TRIES ? null : "that was the last try");
-const lastTry = (c: Ctx) => (c.record.attempt >= DRAFT_TRIES ? null : "there is another try");
+/** Which try of its round a draft is on (1 or 2): a Refresh starts a round of DRAFT_TRIES at the next number. */
+export const tryOfRound = (attempt: number) => ((attempt - 1) % DRAFT_TRIES) + 1;
+const triesLeft = (c: Ctx) => (tryOfRound(c.record.attempt) < DRAFT_TRIES ? null : "that was the last try");
+const lastTry = (c: Ctx) => (tryOfRound(c.record.attempt) >= DRAFT_TRIES ? null : "there is another try");
 // The model check's fix: the timer is a DRAFT_FAILED, sent only once this try has had its time
 const failure = (c: Ctx, e: Extract<DraftEvent, { type: "DRAFT_FAILED" }>) =>
   thisTry(c, e) ?? (e.why === "timer" && !modelTimedOut(c.record, c.now) ? `a try has ${config.draftModelSeconds} seconds` : null);
 
-// Rule 8, ReaderCheck: a client status goes to the client, so the client view is checked now; the others are copied by their owner for themselves
-const copyGuard = (c: Ctx) => ownerGuard(c) ?? (c.record.kind !== "client" || c.readersOk === true ? null : "it says something the client view does not show now");
+// Rule 4: the right is checked again when Copy runs, as for Refresh: a PM made a member since cannot copy a
+// client status. Rule 8, ReaderCheck: a client status goes to the client, so the client view is checked now;
+// the others are copied by their owner for themselves
+const copyGuard = (c: Ctx) => rightGuard(c) ?? (c.record.kind !== "client" || c.readersOk === true ? null : "it says something the client view does not show now");
 const postGuard = (c: Ctx) =>
   rightGuard(c) ?? (c.confirmed === true ? null : "a post is sent only once you confirm it") ?? (c.readersOk === true ? null : "someone there may not see everything in it");
 
@@ -136,8 +147,17 @@ export const draftMachine = defineMachine<DraftState, DraftEvent, Ctx>({
 
 export type DraftResult = { outcome: Outcome<DraftState>; record: DraftRecord };
 
-/** The first try, from the facts read now. */
-const fresh = (r: DraftRecord, facts: DraftFacts, now: Date): DraftRecord => ({ ...r, facts, attempt: 1, attemptAt: now, text: null, by: null, edited: false, readyAt: null });
+/** The first try of a round, from the facts read now: try 1 for a request, the next round's first after a Refresh (rule 6). */
+const fresh = (r: DraftRecord, facts: DraftFacts, now: Date): DraftRecord => ({
+  ...r,
+  facts,
+  attempt: r.attempt < 1 ? 1 : Math.ceil(r.attempt / DRAFT_TRIES) * DRAFT_TRIES + 1,
+  attemptAt: now,
+  text: null,
+  by: null,
+  edited: false,
+  readyAt: null,
+});
 
 /** Applies one event. A refused event returns the record unchanged. */
 export function applyDraftEvent(record: DraftRecord, event: DraftEvent, ctx: Omit<Ctx, "record">): DraftResult {

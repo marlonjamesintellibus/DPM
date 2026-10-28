@@ -3,13 +3,21 @@
 import Draft from '../models/draft.mjs';
 
 // The three fixes the check asks for: a timer on requested, the reader check on POST and on COPY of a
-// client status, and DR5's Refresh drawn as an arrow
-const FIXED = { ModelTimer: true, ReaderCheck: true, Refresh: 'drawn' };
+// client status, and DR5's Refresh drawn as an arrow; and the two the build's review found (28 Oct): COPY
+// checks the right when it runs, and a try's number only rises across a Refresh
+const FIXED = { ModelTimer: true, ReaderCheck: true, Refresh: 'drawn', CopyRight: true, Rounds: true };
 
 // expectFail lists the properties expected to fail; everything else should pass
 export const ROWS = [
-  { spec: 'Draft', setting: 'as the plan draws it (DR5 Refresh not drawn)', model: Draft(), expectFail: ['DraftEnds', 'EveryReaderMaySeeEveryFact', 'OnlyDrawnArrows'] },
-  { spec: 'Draft', setting: 'fixed: timer on requested, reader check now, Refresh drawn', model: Draft(FIXED), expectFail: [] },
+  {
+    spec: 'Draft',
+    setting: 'as the plan draws it (DR5 Refresh not drawn)',
+    model: Draft(),
+    expectFail: ['DraftEnds', 'EveryReaderMaySeeEveryFact', 'OnlyDrawnArrows', 'CopiedOnlyWithRight', 'RepeatChangesNothing'],
+  },
+  { spec: 'Draft', setting: 'fixed: timer on requested, reader check now, Refresh drawn, Copy checks the right, tries only rise', model: Draft(FIXED), expectFail: [] },
+  { spec: 'Draft', setting: 'fixed, but COPY does not check the right', model: Draft({ ...FIXED, CopyRight: false }), expectFail: ['CopiedOnlyWithRight'] },
+  { spec: 'Draft', setting: 'fixed, but a Refresh starts again at try 1', model: Draft({ ...FIXED, Rounds: false }), expectFail: ['RepeatChangesNothing'] },
   { spec: 'Draft', setting: 'fixed, but no timer on requested', model: Draft({ ...FIXED, ModelTimer: false }), expectFail: ['DraftEnds'] },
   { spec: 'Draft', setting: 'fixed, but POST and COPY check only the right', model: Draft({ ...FIXED, ReaderCheck: false }), expectFail: ['EveryReaderMaySeeEveryFact'] },
   { spec: 'Draft', setting: 'fixed, but Refresh used and not drawn', model: Draft({ ...FIXED, Refresh: 'undrawn' }), expectFail: ['OnlyDrawnArrows'] },

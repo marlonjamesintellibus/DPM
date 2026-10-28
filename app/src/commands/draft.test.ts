@@ -12,14 +12,17 @@ import type { Db } from "../db/client";
 import { loadItems } from "../db/records";
 import * as t from "../db/schema";
 import { config } from "../domain/config";
-import { draftTemplate } from "../domain/drafts";
+import { draftProblem, draftTemplate } from "../domain/drafts";
 import { getThread } from "../queries/chat";
+import { knownNames } from "../queries/drafts";
 import { at, seededDb } from "../test/seeded-db";
 import { readCapture } from "./atlas";
+import { resolveBraidEntry } from "./braid";
 import { createCapture, decideExtraction, openReview, saveCapture } from "./capture";
 import { CommandRefused } from "./core";
 import { CLIENT_VIEW_CHANGED, copyDraft, discardDraft, editDraft, refreshDraft, requestDraft, runDraftTimers, writeDraft } from "./draft";
-import { saveReason, shareReasonWithClient } from "./status";
+import { evaluateProject } from "./evaluate";
+import { saveReason, setStatus, shareReasonWithClient, useCalculated } from "./status";
 
 let db: Db;
 let n = 0;
@@ -110,6 +113,47 @@ describe("my standup", () => {
     const second = writes(new Error("upstream 502"), "Nothing new since yesterday.");
     const again = await draftRow((await say("kemar", "Write up my standup", 1, second.drafter)).captureId);
     expect([again.by, again.text]).toEqual(["atlas", "Nothing new since yesterday."]);
+  });
+
+  it("DR2: a status or a time the facts do not give is refused like a made-up date; a name at the start of a sentence too", async () => {
+    // #145 is in progress, due Wed 21 Oct: done, tomorrow and Marcus are Atlas's own
+    const { drafter, shown } = writes("#145 Google Trends connector is done.", "I'll finish #145 Google Trends connector tomorrow.");
+    expect(await draftRow((await say("kemar", "Draft my standup", 0, drafter)).captureId)).toMatchObject({ by: "plain" });
+    expect(shown).toHaveLength(2);
+    const named = writes("Marcus sent the feed. I'm on #145 Google Trends connector.", "Marcus sent the feed.");
+    expect(await draftRow((await say("kemar", "Draft my standup", 1, named.drafter)).captureId)).toMatchObject({ by: "plain" });
+  });
+
+  it("CD30: everyday words that are also a record's name pass in lower case; only people Kemar shares a project with are known", async () => {
+    // The seed's milestone "Data sources", which his standup was not given
+    const fine = "Nothing new since yesterday. I'm on #145 Google Trends connector, due Wed 21 Oct, now that the data sources are in.";
+    expect(await draftRow((await say("kemar", "Draft my standup", 0, writes(fine).drafter)).captureId)).toMatchObject({ by: "atlas", text: fine });
+    const named = "Nothing new since yesterday. I'm on #145 Google Trends connector, now that Data sources is in.";
+    expect(await draftRow((await say("kemar", "Draft my standup", 1, writes(named).drafter)).captureId)).toMatchObject({ by: "plain" });
+    // Someone on none of his projects is not a name DPM knows for him (P10)
+    await db.insert(t.people).values({ id: "will", name: "Will Grant", initials: "WG", orgRole: "employee" });
+    const known = await knownNames(db, "kemar", at(2));
+    expect(known.people).toEqual(expect.arrayContaining(["Kemar Brown", "Alicia Campbell", "Kyle"]));
+    expect(known.people).not.toContain("Will Grant");
+    expect(known.records).toEqual(expect.arrayContaining(["Data sources", "#151", "Weekly sales export"]));
+  });
+
+  it("P10: a standup of several projects closes once he leaves one of them, as a draft about one project does", async () => {
+    const asked = await say("kemar", "Draft my standup");
+    const row = await draftRow(asked.captureId);
+    expect(row.facts.projectIds).toEqual(["forager", "insights"]);
+    expect(row.text).toContain("#208 Weekly sales export (Store Insights)");
+    await db.update(t.projectMemberships).set({ state: "left" }).where(and(eq(t.projectMemberships.projectId, "insights"), eq(t.projectMemberships.personId, "kemar")));
+    const thread = await getThread(db, "kemar", asked.conversationId, at(1));
+    if (!thread.found) throw new Error("no thread");
+    expect(thread.turns[0].draft).toMatchObject({ closed: true, text: null, aside: null });
+    const gone = "you can no longer read a project this draft is from";
+    expect(await refusal(copyDraft(as("kemar", 1), row.id))).toBe(gone);
+    expect(await refusal(refreshDraft(as("kemar", 1), row.id))).toBe(gone);
+    expect(await refusal(editDraft(as("kemar", 1), row.id, "Today: #145."))).toBe(gone);
+    // A standup asked for now holds only what he still reads, and stays open
+    const now_ = await draftRow((await say("kemar", "Draft my standup", 2)).captureId);
+    expect([now_.facts.projectIds, now_.text?.includes("#208")]).toEqual([["forager"], false]);
   });
 
   it("since their last standup: a standup draft copied today moves the start to its time", async () => {
@@ -275,11 +319,22 @@ describe("client status", () => {
     expect(await refusal(copyDraft(as("alicia", 3), id, "Release 1 waits on the Trend model."))).toBe(CLIENT_VIEW_CHANGED);
     await db.update(t.milestones).set({ clientVisible: false }).where(eq(t.milestones.id, "ms-release-1"));
     const refreshed = await refreshDraft(as("alicia", 4), id, "Hi Kyle, Buyer pilot · Release 1 is planned for Fri 30 Oct.");
-    expect([refreshed.state, refreshed.attempt, refreshed.aside]).toEqual(["requested", 1, "Hi Kyle, Buyer pilot · Release 1 is planned for Fri 30 Oct."]);
+    expect([refreshed.state, refreshed.attempt, refreshed.aside]).toEqual(["requested", 3, "Hi Kyle, Buyer pilot · Release 1 is planned for Fri 30 Oct."]);
     await writeDraft(db, () => at(4), id, null);
     const row = await draftRow(asked.captureId);
     expect(row.text).toBe("Forager 2.0 for Sprouts: client status, Tue 20 Oct\n\nReleases:\n- Rollout · Release 2: planned Fri 6 Nov");
     expect((await copyDraft(as("alicia", 5), id)).text).toBe(row.text);
+  });
+
+  it("rule 4, DR3: a PM made a member since cannot copy her client status; the right is read when Copy runs", async () => {
+    const asked = await say("alicia", "Draft a client status for Forager");
+    const id = (await draftRow(asked.captureId)).id;
+    await db.update(t.projectMemberships).set({ role: "member" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "alicia")));
+    expect(await refusal(copyDraft(as("alicia", 1), id))).toBe("only a PM or Lead of the project can draft a client status");
+    expect((await draftRow(asked.captureId)).state).toBe("ready");
+    // A Lead again, she can copy it
+    await db.update(t.projectMemberships).set({ role: "lead" }).where(and(eq(t.projectMemberships.projectId, "forager"), eq(t.projectMemberships.personId, "alicia")));
+    expect((await copyDraft(as("alicia", 2), id)).text).toBe((await draftRow(asked.captureId)).text);
   });
 
   it("rule 4: a PM who is no longer PM or Lead cannot refresh; P10: one who left the project cannot see or copy its draft", async () => {
@@ -342,5 +397,26 @@ describe("weekly summary", () => {
     expect(asked.answer?.text).toBe("Here's a draft weekly summary for Forager 2.0, for this week so far. Edit it, then copy it.");
     // Store Insights is Kemar's and Andre's: nothing of it is in Alicia's summary (P10)
     expect(row.text).not.toMatch(/Insights|#208|weekly sales export/i);
+  });
+
+  it("entries that ended this week, and every status move: set by a person, cleared, and ended by the plan (M9)", async () => {
+    // The seed: Alicia set Forager Off track at 9:02am. Then she closes the pipeline risk and sets At risk
+    await resolveBraidEntry(as("alicia", 10), "br-pipeline-risk", "closed");
+    await setStatus(as("alicia", 11), "forager", "at_risk");
+    // The plan comes to agree with At risk, so the set status ends on its own (E41)
+    await db.update(t.milestones).set({ forecastDate: "2026-10-24" }).where(eq(t.milestones.id, "ms-trend"));
+    await db.transaction((tx) => evaluateProject(tx, "forager", at(12)));
+    const asked = await say("alicia", "Draft the weekly summary for Forager", 13);
+    const row = await draftRow(asked.captureId);
+    const section = (title: string) => row.facts.sections.find((s) => s.title === title)!.facts.map((f) => f.text);
+    expect(section("Ended")).toEqual(["Risk, closed: Only Kemar can run the pipeline"]);
+    expect(section("Status")).toEqual(["Alicia set it Off track, Tue 20 Oct", "Alicia set it At risk, Tue 20 Oct", "The set status ended: the plan agrees with it now, Tue 20 Oct"]);
+    // Cleared by hand, said as cleared
+    await setStatus(as("alicia", 14), "forager", "off_track");
+    await useCalculated(as("alicia", 15), "forager");
+    const later = await draftRow((await say("alicia", "Draft the weekly summary for Forager", 16)).captureId);
+    expect(later.facts.sections.find((s) => s.title === "Status")!.facts.at(-1)?.text).toBe("Alicia cleared the set status, Tue 20 Oct");
+    // The plain template passes its own facts check, the status words and "this week" included
+    expect(draftProblem(later.facts, draftTemplate(later.facts))).toBeNull();
   });
 });

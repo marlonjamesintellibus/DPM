@@ -5,7 +5,7 @@
 // the plain template instead, so the score counts how often Atlas's own words reach them.
 import type { Conn } from "../../db/conn";
 import { KEMAR_NOTE_AT } from "../../domain/atlas-checks/kemar-note.fixture";
-import { draftProblem, plainDraft, type DraftFacts, type DraftKind } from "../../domain/drafts";
+import { draftProblem, plainDraft, type DraftFacts, type DraftKind, type KnownNames } from "../../domain/drafts";
 import { draftFacts, knownNames } from "../../queries/drafts";
 import type { EvalAuthor } from "./cases";
 
@@ -27,7 +27,7 @@ export const DRAFT_EVAL_CASES: DraftEvalCase[] = [
 ];
 
 /** The facts a case's draft is written from, and the names the check knows for its author, as the app reads them. */
-export async function draftCaseFacts(conn: Conn, c: DraftEvalCase): Promise<{ facts: DraftFacts; known: string[] }> {
+export async function draftCaseFacts(conn: Conn, c: DraftEvalCase): Promise<{ facts: DraftFacts; known: KnownNames }> {
   const facts = await draftFacts(conn, c.author, c.kind, c.projectId, KEMAR_NOTE_AT);
   if (!facts) throw new Error(`${c.id}: ${c.author} cannot read ${c.projectId}`);
   return { facts, known: await knownNames(conn, c.author, KEMAR_NOTE_AT) };
@@ -35,7 +35,7 @@ export async function draftCaseFacts(conn: Conn, c: DraftEvalCase): Promise<{ fa
 
 export type DraftScore = { pass: boolean; problem: string | null; forbidden: string[] };
 
-export function scoreDraft(c: DraftEvalCase, facts: DraftFacts, known: readonly string[], written: string): DraftScore {
+export function scoreDraft(c: DraftEvalCase, facts: DraftFacts, known: KnownNames, written: string): DraftScore {
   const text = plainDraft(written);
   const problem = draftProblem(facts, text, known);
   const forbidden = (c.forbidWords ?? []).filter((w) => text.toLowerCase().includes(w.toLowerCase()));
